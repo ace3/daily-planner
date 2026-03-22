@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useMemo, useState } from 'react';
-import { MessageSquare, ListOrdered, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { MessageSquare, ListOrdered, Layers, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, X } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
 import { PromptQueue } from '../components/PromptQueue';
 import type { TaskContext } from '../components/claude/PromptBuilder';
@@ -13,7 +13,9 @@ import { buildImprovementPrompt } from '../lib/promptImprover';
 import type { Task } from '../types/task';
 import type { Project } from '../types/project';
 import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 import { useSessionDraftState } from '../hooks/useSessionDraftState';
+import { generateMasterPrompt, type MergeWarning } from '../lib/masterPromptComposer';
 
 // Per-task improvement state
 interface PromptState {
@@ -43,7 +45,7 @@ function buildTaskContext(task: Task, projects: Project[]): TaskContext {
 // Standalone (no task) uses key ''
 const STANDALONE_KEY = '';
 
-type Tab = 'builder' | 'queue';
+type Tab = 'builder' | 'queue' | 'master';
 
 export const PromptPage: React.FC = () => {
   const { tasks, fetchTasks, savePromptResult, updateTaskStatus, activeDate } = useTaskStore();
@@ -213,8 +215,22 @@ export const PromptPage: React.FC = () => {
               </span>
             )}
           </button>
+          <button
+            onClick={() => setActiveTab('master')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer
+              ${activeTab === 'master'
+                ? 'bg-white dark:bg-[#21262D] text-gray-900 dark:text-[#E6EDF3] shadow-sm'
+                : 'text-gray-500 dark:text-[#8B949E] hover:text-gray-700 dark:hover:text-[#E6EDF3]'
+              }`}
+          >
+            <Layers size={12} />
+            Master Prompt
+          </button>
         </div>
       </div>
+
+      {/* Master Prompt tab */}
+      {activeTab === 'master' && <MasterPromptPanel tasks={tasks} projects={projects} />}
 
       {/* Queue tab */}
       {activeTab === 'queue' && (
@@ -401,6 +417,179 @@ export const PromptPage: React.FC = () => {
           )}
         </div>
       </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Master Prompt Panel — shown in the "Master Prompt" tab
+// ---------------------------------------------------------------------------
+interface MasterPromptPanelProps {
+  tasks: Task[];
+  projects: Project[];
+}
+
+const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }) => {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [output, setOutput] = useState('');
+  const [warnings, setWarnings] = useState<MergeWarning[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const eligibleTasks = useMemo(
+    () => tasks.filter((t) => typeof t.prompt_result === 'string' && t.prompt_result.trim().length > 0),
+    [tasks],
+  );
+
+  const toggleTask = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleGenerate = () => {
+    setGenerating(true);
+    setError(null);
+    setWarnings([]);
+    setOutput('');
+
+    try {
+      const sources = eligibleTasks
+        .filter((t) => selectedIds.has(t.id))
+        .map((t) => ({ id: t.id, label: t.title, content: t.prompt_result!, selected: true }));
+
+      const result = generateMasterPrompt(sources);
+      setOutput(result.masterPrompt);
+      setWarnings(result.warnings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!output) return;
+    await navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const dismissWarning = (index: number) => {
+    setWarnings((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  if (eligibleTasks.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-sm text-gray-500 dark:text-[#8B949E]">No tasks with improved prompts yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto flex flex-col gap-4">
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Select Tasks</h3>
+          <p className="text-xs text-gray-500 dark:text-[#8B949E]">
+            Pick tasks with saved improved prompts to merge into one master prompt.
+          </p>
+        </div>
+
+        <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+          {eligibleTasks.map((task) => {
+            const project = task.project_id ? projects.find((p) => p.id === task.project_id) : undefined;
+            return (
+              <label
+                key={task.id}
+                className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors
+                  ${selectedIds.has(task.id)
+                    ? 'border-blue-500/40 bg-blue-500/10'
+                    : 'border-gray-200 dark:border-[#30363D] hover:bg-gray-50 dark:hover:bg-[#1C2128]'
+                  }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(task.id)}
+                  onChange={() => toggleTask(task.id)}
+                  className="h-4 w-4 accent-blue-500 cursor-pointer shrink-0"
+                />
+                <span className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3] truncate flex-1">
+                  {task.title}
+                </span>
+                {project && <Badge variant="blue">{project.name}</Badge>}
+              </label>
+            );
+          })}
+        </div>
+
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Layers size={12} />}
+          onClick={handleGenerate}
+          disabled={selectedIds.size === 0 || generating}
+          className="min-w-[200px]"
+        >
+          {generating ? 'Generating...' : 'Generate Master Prompt'}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="space-y-1.5">
+          {warnings.map((warning, index) => (
+            <div
+              key={`${warning.code}-${index}`}
+              className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-300"
+            >
+              <span className="flex-1">{warning.message}</span>
+              <button
+                onClick={() => dismissWarning(index)}
+                className="shrink-0 text-amber-500 hover:text-amber-700 dark:hover:text-amber-200 cursor-pointer"
+                title="Dismiss"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {output && (
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">
+              Master Prompt
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+              onClick={handleCopy}
+              className={copied ? 'text-green-400' : ''}
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </Button>
+          </div>
+          <textarea
+            readOnly
+            value={output}
+            rows={16}
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 dark:border-[#30363D] dark:bg-[#0F1117] p-3 text-xs font-mono text-gray-900 dark:text-[#E6EDF3] resize-y outline-none"
+          />
+        </div>
       )}
     </div>
   );

@@ -7,7 +7,6 @@ import { usePromptQueue } from '../../hooks/usePromptQueue';
 import type { PromptTemplate } from '../../types/task';
 import type { Project } from '../../types/project';
 import { usePromptTemplateStore } from '../../stores/promptTemplateStore';
-import { generateMasterPrompt, type MergeWarning, type PromptSourceInput } from '../../lib/masterPromptComposer';
 
 interface TaskContext {
   title: string;
@@ -38,18 +37,6 @@ interface PromptBuilderProps {
 }
 
 export type { TaskContext };
-
-interface LocalPromptSource extends PromptSourceInput {
-  contentError: string | null;
-}
-
-const createSourcePrompt = (index: number, content = '', selected = true): LocalPromptSource => ({
-  id: `source-${Date.now()}-${index}`,
-  label: `Prompt ${index + 1}`,
-  content,
-  selected,
-  contentError: null,
-});
 
 export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   taskContext,
@@ -94,11 +81,6 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   const [queued, setQueued] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
   const [marked, setMarked] = useState(false);
-  const [sources, setSources] = useState<LocalPromptSource[]>([createSourcePrompt(0, improved || prompt)]);
-  const [mergeWarnings, setMergeWarnings] = useState<MergeWarning[]>([]);
-  const [mergeError, setMergeError] = useState<string | null>(null);
-  const [mergeSuccess, setMergeSuccess] = useState<string | null>(null);
-  const [mergeRunning, setMergeRunning] = useState(false);
   const { enqueue, pendingCount } = usePromptQueue();
 
   const resolvedProjectPath = projectPath ?? taskContext?.project?.path;
@@ -219,66 +201,6 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   const handleUseTaskTitle = () => {
     if (!canUseTaskTitle) return;
     onPromptChange(normalizedTaskTitle);
-  };
-
-  const hasUsableSource = useMemo(
-    () => sources.some((source) => source.selected && source.content.trim().length > 0),
-    [sources],
-  );
-
-  const updateSource = (id: string, patch: Partial<LocalPromptSource>) => {
-    setSources((prev) => prev.map((source) => (source.id === id ? { ...source, ...patch } : source)));
-  };
-
-  const handleAddSource = () => {
-    setSources((prev) => [...prev, createSourcePrompt(prev.length)]);
-  };
-
-  const handleRemoveSource = (id: string) => {
-    setSources((prev) => {
-      if (prev.length === 1) return prev;
-      return prev.filter((source) => source.id !== id);
-    });
-  };
-
-  const handleImportImproved = () => {
-    const imported = improved.trim();
-    if (!imported) {
-      setMergeError('Nothing to import: improve a prompt first or paste source prompts manually.');
-      setMergeSuccess(null);
-      return;
-    }
-    setMergeError(null);
-    setMergeSuccess(null);
-    setSources((prev) => {
-      const nextIndex = prev.length;
-      return [...prev, createSourcePrompt(nextIndex, imported, true)];
-    });
-  };
-
-  const handleGenerateMasterPrompt = async () => {
-    setMergeRunning(true);
-    setMergeError(null);
-    setMergeSuccess(null);
-    setMergeWarnings([]);
-
-    try {
-      const result = generateMasterPrompt(sources);
-      onImprovedChange(result.masterPrompt);
-      setMergeWarnings(result.warnings);
-      setMergeSuccess(`Master prompt generated from ${result.usedSourceIds.length} source prompt${result.usedSourceIds.length > 1 ? 's' : ''}.`);
-      console.info('[prompt-merge] Generated master prompt', {
-        usedSources: result.usedSourceIds.length,
-        skippedSources: result.skippedSourceIds.length,
-        warningCount: result.warnings.length,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setMergeError(message);
-      console.error('[prompt-merge] Failed to generate master prompt', { message });
-    } finally {
-      setMergeRunning(false);
-    }
   };
 
   return (
@@ -475,132 +397,6 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
           : 'Write your rough prompt idea... the selected AI provider will polish it into a detailed, actionable agent prompt.'}
         rows={5}
       />
-
-      <section className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#0F1117] p-3 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-700 dark:text-[#E6EDF3]">
-              Master Prompt Composer
-            </h4>
-            <p className="text-xs text-gray-500 dark:text-[#8B949E] leading-relaxed">
-              Select multiple improved prompts, merge intent, resolve conflicts, and produce one task-based execution prompt.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" icon={<Plus size={12} />} onClick={handleAddSource}>
-              Add Source Prompt
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Copy size={12} />}
-              onClick={handleImportImproved}
-              disabled={!improved.trim()}
-              title={!improved.trim() ? 'Generate an improved prompt first, then import it as a source' : undefined}
-            >
-              Import Improved
-            </Button>
-          </div>
-        </div>
-
-        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-          {sources.map((source, index) => (
-            <div
-              key={source.id}
-              className={`rounded-lg border p-2.5 transition-colors ${
-                source.selected
-                  ? 'border-gray-200 dark:border-[#30363D] bg-gray-50 dark:bg-[#161B22]'
-                  : 'border-gray-200 dark:border-[#30363D] bg-white/60 dark:bg-[#161B22]/60 opacity-80'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <input
-                  id={`source-selected-${source.id}`}
-                  type="checkbox"
-                  checked={source.selected}
-                  onChange={(e) => updateSource(source.id, { selected: e.target.checked })}
-                  className="h-4 w-4 accent-blue-500 cursor-pointer"
-                />
-                <label
-                  htmlFor={`source-selected-${source.id}`}
-                  className="text-xs font-medium text-gray-700 dark:text-[#E6EDF3] cursor-pointer"
-                >
-                  Include {source.label}
-                </label>
-                <span className="text-[10px] text-gray-500 dark:text-[#8B949E] ml-auto">
-                  {source.content.trim().length} chars
-                </span>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  icon={<Trash2 size={11} />}
-                  disabled={sources.length <= 1}
-                  onClick={() => handleRemoveSource(source.id)}
-                  title={sources.length <= 1 ? 'At least one source prompt is required' : undefined}
-                >
-                  Remove
-                </Button>
-              </div>
-              <Input
-                label="Source Name"
-                value={source.label}
-                onChange={(e) => updateSource(source.id, { label: e.target.value || `Prompt ${index + 1}` })}
-                placeholder={`Prompt ${index + 1}`}
-              />
-              <Textarea
-                label={`Source Prompt ${index + 1}`}
-                value={source.content}
-                onChange={(e) => updateSource(source.id, { content: e.target.value, contentError: null })}
-                rows={4}
-                placeholder="Paste one improved prompt here..."
-                error={source.contentError ?? undefined}
-              />
-            </div>
-          ))}
-        </div>
-
-        {!hasUsableSource && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-            Add or import at least one non-empty selected source prompt to generate the master prompt.
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Wand2 size={12} />}
-            onClick={handleGenerateMasterPrompt}
-            loading={mergeRunning}
-            disabled={!hasUsableSource}
-            className="min-w-[180px]"
-          >
-            {mergeRunning ? 'Generating...' : 'Generate Master Prompt'}
-          </Button>
-          {mergeSuccess && (
-            <span className="text-xs text-green-700 dark:text-green-400" role="status">
-              {mergeSuccess}
-            </span>
-          )}
-        </div>
-
-        {mergeError && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300" role="alert">
-            {mergeError}
-          </div>
-        )}
-
-        {mergeWarnings.length > 0 && (
-          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5 space-y-1">
-            <p className="text-xs font-medium text-blue-700 dark:text-blue-300">Merge Notes</p>
-            <ul className="text-xs text-blue-700 dark:text-blue-200 list-disc list-inside space-y-1">
-              {mergeWarnings.map((warning, index) => (
-                <li key={`${warning.code}-${index}`}>{warning.message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
 
       {/* Generated prompt preview */}
       {builtPrompt && (
