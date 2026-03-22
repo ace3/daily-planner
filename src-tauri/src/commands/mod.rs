@@ -8,3 +8,4 @@ pub mod reports;
 pub mod settings;
 pub mod tasks;
 pub mod worktree;
+pub mod auto_backup;

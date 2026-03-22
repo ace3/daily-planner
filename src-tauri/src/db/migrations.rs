@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -54,6 +54,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 8 {
         apply_v8(conn)?;
+    }
+    if current < 9 {
+        apply_v9(conn)?;
     }
 
     eprintln!(
@@ -536,6 +539,42 @@ fn apply_v8(conn: &mut Connection) -> anyhow::Result<()> {
             [],
         )
         .context("Delete pomodoro_break_min setting")?;
+        Ok(())
+    })
+}
+
+fn apply_v9(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 9, "Add backup_sessions table and auto-backup settings", |tx| {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS backup_sessions (
+                id               TEXT PRIMARY KEY,
+                created_at       TEXT NOT NULL,
+                schema_version   INTEGER NOT NULL DEFAULT 0,
+                backup_size      INTEGER NOT NULL DEFAULT 0,
+                item_count       INTEGER NOT NULL DEFAULT 0,
+                integrity_status TEXT NOT NULL DEFAULT 'unknown',
+                checksum         TEXT NOT NULL DEFAULT '',
+                file_path        TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_backup_sessions_created ON backup_sessions(created_at);",
+        )
+        .context("v9 DDL failed")?;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('backup_enabled', 'true')",
+            [],
+        )
+        .context("Insert backup_enabled setting")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('backup_interval_min', '30')",
+            [],
+        )
+        .context("Insert backup_interval_min setting")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('backup_max_sessions', '10')",
+            [],
+        )
+        .context("Insert backup_max_sessions setting")?;
         Ok(())
     })
 }

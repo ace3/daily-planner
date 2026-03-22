@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Wand2, RefreshCw, Copy, Check, FileText, Save, CheckCircle, Play, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Wand2, RefreshCw, Copy, Check, FileText, Save, CheckCircle, Play, Pencil, Plus, Trash2, GitBranch } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input, Textarea } from '../ui/Input';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -31,6 +31,9 @@ interface PromptBuilderProps {
   onMarkDone?: () => Promise<void>;
   projectPath?: string;
   provider?: string;
+  onRunAsWorktree?: () => Promise<void>;
+  worktreeButtonDisabled?: boolean;
+  worktreeButtonLabel?: string;
 }
 
 export type { TaskContext };
@@ -50,6 +53,9 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   onMarkDone,
   projectPath,
   provider,
+  onRunAsWorktree,
+  worktreeButtonDisabled,
+  worktreeButtonLabel = 'Run as Worktree',
 }) => {
   const {
     promptTemplates,
@@ -389,7 +395,7 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <Button
           variant="primary"
           icon={<Wand2 size={13} />}
@@ -400,6 +406,18 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         >
           {loading ? 'Improving...' : 'Improve Prompt'}
         </Button>
+        {onRunAsWorktree && (
+          <Button
+            variant="ghost"
+            icon={<GitBranch size={13} className="text-purple-400" />}
+            onClick={onRunAsWorktree}
+            disabled={worktreeButtonDisabled || !prompt.trim()}
+            className="flex-1 text-purple-400 hover:text-purple-300 border border-purple-500/30 hover:border-purple-500/60"
+            title="Create a git worktree, run the improved prompt in it, run tests, then merge if tests pass"
+          >
+            {worktreeButtonLabel}
+          </Button>
+        )}
         {(improved || error) && (
           <Button variant="ghost" size="md" icon={<RefreshCw size={13} />} onClick={onReset}>
             Reset

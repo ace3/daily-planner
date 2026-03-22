@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useMemo, useState } from 'react';
-import { MessageSquare, ListOrdered } from 'lucide-react';
+import { MessageSquare, ListOrdered, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
 import { PromptQueue } from '../components/PromptQueue';
 import type { TaskContext } from '../components/claude/PromptBuilder';
@@ -83,7 +83,13 @@ export const PromptPage: React.FC = () => {
   const { settings } = useSettingsStore();
   const { projects, fetchProjects } = useProjectStore();
   const queueLength = usePromptQueueStore((s) => s.queue.length);
+  const enqueueWithWorktreePipeline = usePromptQueueStore((s) => s.enqueueWithWorktreePipeline);
   const selectedAiProvider = settings?.ai_provider ?? 'claude';
+  const [worktreePipelineJobId, setWorktreePipelineJobId] = useState<string | null>(null);
+  const [showTestOutput, setShowTestOutput] = useState(false);
+  const worktreePipelineJob = usePromptQueueStore((s) =>
+    worktreePipelineJobId ? s.queue.find((j) => j.id === worktreePipelineJobId) : null,
+  );
   const [activeTab, setActiveTab] = useState<Tab>('builder');
   const runProvider = selectedAiProvider === 'copilot_cli' ? 'claude' : selectedAiProvider;
   const [selectedTaskId, setSelectedTaskId] = useSessionDraftState<string | null>('prompt-page:selected-task-id', null);
@@ -173,6 +179,22 @@ export const PromptPage: React.FC = () => {
   const handleReset = useCallback(() => {
     patchState(taskKey, { improved: '', error: null });
   }, [taskKey, patchState]);
+
+  const handleRunAsWorktree = useCallback(async () => {
+    const currentState = promptStates[taskKey] ?? defaultPromptState();
+    const promptToRun = currentState.improved || currentState.prompt;
+    if (!promptToRun.trim()) return;
+
+    const projectPath = selectedTask?.project_id
+      ? projects.find((p) => p.id === selectedTask.project_id)?.path
+      : undefined;
+
+    setShowTestOutput(false);
+    const jobId = await enqueueWithWorktreePipeline(
+      { prompt: promptToRun, projectPath, provider: runProvider },
+    );
+    setWorktreePipelineJobId(jobId);
+  }, [taskKey, promptStates, selectedTask, projects, runProvider, enqueueWithWorktreePipeline]);
 
   const handleSaveResult = async (prompt: string, result: string) => {
     if (selectedTask) {
@@ -281,7 +303,7 @@ export const PromptPage: React.FC = () => {
         </div>
 
         {/* Prompt builder */}
-        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 overflow-y-auto">
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 overflow-y-auto flex flex-col gap-3">
           <PromptBuilder
             taskContext={selectedTask ? buildTaskContext(selectedTask, projects) : undefined}
             onResponseSave={selectedTask ? handleSaveResult : undefined}
@@ -299,7 +321,116 @@ export const PromptPage: React.FC = () => {
               ? projects.find((p) => p.id === selectedTask.project_id)?.path
               : undefined}
             provider={runProvider}
+            onRunAsWorktree={handleRunAsWorktree}
+            worktreeButtonDisabled={
+              !!worktreePipelineJob &&
+              !['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus)
+            }
+            worktreeButtonLabel={
+              worktreePipelineJob && !['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus)
+                ? 'Running...'
+                : 'Run as Worktree'
+            }
           />
+
+          {/* Worktree pipeline status panel */}
+          {worktreePipelineJob && (
+            <div className={`rounded-lg border p-3 text-xs ${
+              worktreePipelineJob.worktreeStatus === 'merged'
+                ? 'border-green-500/30 bg-green-500/10'
+                : worktreePipelineJob.worktreeStatus === 'tests_failed' || worktreePipelineJob.pipelineError
+                ? 'border-red-500/30 bg-red-500/10'
+                : 'border-purple-500/30 bg-purple-500/10'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                <GitBranch size={12} className="text-purple-400 shrink-0" />
+                <span className="font-semibold text-purple-300 uppercase tracking-wide">Worktree Pipeline</span>
+                {worktreePipelineJob.worktreeStatus === 'merged' && (
+                  <CheckCircle2 size={13} className="text-green-400 ml-auto" />
+                )}
+                {(worktreePipelineJob.worktreeStatus === 'tests_failed' || worktreePipelineJob.pipelineError) &&
+                  worktreePipelineJob.worktreeStatus !== 'merged' && (
+                  <XCircle size={13} className="text-red-400 ml-auto" />
+                )}
+                {!['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus) &&
+                  !worktreePipelineJob.pipelineError && (
+                  <Loader2 size={13} className="text-purple-400 ml-auto animate-spin" />
+                )}
+              </div>
+
+              {/* Step indicators */}
+              <div className="flex items-center gap-1 flex-wrap text-[11px] mb-2">
+                {[
+                  { key: 'creating', label: 'Create' },
+                  { key: 'ready', label: 'Run' },
+                  { key: 'tests_running', label: 'Test' },
+                  { key: 'merging', label: 'Merge' },
+                  { key: 'merged', label: 'Done' },
+                ].map(({ key, label }, i) => {
+                  const order = ['creating', 'ready', 'tests_running', 'tests_passed', 'merging', 'merged'];
+                  const currentIdx = order.indexOf(worktreePipelineJob.worktreeStatus);
+                  const stepIdx = order.indexOf(key === 'ready' ? 'ready' : key);
+                  const isDone = currentIdx > stepIdx;
+                  const isActive = worktreePipelineJob.worktreeStatus === key ||
+                    (key === 'Run' && worktreePipelineJob.status === 'running');
+                  return (
+                    <React.Fragment key={key}>
+                      {i > 0 && <span className="text-gray-600">→</span>}
+                      <span className={`px-1.5 py-0.5 rounded ${
+                        isDone ? 'text-green-400' :
+                        isActive ? 'text-purple-300 font-medium' :
+                        'text-gray-600'
+                      }`}>
+                        {label}
+                      </span>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              {/* Branch info */}
+              {worktreePipelineJob.worktreeBranch && (
+                <div className="text-[11px] text-gray-500 mb-1">
+                  Branch: <code className="text-gray-400">{worktreePipelineJob.worktreeBranch}</code>
+                </div>
+              )}
+
+              {/* Test results summary */}
+              {worktreePipelineJob.testResults && (
+                <div className="text-[11px] mb-1">
+                  Tests:{' '}
+                  <span className={worktreePipelineJob.testResults.passed ? 'text-green-400' : 'text-red-400'}>
+                    {worktreePipelineJob.testResults.passed ? '✓ All passed' : '✗ Failed'}
+                  </span>
+                  {' '}(Frontend: {worktreePipelineJob.testResults.frontend_passed}✓ {worktreePipelineJob.testResults.frontend_failed}✗,
+                  Rust: {worktreePipelineJob.testResults.rust_passed}✓ {worktreePipelineJob.testResults.rust_failed}✗)
+                </div>
+              )}
+
+              {/* Error message */}
+              {worktreePipelineJob.pipelineError && (
+                <div className="text-[11px] text-red-400 mb-1">{worktreePipelineJob.pipelineError}</div>
+              )}
+
+              {/* Collapsible test output */}
+              {worktreePipelineJob.testOutput.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowTestOutput((v) => !v)}
+                    className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-300 cursor-pointer"
+                  >
+                    {showTestOutput ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                    {showTestOutput ? 'Hide' : 'Show'} test output ({worktreePipelineJob.testOutput.length} lines)
+                  </button>
+                  {showTestOutput && (
+                    <pre className="mt-1.5 rounded bg-black/40 border border-gray-700 p-2 text-[10px] text-gray-400 font-mono overflow-y-auto max-h-48 whitespace-pre-wrap">
+                      {worktreePipelineJob.testOutput.join('\n')}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       )}

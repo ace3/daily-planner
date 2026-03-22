@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 // ---------------------------------------------------------------------------
 pub struct JobRegistry(pub Arc<Mutex<HashMap<String, u32>>>);
 
-fn strip_ansi(s: &str) -> String {
+pub(crate) fn strip_ansi(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -32,14 +32,14 @@ fn strip_ansi(s: &str) -> String {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AiProvider {
+pub(crate) enum AiProvider {
     Claude,
     OpenCode,
     Codex,
     Copilot,
 }
 
-fn default_model_setting_key(raw_provider: Option<&str>) -> &'static str {
+pub(crate) fn default_model_setting_key(raw_provider: Option<&str>) -> &'static str {
     match raw_provider.unwrap_or("claude").to_ascii_lowercase().as_str() {
         "codex" => "default_model_codex",
         "opencode" => "default_model_opencode",
@@ -48,7 +48,7 @@ fn default_model_setting_key(raw_provider: Option<&str>) -> &'static str {
     }
 }
 
-fn hardcoded_default_model(provider: AiProvider) -> &'static str {
+pub(crate) fn hardcoded_default_model(provider: AiProvider) -> &'static str {
     match provider {
         AiProvider::Claude => "claude-sonnet-4-6",
         AiProvider::OpenCode => "gpt-4.1",
@@ -58,7 +58,7 @@ fn hardcoded_default_model(provider: AiProvider) -> &'static str {
 }
 
 impl AiProvider {
-    fn from_input(raw: Option<&str>) -> Self {
+    pub(crate) fn from_input(raw: Option<&str>) -> Self {
         match raw.unwrap_or("claude").to_ascii_lowercase().as_str() {
             "opencode" => Self::OpenCode,
             "codex" => Self::Codex,
@@ -67,13 +67,17 @@ impl AiProvider {
         }
     }
 
-    fn cli_binary(self) -> &'static str {
+    pub(crate) fn cli_binary(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::OpenCode => "opencode",
             Self::Codex => "codex",
             Self::Copilot => "copilot",
         }
+    }
+
+    pub(crate) fn hardcoded_default_model(self) -> &'static str {
+        hardcoded_default_model(self)
     }
 }
 
@@ -190,7 +194,7 @@ pub struct PromptJobDonePayload {
 
 /// Build the CLI argument list for a given provider and prompt.
 /// Extracted to a pure function so it can be unit-tested independently.
-fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&str>) -> Vec<String> {
+pub(crate) fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&str>) -> Vec<String> {
     let trimmed_model = model.map(str::trim).filter(|s| !s.is_empty());
     match provider {
         // OpenCode CLI docs use: `opencode run [message..]` for non-interactive execution.
@@ -204,7 +208,7 @@ fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&str>) -> Ve
             args
         }
         AiProvider::Codex => {
-            let mut args = vec!["--no-interactive".to_string()];
+            let mut args = vec!["exec".to_string()];
             if let Some(model) = trimmed_model {
                 args.push("--model".to_string());
                 args.push(model.to_string());
@@ -478,9 +482,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_run_args_codex_includes_no_interactive() {
+    fn test_build_run_args_codex_includes_exec_subcommand() {
         let args = build_run_args(AiProvider::Codex, "do something", None);
-        assert_eq!(args[0], "--no-interactive");
+        assert_eq!(args[0], "exec");
         assert_eq!(args.last().unwrap(), "do something");
     }
 
@@ -489,7 +493,7 @@ mod tests {
         let args = build_run_args(AiProvider::Codex, "do something", Some("gpt-5.3-codex"));
         assert_eq!(
             args,
-            vec!["--no-interactive", "--model", "gpt-5.3-codex", "do something"]
+            vec!["exec", "--model", "gpt-5.3-codex", "do something"]
         );
     }
 

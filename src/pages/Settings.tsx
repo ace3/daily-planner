@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
-import { backupData, restoreData, resetAppData, checkCopilotCliAvailability } from '../lib/tauri';
+import {
+  backupData, restoreData, resetAppData, checkCopilotCliAvailability,
+  triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
+  restoreFromBackupSession, deleteBackupSession, getBackupSettings, setBackupSettings,
+  type BackupSessionInfo, type BackupSettings,
+} from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
 import { useSessionDraftState } from '../hooks/useSessionDraftState';
 
@@ -33,6 +38,16 @@ export const SettingsPage: React.FC = () => {
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
   const [copilotCliAvailable, setCopilotCliAvailable] = useState<boolean | null>(null);
+
+  // Auto Backup state
+  const [backupSessions, setBackupSessions] = useState<BackupSessionInfo[]>([]);
+  const [backupSettings, setBackupSettingsState] = useState<BackupSettings | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupNowLoading, setBackupNowLoading] = useState(false);
+  const [verifyAllLoading, setVerifyAllLoading] = useState(false);
+  const [sessionActions, setSessionActions] = useState<Record<string, string>>({});
+  const [restoreSessionId, setRestoreSessionId] = useState<string | null>(null);
+  const [showSessions, setShowSessions] = useState(false);
   const [draft, setDraft] = useSessionDraftState<SettingsDraft>('settings-page-draft', {
     timezone_offset: '',
     session1_kickstart: '',
@@ -48,12 +63,26 @@ export const SettingsPage: React.FC = () => {
     initializedPrompt: false,
   });
 
+  const loadBackupData = useCallback(async () => {
+    setBackupLoading(true);
+    try {
+      const [sessions, bSettings] = await Promise.all([listBackupSessions(), getBackupSettings()]);
+      setBackupSessions(sessions ?? []);
+      setBackupSettingsState(bSettings ?? null);
+    } catch (e) {
+      toast.error(`Failed to load backup data: ${String(e)}`);
+    } finally {
+      setBackupLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSettings();
     fetchGlobalPrompt();
     checkCopilotCliAvailability()
       .then((status) => setCopilotCliAvailable(status.available))
       .catch(() => setCopilotCliAvailable(false));
+    loadBackupData();
   }, []);
 
   useEffect(() => {
@@ -172,6 +201,85 @@ export const SettingsPage: React.FC = () => {
       toast.error(String(e));
     } finally {
       setDataOpLoading(false);
+    }
+  };
+
+  const handleBackupNow = async () => {
+    setBackupNowLoading(true);
+    try {
+      const session = await triggerBackupNow();
+      toast.success(`Backup created: ${session.item_count} items`);
+      await loadBackupData();
+    } catch (e) {
+      toast.error(`Backup failed: ${String(e)}`);
+    } finally {
+      setBackupNowLoading(false);
+    }
+  };
+
+  const handleVerifyAll = async () => {
+    setVerifyAllLoading(true);
+    try {
+      await verifyAllBackupSessions();
+      await loadBackupData();
+      toast.success('All sessions verified');
+    } catch (e) {
+      toast.error(`Verify failed: ${String(e)}`);
+    } finally {
+      setVerifyAllLoading(false);
+    }
+  };
+
+  const handleVerifySession = async (id: string) => {
+    setSessionActions((p) => ({ ...p, [id]: 'verifying' }));
+    try {
+      const updated = await verifyBackupSession(id);
+      setBackupSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      toast.success(`Integrity: ${updated.integrity_status}`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSessionActions((p) => { const n = { ...p }; delete n[id]; return n; });
+    }
+  };
+
+  const handleDeleteSession = async (id: string) => {
+    setSessionActions((p) => ({ ...p, [id]: 'deleting' }));
+    try {
+      await deleteBackupSession(id);
+      setBackupSessions((prev) => prev.filter((s) => s.id !== id));
+      toast.success('Session deleted');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSessionActions((p) => { const n = { ...p }; delete n[id]; return n; });
+    }
+  };
+
+  const handleRestoreSession = async () => {
+    if (!restoreSessionId) return;
+    const id = restoreSessionId;
+    setRestoreSessionId(null);
+    setSessionActions((p) => ({ ...p, [id]: 'restoring' }));
+    try {
+      await restoreFromBackupSession(id);
+      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      toast.success('Restored from backup session');
+    } catch (e) {
+      toast.error(`Restore failed: ${String(e)}`);
+    } finally {
+      setSessionActions((p) => { const n = { ...p }; delete n[id]; return n; });
+    }
+  };
+
+  const handleSaveBackupSettings = async (patch: Partial<BackupSettings>) => {
+    if (!backupSettings) return;
+    const updated = { ...backupSettings, ...patch };
+    setBackupSettingsState(updated);
+    try {
+      await setBackupSettings(updated);
+    } catch (e) {
+      toast.error(`Failed to save backup settings: ${String(e)}`);
     }
   };
 
@@ -435,6 +543,191 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
+        {/* Auto Backup */}
+        <section className={sectionClass}>
+          <div className={sectionHeaderClass}>
+            <HardDrive size={14} className="text-gray-500 dark:text-[#8B949E]" />
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Auto Backup</h2>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<RefreshCw size={12} className={backupLoading ? 'animate-spin' : ''} />}
+                onClick={loadBackupData}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Shield size={12} />}
+                onClick={handleBackupNow}
+                loading={backupNowLoading}
+              >
+                Backup Now
+              </Button>
+            </div>
+          </div>
+          <div className="p-4 space-y-4">
+            {backupSettings && (
+              <>
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-[#8B949E]">Enable Auto Backup</p>
+                    <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5">Automatically backup the database on a schedule</p>
+                  </div>
+                  <button
+                    onClick={() => handleSaveBackupSettings({ enabled: !backupSettings.enabled })}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${backupSettings.enabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-[#30363D]'}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${backupSettings.enabled ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                <div className="border-t border-gray-100 dark:border-[#21262D]" />
+
+                {/* Interval */}
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-[#8B949E]">Backup Interval</p>
+                    <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5">Minutes between automatic backups</p>
+                  </div>
+                  <input
+                    type="number"
+                    min={5}
+                    max={1440}
+                    value={backupSettings.interval_min}
+                    onChange={(e) => setBackupSettingsState((p) => p ? { ...p, interval_min: Number(e.target.value) } : p)}
+                    onBlur={() => handleSaveBackupSettings({ interval_min: backupSettings.interval_min })}
+                    className={`w-20 ${inputClass}`}
+                  />
+                </div>
+
+                <div className="border-t border-gray-100 dark:border-[#21262D]" />
+
+                {/* Max sessions */}
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-[#8B949E]">Max Sessions</p>
+                    <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5">How many backup snapshots to keep</p>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={backupSettings.max_sessions}
+                    onChange={(e) => setBackupSettingsState((p) => p ? { ...p, max_sessions: Number(e.target.value) } : p)}
+                    onBlur={() => handleSaveBackupSettings({ max_sessions: backupSettings.max_sessions })}
+                    className={`w-20 ${inputClass}`}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Sessions header */}
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-3">
+              <button
+                className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-[#8B949E] cursor-pointer hover:text-gray-700 dark:hover:text-[#E6EDF3] transition-colors w-full"
+                onClick={() => setShowSessions((p) => !p)}
+              >
+                {showSessions ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                Backup Sessions ({backupSessions.length})
+                {backupSessions.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<ShieldCheck size={11} />}
+                    onClick={(e) => { e.stopPropagation(); handleVerifyAll(); }}
+                    loading={verifyAllLoading}
+                    className="ml-auto text-[10px]"
+                  >
+                    Verify All
+                  </Button>
+                )}
+              </button>
+
+              {showSessions && (
+                <div className="mt-2 space-y-1.5">
+                  {backupSessions.length === 0 && (
+                    <p className="text-xs text-gray-400 dark:text-[#484F58] py-2 text-center">No backup sessions yet</p>
+                  )}
+                  {backupSessions.map((session) => {
+                    const action = sessionActions[session.id];
+                    const statusIcon = session.integrity_status === 'verified'
+                      ? <ShieldCheck size={12} className="text-green-400 shrink-0" />
+                      : session.integrity_status === 'corrupted'
+                        ? <ShieldX size={12} className="text-red-400 shrink-0" />
+                        : <Shield size={12} className="text-gray-400 shrink-0" />;
+                    const statusColor = session.integrity_status === 'verified'
+                      ? 'text-green-400'
+                      : session.integrity_status === 'corrupted'
+                        ? 'text-red-400'
+                        : 'text-gray-400';
+                    const date = new Date(session.created_at).toLocaleString();
+                    const sizekb = (session.backup_size / 1024).toFixed(1);
+
+                    return (
+                      <div
+                        key={session.id}
+                        className="rounded-lg border border-gray-100 dark:border-[#21262D] bg-gray-50 dark:bg-[#0F1117] p-2.5 flex items-center gap-2 text-xs"
+                      >
+                        {statusIcon}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-gray-700 dark:text-[#E6EDF3] font-mono truncate">{date}</span>
+                            <span className={`${statusColor} uppercase text-[10px] font-semibold`}>{session.integrity_status}</span>
+                          </div>
+                          <div className="text-gray-400 dark:text-[#484F58] mt-0.5">
+                            {session.item_count} items · {sizekb} KB · v{session.schema_version}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<ShieldCheck size={11} />}
+                            onClick={() => handleVerifySession(session.id)}
+                            loading={action === 'verifying'}
+                            disabled={!!action}
+                            className="text-[10px] px-1.5"
+                          >
+                            Verify
+                          </Button>
+                          {session.integrity_status !== 'corrupted' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<Upload size={11} />}
+                              onClick={() => setRestoreSessionId(session.id)}
+                              loading={action === 'restoring'}
+                              disabled={!!action}
+                              className="text-[10px] px-1.5"
+                            >
+                              Restore
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Trash2 size={11} className="text-red-400" />}
+                            onClick={() => handleDeleteSession(session.id)}
+                            loading={action === 'deleting'}
+                            disabled={!!action}
+                            className="text-[10px] px-1.5 text-red-400"
+                          >
+                            Del
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
         {/* Data Management */}
         <section className={sectionClass}>
           <div className={sectionHeaderClass}>
@@ -497,6 +790,16 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
       </div>
+
+      <ConfirmModal
+        open={!!restoreSessionId}
+        title="Restore from Backup Session"
+        description="This will replace ALL current data with this backup snapshot. This cannot be undone."
+        confirmLabel="Restore"
+        variant="warning"
+        onConfirm={handleRestoreSession}
+        onCancel={() => setRestoreSessionId(null)}
+      />
 
       <ConfirmModal
         open={showRestoreConfirm}

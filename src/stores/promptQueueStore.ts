@@ -17,6 +17,8 @@ export interface PromptJob {
   originalProjectPath?: string;
   provider?: string;
   isWorktree?: boolean;
+  /** When true, finishJob auto-runs tests → merge → cleanup pipeline */
+  worktreePipeline?: boolean;
   status: 'pending' | 'running' | 'done' | 'error';
   improveStep: QueueStep;
   runStep: QueueStep;
@@ -29,6 +31,8 @@ export interface PromptJob {
   worktreeBranch?: string;
   testResults?: WorktreeTestResult;
   testOutput: string[];
+  /** Error message from any pipeline step failure */
+  pipelineError?: string;
 }
 
 interface JobLogPayload {
@@ -56,6 +60,11 @@ interface PromptQueueState {
   runTestsForJob: (id: string) => Promise<void>;
   mergeWorktreeForJob: (id: string, targetBranch?: string) => Promise<void>;
   cleanupWorktreeForJob: (id: string) => Promise<void>;
+  /** Enqueue a job, create worktree, run prompt → tests → merge → cleanup automatically. Returns job id. */
+  enqueueWithWorktreePipeline: (
+    input: Pick<PromptJob, 'prompt' | 'projectPath' | 'provider'>,
+    baseBranch?: string,
+  ) => Promise<string>;
 }
 
 export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
@@ -171,10 +180,28 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       ),
     }));
 
-    // Notify — only when the window is not in focus
-    if (job && !document.hasFocus()) {
+    // Notify — only when the window is not in focus (and not a silent pipeline job)
+    const updatedJob = get().queue.find((j) => j.id === id);
+    if (job && !updatedJob?.worktreePipeline && !document.hasFocus()) {
       const msg = `Prompt #${job.queueNumber} ${success ? 'finished successfully' : 'failed'}`;
       success ? toast.success(msg) : toast.error(msg);
+    }
+
+    // Auto-continue worktree pipeline: run tests after prompt completes
+    if (updatedJob?.worktreePipeline && updatedJob.worktreePath) {
+      if (success) {
+        setTimeout(() => get().runTestsForJob(id), 0);
+      } else {
+        // Prompt step failed — cleanup worktree and surface error
+        set((state) => ({
+          queue: state.queue.map((j) =>
+            j.id === id
+              ? { ...j, worktreeStatus: 'tests_failed' as PromptWorktreeStatus, pipelineError: 'Prompt execution failed' }
+              : j,
+          ),
+        }));
+        setTimeout(() => get().cleanupWorktreeForJob(id), 0);
+      }
     }
 
     const pendingWorktreeJobs = get().queue.filter(
@@ -278,15 +305,51 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
             : j,
         ),
       }));
+
+      // Auto-continue pipeline
+      const afterTests = get().queue.find((j) => j.id === id);
+      if (afterTests?.worktreePipeline) {
+        if (result.passed) {
+          await get().mergeWorktreeForJob(id, 'main');
+          // If merge failed, the status reverts to tests_passed — still cleanup
+          const afterMerge = get().queue.find((j) => j.id === id);
+          if (afterMerge?.worktreeStatus !== 'merged') {
+            const mergeErr = afterMerge?.pipelineError ?? 'Merge failed';
+            set((state) => ({
+              queue: state.queue.map((j) =>
+                j.id === id ? { ...j, pipelineError: mergeErr } : j,
+              ),
+            }));
+            await get().cleanupWorktreeForJob(id);
+          }
+        } else {
+          // Tests failed — cleanup, don't merge
+          set((state) => ({
+            queue: state.queue.map((j) =>
+              j.id === id
+                ? { ...j, pipelineError: `Tests failed: ${result.frontend_failed} frontend, ${result.rust_failed} rust` }
+                : j,
+            ),
+          }));
+          await get().cleanupWorktreeForJob(id);
+        }
+      }
     } catch (e) {
       set((state) => ({
         queue: state.queue.map((j) =>
           j.id === id
-            ? { ...j, worktreeStatus: 'tests_failed' as PromptWorktreeStatus }
+            ? { ...j, worktreeStatus: 'tests_failed' as PromptWorktreeStatus, pipelineError: String(e) }
             : j,
         ),
       }));
-      toast.error(`Test run failed: ${String(e)}`);
+      const isPipeline = get().queue.find((j) => j.id === id)?.worktreePipeline;
+      if (!isPipeline) {
+        toast.error(`Test run failed: ${String(e)}`);
+      }
+      // Always cleanup on pipeline failure
+      if (isPipeline) {
+        await get().cleanupWorktreeForJob(id);
+      }
     }
   },
 
@@ -308,24 +371,34 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
             j.id === id ? { ...j, worktreeStatus: 'merged' as PromptWorktreeStatus } : j,
           ),
         }));
-        toast.success(`Merged into ${targetBranch}`);
+        if (!get().queue.find((j) => j.id === id)?.worktreePipeline) {
+          toast.success(`Merged into ${targetBranch}`);
+        }
         // Auto-cleanup after successful merge
         await get().cleanupWorktreeForJob(id);
       } else {
         set((state) => ({
           queue: state.queue.map((j) =>
-            j.id === id ? { ...j, worktreeStatus: 'tests_passed' as PromptWorktreeStatus } : j,
+            j.id === id
+              ? { ...j, worktreeStatus: 'tests_passed' as PromptWorktreeStatus, pipelineError: result.message }
+              : j,
           ),
         }));
-        toast.error(`Merge failed: ${result.message}`);
+        if (!get().queue.find((j) => j.id === id)?.worktreePipeline) {
+          toast.error(`Merge failed: ${result.message}`);
+        }
       }
     } catch (e) {
       set((state) => ({
         queue: state.queue.map((j) =>
-          j.id === id ? { ...j, worktreeStatus: 'tests_passed' as PromptWorktreeStatus } : j,
+          j.id === id
+            ? { ...j, worktreeStatus: 'tests_passed' as PromptWorktreeStatus, pipelineError: String(e) }
+            : j,
         ),
       }));
-      toast.error(`Merge error: ${String(e)}`);
+      if (!get().queue.find((j) => j.id === id)?.worktreePipeline) {
+        toast.error(`Merge error: ${String(e)}`);
+      }
     }
   },
 
@@ -338,6 +411,37 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
     } catch {
       // Cleanup errors are non-fatal
     }
+  },
+
+  enqueueWithWorktreePipeline: async (input, baseBranch) => {
+    const id = crypto.randomUUID();
+    const queueNumber = get().nextQueueNumber;
+    const newJob: PromptJob = {
+      id,
+      queueNumber,
+      prompt: input.prompt,
+      projectPath: input.projectPath,
+      originalProjectPath: input.projectPath,
+      provider: input.provider,
+      isWorktree: true,
+      worktreePipeline: true,
+      status: 'pending',
+      improveStep: 'done',
+      runStep: 'waiting',
+      logs: [],
+      createdAt: new Date(),
+      worktreeStatus: 'creating',
+      testOutput: [],
+    };
+
+    set((state) => ({
+      queue: [...state.queue, newJob],
+      nextQueueNumber: state.nextQueueNumber + 1,
+    }));
+
+    // Create worktree + start prompt job; pipeline continues automatically via finishJob
+    await get().createWorktreeForJob(id, baseBranch);
+    return id;
   },
 }));
 

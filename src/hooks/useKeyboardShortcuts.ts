@@ -25,6 +25,10 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             navigate('/reports');
             break;
+          case '6':
+            e.preventDefault();
+            navigate('/remote-access');
+            break;
           case ',':
             e.preventDefault();
             navigate('/settings');

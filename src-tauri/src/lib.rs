@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod http_server;
 mod scheduler;
 mod tray;
 
@@ -52,9 +53,29 @@ pub fn run() {
             };
 
             app.manage(db);
-            app.manage(commands::claude::JobRegistry(std::sync::Arc::new(
-                std::sync::Mutex::new(std::collections::HashMap::new()),
-            )));
+
+            // Job registry shared by Tauri commands AND the HTTP server
+            let job_registry_arc = std::sync::Arc::new(
+                std::sync::Mutex::new(std::collections::HashMap::<String, u32>::new()),
+            );
+            app.manage(commands::claude::JobRegistry(job_registry_arc.clone()));
+
+            // Start embedded HTTP server
+            {
+                let http_db_path = db_path.clone();
+                let http_registry = job_registry_arc.clone();
+                tauri::async_runtime::spawn(async move {
+                    http_server::start(http_db_path, http_registry).await;
+                });
+            }
+
+            // Start auto-backup scheduler
+            {
+                let backup_db_path = db_path.clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::auto_backup::start_backup_scheduler(backup_db_path).await;
+                });
+            }
 
             // Setup tray
             tray::setup_tray(app.handle())?;
@@ -139,6 +160,18 @@ pub fn run() {
             commands::worktree::run_tests_in_worktree,
             commands::worktree::merge_worktree_branch,
             commands::worktree::cleanup_prompt_worktree,
+            // HTTP server / remote access
+            http_server::get_local_ip,
+            http_server::get_http_server_port,
+            // Auto backup
+            commands::auto_backup::trigger_backup_now,
+            commands::auto_backup::list_backup_sessions,
+            commands::auto_backup::verify_backup_session,
+            commands::auto_backup::verify_all_backup_sessions,
+            commands::auto_backup::restore_from_backup_session,
+            commands::auto_backup::delete_backup_session,
+            commands::auto_backup::get_backup_settings,
+            commands::auto_backup::set_backup_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

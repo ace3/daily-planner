@@ -116,6 +116,42 @@ export const mergeWorktreeBranch = (projectPath: string, branchName: string, tar
 export const cleanupPromptWorktree = (projectPath: string, worktreePath: string, branchName: string) =>
   invoke<CleanupWorktreeResult>('cleanup_prompt_worktree', { projectPath, worktreePath, branchName });
 
+// Remote access (HTTP server)
+export const getLocalIp = () => invoke<string>('get_local_ip', {});
+export const getHttpServerPort = () => invoke<number>('get_http_server_port', {});
+
+// Auto backup
+export interface BackupSessionInfo {
+  id: string;
+  created_at: string;
+  schema_version: number;
+  backup_size: number;
+  item_count: number;
+  integrity_status: 'verified' | 'corrupted' | 'unknown';
+  checksum: string;
+  file_path: string;
+}
+
+export interface BackupSettings {
+  enabled: boolean;
+  interval_min: number;
+  max_sessions: number;
+}
+
+export const triggerBackupNow = () => invoke<BackupSessionInfo>('trigger_backup_now', {});
+export const listBackupSessions = () => invoke<BackupSessionInfo[]>('list_backup_sessions', {});
+export const verifyBackupSession = (sessionId: string) =>
+  invoke<BackupSessionInfo>('verify_backup_session', { sessionId });
+export const verifyAllBackupSessions = () =>
+  invoke<BackupSessionInfo[]>('verify_all_backup_sessions', {});
+export const restoreFromBackupSession = (sessionId: string) =>
+  invoke<string>('restore_from_backup_session', { sessionId });
+export const deleteBackupSession = (sessionId: string) =>
+  invoke<void>('delete_backup_session', { sessionId });
+export const getBackupSettings = () => invoke<BackupSettings>('get_backup_settings', {});
+export const setBackupSettings = (enabled: boolean, intervalMin: number, maxSessions: number) =>
+  invoke<void>('set_backup_settings', { enabled, intervalMin, maxSessions });
+
 // Reports
 export const generateReport = (date: string) => invoke<DailyReport>('generate_report', { date });
 export const getReport = (date: string) => invoke<DailyReport | null>('get_report', { date });

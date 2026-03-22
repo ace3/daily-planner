@@ -8,6 +8,7 @@ import { TemplatesPage } from './pages/TemplatesPage';
 import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { RemoteAccessPage } from './pages/RemoteAccessPage';
 import { MorningPlanning } from './pages/MorningPlanning';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
@@ -67,6 +68,7 @@ const AppInner: React.FC = () => {
           <Route path="/reports" element={<Reports />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/remote-access" element={<RemoteAccessPage />} />
         </Routes>
       </div>
 
