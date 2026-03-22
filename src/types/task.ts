@@ -48,10 +48,5 @@ export interface UpdateTaskInput {
 export interface PromptTemplate {
   id: string;
   name: string;
-  category: string;
-  template: string;
-  variables: string; // JSON array string
-  is_builtin: boolean;
-  use_count: number;
-  created_at: string;
+  content: string;
 }

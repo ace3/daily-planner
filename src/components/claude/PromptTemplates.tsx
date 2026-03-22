@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Search } from 'lucide-react';
-import { Badge } from '../ui/Badge';
 import { Input } from '../ui/Input';
 import type { PromptTemplate } from '../../types/task';
 import { getPromptTemplates } from '../../lib/tauri';
@@ -8,14 +7,6 @@ import { getPromptTemplates } from '../../lib/tauri';
 interface PromptTemplatesProps {
   onSelect: (template: PromptTemplate) => void;
 }
-
-const categoryColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple'> = {
-  planning: 'blue',
-  debugging: 'red',
-  'code-review': 'amber',
-  research: 'purple',
-  general: 'gray',
-};
 
 export const PromptTemplates: React.FC<PromptTemplatesProps> = ({ onSelect }) => {
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
@@ -28,7 +19,7 @@ export const PromptTemplates: React.FC<PromptTemplatesProps> = ({ onSelect }) =>
   const filtered = templates.filter(
     (t) =>
       t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.category.toLowerCase().includes(search.toLowerCase())
+      t.content.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -50,10 +41,9 @@ export const PromptTemplates: React.FC<PromptTemplatesProps> = ({ onSelect }) =>
               <span className="text-sm font-medium text-[#E6EDF3] group-hover:text-blue-400 transition-colors">
                 {t.name}
               </span>
-              <Badge variant={categoryColors[t.category] || 'gray'}>{t.category}</Badge>
             </div>
             <p className="text-xs text-[#484F58] mt-1 line-clamp-2">
-              {t.template.slice(0, 100)}...
+              {t.content.slice(0, 100)}...
             </p>
           </button>
         ))}

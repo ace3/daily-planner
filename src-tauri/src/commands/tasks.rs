@@ -133,7 +133,52 @@ pub fn end_focus_session(
 #[tauri::command]
 pub fn get_prompt_templates(
     db: State<'_, DbConnection>,
-) -> Result<Vec<queries::PromptTemplate>, String> {
+) -> Result<Vec<queries::PromptTemplateItem>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_prompt_templates(&conn).map_err(|e| e.to_string())
+    queries::list_prompt_templates(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_prompt_template(name: String, content: String, db: State<'_, DbConnection>) -> Result<queries::PromptTemplateItem, String> {
+    let trimmed_name = name.trim();
+    let trimmed_content = content.trim();
+    if trimmed_name.is_empty() {
+        return Err("Template name is required".to_string());
+    }
+    if trimmed_content.is_empty() {
+        return Err("Template content is required".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::create_prompt_template(&conn, trimmed_name, trimmed_content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_prompt_template(id: String, name: String, content: String, db: State<'_, DbConnection>) -> Result<queries::PromptTemplateItem, String> {
+    let trimmed_id = id.trim();
+    let trimmed_name = name.trim();
+    let trimmed_content = content.trim();
+    if trimmed_id.is_empty() {
+        return Err("Template id is required".to_string());
+    }
+    if trimmed_name.is_empty() {
+        return Err("Template name is required".to_string());
+    }
+    if trimmed_content.is_empty() {
+        return Err("Template content is required".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::update_prompt_template(&conn, trimmed_id, trimmed_name, trimmed_content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_prompt_template(id: String, db: State<'_, DbConnection>) -> Result<bool, String> {
+    let trimmed_id = id.trim();
+    if trimmed_id.is_empty() {
+        return Err("Template id is required".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::delete_prompt_template(&conn, trimmed_id).map_err(|e| e.to_string())
 }
