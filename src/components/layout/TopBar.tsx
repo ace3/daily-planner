@@ -17,9 +17,9 @@ export const TopBar: React.FC = () => {
     : format(new Date(), 'EEE, MMM d');
 
   return (
-    <div className="h-11 flex items-center justify-between px-4 border-b border-gray-100 bg-white dark:border-[#21262D] dark:bg-[#0F1117] shrink-0">
+    <div className="h-11 flex items-center justify-between px-4 border-b border-[#E2E8F0] bg-[#F8FAFC] dark:border-[#1E293B] dark:bg-[#0F172A] shrink-0">
       <div className="flex items-center gap-3">
-        <span className="text-xs font-medium text-gray-500 dark:text-[#8B949E]">{displayDate}</span>
+        <span className="text-xs font-medium text-[#64748B] dark:text-[#94A3B8]">{displayDate}</span>
         {sessionInfo && (
           <div className="flex items-center gap-2">
             <div
@@ -36,25 +36,25 @@ export const TopBar: React.FC = () => {
       <div className="flex items-center gap-3">
         {sessionInfo && sessionInfo.phase !== 'off' && sessionInfo.phase !== 'end_of_day' && (
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-gray-400 dark:text-[#484F58]">{sessionInfo.nextEventLabel} in</span>
-            <span className="font-mono font-medium text-gray-900 dark:text-[#E6EDF3]">
+            <span className="text-[#64748B] dark:text-[#64748B]">{sessionInfo.nextEventLabel} in</span>
+            <span className="font-mono font-medium text-[#111827] dark:text-[#E5E7EB]">
               {formatCountdown(sessionInfo.timeUntilNext)}
             </span>
           </div>
         )}
 
-        <span className="text-gray-300 dark:text-[#30363D] select-none">|</span>
+        <span className="text-[#CBD5E1] dark:text-[#334155] select-none">|</span>
 
         {/* Theme toggle */}
         <button
           onClick={() => setTheme(isDark ? 'light' : 'dark')}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:text-[#484F58] dark:hover:text-[#E6EDF3] dark:hover:bg-[#21262D] transition-colors cursor-pointer"
+          className="p-1.5 rounded-[10px] text-[#64748B] hover:text-[#111827] hover:bg-[#F1F5F9] dark:text-[#94A3B8] dark:hover:text-[#E5E7EB] dark:hover:bg-[#1E293B] transition-colors cursor-pointer"
           title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {isDark ? <Sun size={14} /> : <Moon size={14} />}
         </button>
 
-        <span className="text-gray-300 dark:text-[#30363D] select-none">|</span>
+        <span className="text-[#CBD5E1] dark:text-[#334155] select-none">|</span>
 
         <AiProviderSelector />
       </div>

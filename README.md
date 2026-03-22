@@ -1,6 +1,10 @@
-# Daily Planner
+# Vegr
 
-A developer-focused daily planning desktop app built with Tauri v2, React 19, and Rust. Structures your workday into timed sessions, tracks tasks, provides focus mode with a Pomodoro-style timer, and generates AI-powered daily reflection reports via the Anthropic Claude API.
+**Path. Direction. Clarity.**
+
+Vegr is a developer-focused daily planning desktop app built with Tauri v2, React 19, and Rust. It structures your workday into timed sessions, tracks tasks, provides a focus mode with a Pomodoro-style timer, and generates AI-powered daily reflection reports via the Anthropic Claude API.
+
+The interface is calm, focused, minimal, and Nordic — designed to feel like a steady guide that helps you see the next clear step.
 
 ## Features
 
@@ -13,6 +17,48 @@ A developer-focused daily planning desktop app built with Tauri v2, React 19, an
 - **Encrypted API key storage** — Claude API token stored with AES-256-GCM encryption in local SQLite
 - **System tray** — Minimal system tray integration
 - **Autostart** — Optional launch on login
+- **Remote web UI** — Access your planner from a browser on the same network
+- **Prompt queue** — Queue and run multiple AI prompts with job management and cancellation
+- **Prompt templates** — Save and reuse AI prompt templates
+- **Multiple AI providers** — Supports Anthropic Claude, OpenAI Codex, and GitHub Copilot
+
+## Brand
+
+| Attribute | Value |
+|---|---|
+| Name | Vegr |
+| Meaning | path, way, direction |
+| Tone | calm, focused, minimal, Nordic, premium, steady |
+| Feeling | structured, soft, cool, clear, modern |
+| Primary mood | quiet control, progress, clarity |
+
+### Design tokens
+
+Vegr uses a two-mode design system with cool neutrals, restrained accent usage, soft borders, and subtle shadows.
+
+**Light mode base**
+
+| Token | Value |
+|---|---|
+| App background | `#F8FAFC` |
+| Surface | `#FFFFFF` |
+| Text primary | `#111827` |
+| Text secondary | `#475569` |
+| Border | `#E2E8F0` |
+| Accent | `#60A5FA` |
+
+**Dark mode base**
+
+| Token | Value |
+|---|---|
+| App background | `#0F172A` |
+| Surface | `#111827` |
+| Text primary | `#E5E7EB` |
+| Text secondary | `#CBD5E1` |
+| Border | `#334155` |
+| Accent | `#7DD3FC` |
+
+Typography uses Inter with semibold headings, medium labels, and regular body. Radius scale: 10–18px. Shadows are subtle only.
 
 ## Requirements
 
@@ -72,8 +118,8 @@ npm run tauri build
 ```
 
 Output locations:
-- **macOS app:** `src-tauri/target/release/bundle/macos/Daily Planner.app`
-- **macOS DMG:** `src-tauri/target/release/bundle/dmg/` (requires Xcode code signing setup)
+- **macOS app:** `src-tauri/target/release/bundle/macos/Vegr.app`
+- **macOS DMG:** `src-tauri/target/release/bundle/dmg/`
 - **Windows:** `src-tauri/target/release/bundle/msi/` or `nsis/`
 
 ## Usage
@@ -98,8 +144,11 @@ Output locations:
 - **Dashboard** — Overview of current session, tasks, and progress
 - **Focus Mode** — Start a focus timer for a specific task
 - **Morning Planning** — AI-assisted planning prompts (available during planning phase)
+- **Templates** — Save and manage reusable prompt templates
 - **Reports** — View and generate AI daily reflection reports
-- **Settings** — API key, timezone, session times, autostart
+- **Projects** — Organize tasks by project
+- **Remote Access** — Access Vegr from a browser on the same network
+- **Settings** — API key, AI provider, timezone, session times, autostart
 
 ## Tech Stack
 
@@ -107,7 +156,7 @@ Output locations:
 |---|---|
 | Desktop framework | Tauri v2 |
 | Frontend | React 19 + TypeScript + Vite |
-| Styling | Tailwind CSS v3 |
+| Styling | Tailwind CSS v3 + Vegr design tokens |
 | State management | Zustand v5 |
 | Charts | Recharts |
 | Backend | Rust |

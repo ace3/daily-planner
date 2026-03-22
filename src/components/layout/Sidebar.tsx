@@ -14,13 +14,13 @@ const navItems = [
 
 export const Sidebar: React.FC = () => {
   return (
-    <aside className="w-14 flex flex-col items-center py-4 gap-1 bg-white border-r border-gray-100 dark:bg-[#0F1117] dark:border-[#21262D] shrink-0">
+    <aside className="w-14 flex flex-col items-center py-4 gap-1 bg-[#F8FAFC] border-r border-[#E2E8F0] dark:bg-[#0F172A] dark:border-[#1E293B] shrink-0">
       {/* Logo */}
-      <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center mb-3">
-        <Zap size={16} className="text-white" />
+      <div className="w-8 h-8 rounded-[10px] bg-[#60A5FA] dark:bg-[#7DD3FC] flex items-center justify-center mb-3 shadow-vegr-sm">
+        <Zap size={16} className="text-white dark:text-[#111827]" />
       </div>
 
-      <div className="flex-1 flex flex-col items-center gap-1 w-full px-2">
+      <div className="flex-1 flex flex-col items-center gap-0.5 w-full px-2">
         {navItems.map(({ to, icon: Icon, label, shortcut }) => (
           <NavLink
             key={to}
@@ -28,10 +28,10 @@ export const Sidebar: React.FC = () => {
             end={to === '/'}
             title={`${label} (${shortcut})`}
             className={({ isActive }) =>
-              `w-full flex items-center justify-center p-2.5 rounded-lg transition-colors duration-150 cursor-pointer group relative
+              `w-full flex items-center justify-center p-2.5 rounded-[10px] transition-colors duration-150 cursor-pointer group relative
               ${isActive
-                ? 'bg-blue-500/20 text-blue-400'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-[#484F58] dark:hover:text-[#8B949E] dark:hover:bg-[#161B22]'
+                ? 'bg-[#DBEAFE] text-[#2563EB] dark:bg-[rgba(125,211,252,0.16)] dark:text-[#7DD3FC]'
+                : 'text-[#64748B] hover:text-[#111827] hover:bg-[#F1F5F9] dark:text-[#94A3B8] dark:hover:text-[#E5E7EB] dark:hover:bg-[#1E293B]'
               }`
             }
           >
