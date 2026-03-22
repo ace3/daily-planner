@@ -21,6 +21,27 @@ export interface Task {
   updated_at: string;
   completed_at: string | null;
   project_id: string | null;
+  worktree_path: string | null;
+  worktree_branch: string | null;
+  worktree_status: WorktreeStatus | null;
+}
+
+export type WorktreeStatus = 'active' | 'merged' | 'abandoned';
+
+export interface TaskWorktreeRunResult {
+  task_id: string;
+  worktree_path: string;
+  branch_name: string;
+  launch_command: string;
+  prompt: string;
+  status: WorktreeStatus;
+}
+
+export interface TaskWorktreeCleanupResult {
+  task_id: string;
+  status: WorktreeStatus;
+  branch_deleted: boolean;
+  warning: string | null;
 }
 
 export interface CreateTaskInput {

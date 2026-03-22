@@ -94,6 +94,8 @@ pub fn run() {
             commands::tasks::carry_task_forward,
             commands::tasks::reorder_tasks,
             commands::tasks::save_prompt_result,
+            commands::tasks::run_task_as_worktree,
+            commands::tasks::cleanup_task_worktree,
             commands::tasks::start_focus_session,
             commands::tasks::end_focus_session,
             commands::tasks::get_prompt_templates,

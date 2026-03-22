@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -39,6 +39,12 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 3 {
         apply_v3(conn)?;
+    }
+    if current < 4 {
+        apply_v4(conn)?;
+    }
+    if current < 5 {
+        apply_v5(conn)?;
     }
 
     eprintln!("[migrations] All migrations applied.  Schema is now v{}.", SCHEMA_VERSION);
@@ -120,11 +126,30 @@ fn infer_legacy_version(conn: &Connection) -> anyhow::Result<u32> {
         return Ok(2);
     }
 
-    eprintln!("[migrations] Legacy DB detected; inferred v3.");
+    if !setting_exists(conn, "ai_provider")? {
+        eprintln!("[migrations] Legacy DB detected; inferred v3.");
+        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
+        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
+        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
+        return Ok(3);
+    }
+
+    if !column_exists(conn, "tasks", "worktree_path")? {
+        eprintln!("[migrations] Legacy DB detected; inferred v4.");
+        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
+        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
+        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
+        record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
+        return Ok(4);
+    }
+
+    eprintln!("[migrations] Legacy DB detected; inferred v5.");
     record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
     record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
     record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
-    Ok(3)
+    record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
+    record_version_row(conn, 5, "legacy v5 (inferred on startup)")?;
+    Ok(5)
 }
 
 fn record_version_row(conn: &Connection, version: u32, description: &str) -> anyhow::Result<()> {
@@ -373,6 +398,35 @@ fn apply_v3(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v4(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 4, "Add persisted AI provider setting", |tx| {
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_provider', 'claude')",
+            [],
+        )
+        .context("Insert default ai_provider setting")?;
+        Ok(())
+    })
+}
+
+fn apply_v5(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 5, "Add task worktree metadata columns", |tx| {
+        if !column_exists(tx, "tasks", "worktree_path")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_path TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_path")?;
+        }
+        if !column_exists(tx, "tasks", "worktree_branch")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_branch TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_branch")?;
+        }
+        if !column_exists(tx, "tasks", "worktree_status")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_status TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_status")?;
+        }
+        Ok(())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -397,6 +451,17 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> anyhow::Result
             |r| r.get(0),
         )
         .context("Failed to query pragma_table_info")?;
+    Ok(count > 0)
+}
+
+fn setting_exists(conn: &Connection, key: &str) -> anyhow::Result<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .context("Failed to query settings key")?;
     Ok(count > 0)
 }
 
@@ -495,6 +560,9 @@ mod tests {
 
         // New columns added.
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         // Schema version recorded correctly.
@@ -563,6 +631,7 @@ mod tests {
         // New schema elements added.
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         let v: i64 = conn
@@ -679,6 +748,7 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION as i64);
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
     }
 
     // --- 5b. Edge case: corrupt negative version ---

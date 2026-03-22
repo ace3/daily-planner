@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Task, CreateTaskInput, UpdateTaskInput, PromptTemplate } from '../types/task';
+import type {
+  Task,
+  CreateTaskInput,
+  UpdateTaskInput,
+  PromptTemplate,
+  TaskWorktreeRunResult,
+  TaskWorktreeCleanupResult,
+} from '../types/task';
 import type { AppSettings } from '../types/settings';
 import type { DailyReport } from '../types/report';
 import type { Project, CreateProjectInput } from '../types/project';
@@ -16,6 +23,10 @@ export const carryTaskForward = (id: string, tomorrowDate: string, sessionSlot: 
 export const reorderTasks = (taskIds: string[]) => invoke<void>('reorder_tasks', { taskIds });
 export const savePromptResult = (id: string, promptUsed: string, promptResult: string) =>
   invoke<void>('save_prompt_result', { id, promptUsed, promptResult });
+export const runTaskAsWorktree = (taskId: string) =>
+  invoke<TaskWorktreeRunResult>('run_task_as_worktree', { taskId });
+export const cleanupTaskWorktree = (taskId: string) =>
+  invoke<TaskWorktreeCleanupResult>('cleanup_task_worktree', { taskId });
 
 // Focus sessions
 export const startFocusSession = (taskId: string, date: string) =>

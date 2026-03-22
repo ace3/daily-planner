@@ -175,6 +175,44 @@ describe('taskStore project assignment', () => {
       input: expect.not.objectContaining({ project_id: expect.anything() }),
     });
   });
+
+  it('runTaskAsWorktree calls invoke and refreshes tasks', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke
+      .mockResolvedValueOnce({
+        task_id: 'task-1',
+        worktree_path: '/tmp/daily-planner-worktrees/task-1',
+        branch_name: 'task/my-task-12345678',
+        launch_command: "cd '/tmp/daily-planner-worktrees/task-1' && claude --worktree -p 'Task: test'",
+        prompt: 'Task: test',
+        status: 'active',
+      })
+      .mockResolvedValueOnce([]);
+    const { useTaskStore } = await import('../stores/taskStore');
+    useTaskStore.setState({ activeDate: '2026-03-22', tasks: [] });
+    const result = await useTaskStore.getState().runTaskAsWorktree('task-1');
+    expect(result.status).toBe('active');
+    expect(mockInvoke).toHaveBeenCalledWith('run_task_as_worktree', { taskId: 'task-1' });
+    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
+  });
+
+  it('cleanupTaskWorktree calls invoke and refreshes tasks', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke
+      .mockResolvedValueOnce({
+        task_id: 'task-1',
+        status: 'abandoned',
+        branch_deleted: false,
+        warning: 'branch kept',
+      })
+      .mockResolvedValueOnce([]);
+    const { useTaskStore } = await import('../stores/taskStore');
+    useTaskStore.setState({ activeDate: '2026-03-22', tasks: [] });
+    const result = await useTaskStore.getState().cleanupTaskWorktree('task-1');
+    expect(result.status).toBe('abandoned');
+    expect(mockInvoke).toHaveBeenCalledWith('cleanup_task_worktree', { taskId: 'task-1' });
+    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
+  });
 });
 
 describe('providerStore', () => {
