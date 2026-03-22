@@ -1,21 +1,166 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
+import type { TaskContext } from '../components/claude/PromptBuilder';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useProjectStore } from '../stores/projectStore';
+import { useProviderStore } from '../stores/providerStore';
 import { getLocalDate } from '../lib/time';
+import { improvePromptWithClaude } from '../lib/tauri';
 import type { Task } from '../types/task';
+import type { Project } from '../types/project';
 import { Badge } from '../components/ui/Badge';
 
+// Per-task improvement state
+interface PromptState {
+  prompt: string;
+  improved: string;
+  loading: boolean;
+  error: string | null;
+}
+
+const defaultPromptState = (): PromptState => ({
+  prompt: '',
+  improved: '',
+  loading: false,
+  error: null,
+});
+
+function buildImprovementPrompt(userPrompt: string, ctx?: TaskContext): string {
+  const lines: string[] = [];
+
+  lines.push('You are a prompt engineering expert specializing in AI coding agents (like Claude Code).');
+  lines.push('');
+  lines.push('Your job: take a rough prompt and rewrite it into a clear, detailed, actionable prompt ready for an AI coding agent.');
+  lines.push('Return ONLY the improved prompt — no explanation, no preamble.');
+
+  if (ctx) {
+    lines.push('');
+    lines.push('## Task Context');
+    lines.push(`- Task: ${ctx.title}`);
+    if (ctx.notes) {
+      lines.push(`- Notes: ${ctx.notes}`);
+    }
+    if (ctx.project) {
+      lines.push(`- Project: ${ctx.project.name}`);
+      lines.push(`- Project path: ${ctx.project.path}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('## Rough Prompt');
+  lines.push(userPrompt);
+  lines.push('');
+  lines.push('## Rewrite the above into a polished Claude Code prompt:');
+  lines.push('- State the specific goal and desired outcome clearly');
+  lines.push('- Include relevant technical context from the notes');
+  if (ctx?.project) {
+    lines.push(`- Reference the project at \`${ctx.project.path}\` where relevant`);
+  }
+  lines.push('- Structure it so the AI agent can act immediately without clarifying questions');
+
+  return lines.join('\n');
+}
+
+function buildTaskContext(task: Task, projects: Project[]): TaskContext {
+  return {
+    title: task.title,
+    notes: task.notes,
+    project: task.project_id ? projects.find((p) => p.id === task.project_id) : undefined,
+  };
+}
+
+// Standalone (no task) uses key ''
+const STANDALONE_KEY = '';
+
 export const PromptPage: React.FC = () => {
-  const { tasks, fetchTasks, savePromptResult, activeDate } = useTaskStore();
+  const { tasks, fetchTasks, savePromptResult, updateTaskStatus, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
+  const { projects, fetchProjects } = useProjectStore();
+  const { activeProvider } = useProviderStore();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
 
+  // Per-task state — keyed by task id ('' = standalone)
+  const [promptStates, setPromptStates] = useState<Record<string, PromptState>>({});
+
   useEffect(() => {
     if (today !== activeDate) fetchTasks(today);
+    fetchProjects();
   }, [today]);
+
+  // Pre-populate state from saved task data when a task is first selected
+  useEffect(() => {
+    if (!selectedTask) return;
+    const key = selectedTask.id;
+    setPromptStates((prev) => {
+      if (prev[key]) return prev; // already initialized this session, don't overwrite
+      if (!selectedTask.prompt_used && !selectedTask.prompt_result) return prev;
+      return {
+        ...prev,
+        [key]: {
+          prompt: selectedTask.prompt_used ?? '',
+          improved: selectedTask.prompt_result ?? '',
+          loading: false,
+          error: null,
+        },
+      };
+    });
+  }, [selectedTask]);
+
+  const taskKey = selectedTask?.id ?? STANDALONE_KEY;
+  const state = promptStates[taskKey] ?? defaultPromptState();
+
+  const builtPrompt = useMemo(() => {
+    if (!state.prompt.trim()) return '';
+    const ctx = selectedTask ? buildTaskContext(selectedTask, projects) : undefined;
+    return buildImprovementPrompt(state.prompt, ctx);
+  }, [state.prompt, selectedTask, projects]);
+
+  const patchState = useCallback((key: string, patch: Partial<PromptState>) => {
+    setPromptStates((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? defaultPromptState()), ...patch },
+    }));
+  }, []);
+
+  const handlePromptChange = useCallback(
+    (value: string) => patchState(taskKey, { prompt: value }),
+    [taskKey, patchState],
+  );
+
+  const handleImprovedChange = useCallback(
+    (value: string) => patchState(taskKey, { improved: value }),
+    [taskKey, patchState],
+  );
+
+  const handleImprove = useCallback(() => {
+    const currentPrompt = (promptStates[taskKey] ?? defaultPromptState()).prompt;
+    if (!currentPrompt.trim()) return;
+
+    // Capture at call time — result always applies to the correct task even if user navigates away
+    const capturedKey = taskKey;
+    const capturedContext = selectedTask ? buildTaskContext(selectedTask, projects) : undefined;
+    const capturedPrompt = currentPrompt.trim();
+    const capturedProvider = activeProvider;
+
+    patchState(capturedKey, { loading: true, error: null, improved: '' });
+
+    const metaPrompt = buildImprovementPrompt(capturedPrompt, capturedContext);
+
+    improvePromptWithClaude(metaPrompt, capturedContext?.project?.path, capturedProvider, capturedContext?.project?.id)
+      .then((result) => {
+        patchState(capturedKey, { improved: result, loading: false });
+      })
+      .catch((e: unknown) => {
+        patchState(capturedKey, { error: String(e), loading: false });
+      });
+  }, [taskKey, selectedTask, projects, promptStates, patchState, activeProvider]);
+
+  const handleReset = useCallback(() => {
+    patchState(taskKey, { improved: '', error: null });
+  }, [taskKey, patchState]);
 
   const handleSaveResult = async (prompt: string, result: string) => {
     if (selectedTask) {
@@ -23,54 +168,80 @@ export const PromptPage: React.FC = () => {
     }
   };
 
+  const handleMarkDone = async () => {
+    if (!selectedTask) return;
+    await updateTaskStatus(selectedTask.id, 'done');
+    setSelectedTask(null);
+  };
+
   const activeTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col p-4 gap-4">
       <div className="flex items-center gap-2">
-        <MessageSquare size={16} className="text-[#8B949E]" />
-        <h1 className="text-base font-semibold text-[#E6EDF3]">Prompt Builder</h1>
+        <MessageSquare size={16} className="text-gray-500 dark:text-[#8B949E]" />
+        <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Prompt Builder</h1>
       </div>
 
       <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
         {/* Task context panel */}
-        <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-3 overflow-y-auto">
-          <h3 className="text-xs font-semibold text-[#8B949E] uppercase tracking-wide mb-2">
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-3 overflow-y-auto">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 dark:text-[#8B949E]">
             Link to Task
           </h3>
           <div className="space-y-1.5">
             <button
               onClick={() => setSelectedTask(null)}
               className={`w-full text-left p-2 rounded-lg text-xs transition-colors cursor-pointer
-                ${!selectedTask ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'text-[#484F58] hover:text-[#8B949E] hover:bg-[#0F1117]'}`}
+                ${!selectedTask ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-[#484F58] dark:hover:text-[#8B949E] dark:hover:bg-[#0F1117]'}`}
             >
               No link (standalone)
             </button>
-            {activeTasks.map((task) => (
-              <button
-                key={task.id}
-                onClick={() => setSelectedTask(task)}
-                className={`w-full text-left p-2.5 rounded-lg border transition-colors cursor-pointer
-                  ${selectedTask?.id === task.id
-                    ? 'border-blue-500/40 bg-blue-500/10'
-                    : 'border-[#30363D] hover:border-[#444C56] hover:bg-[#1C2128]'
-                  }`}
-              >
-                <div className="text-xs font-medium text-[#E6EDF3] truncate">{task.title}</div>
-                <div className="flex gap-1 mt-0.5">
-                  <Badge variant="gray">{task.task_type}</Badge>
-                  {task.prompt_used && <Badge variant="blue">has prompt</Badge>}
-                </div>
-              </button>
-            ))}
+            {activeTasks.map((task) => {
+              const taskState = promptStates[task.id];
+              const isImproving = taskState?.loading === true;
+              return (
+                <button
+                  key={task.id}
+                  onClick={() => setSelectedTask(task)}
+                  className={`w-full text-left p-2.5 rounded-lg border transition-colors cursor-pointer
+                    ${selectedTask?.id === task.id
+                      ? 'border-blue-500/40 bg-blue-500/10'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-[#30363D] dark:hover:border-[#444C56] dark:hover:bg-[#1C2128]'
+                    }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3] truncate flex-1">{task.title}</span>
+                    {isImproving && (
+                      <span className="shrink-0 w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Improving…" />
+                    )}
+                  </div>
+                  <div className="flex gap-1 mt-0.5">
+                    <Badge variant="gray">{task.task_type}</Badge>
+                    {task.prompt_used && <Badge variant="blue">has prompt</Badge>}
+                    {taskState?.improved && <Badge variant="green">improved</Badge>}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Prompt builder */}
-        <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-4 overflow-y-auto">
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 overflow-y-auto">
           <PromptBuilder
-            initialPrompt={selectedTask?.notes || ''}
+            taskContext={selectedTask ? buildTaskContext(selectedTask, projects) : undefined}
             onResponseSave={selectedTask ? handleSaveResult : undefined}
+            prompt={state.prompt}
+            onPromptChange={handlePromptChange}
+            improved={state.improved}
+            onImprovedChange={handleImprovedChange}
+            loading={state.loading}
+            error={state.error}
+            onImprove={handleImprove}
+            onReset={handleReset}
+            builtPrompt={builtPrompt}
+            onMarkDone={selectedTask ? handleMarkDone : undefined}
           />
         </div>
       </div>

@@ -1,7 +1,6 @@
 use tauri::State;
 use serde::Serialize;
 use crate::db::{DbConnection, queries};
-use crate::crypto;
 
 #[derive(Serialize)]
 pub struct AppSettings {
@@ -17,7 +16,6 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     pub pomodoro_work_min: i64,
     pub pomodoro_break_min: i64,
-    pub has_claude_token: bool,
 }
 
 #[tauri::command]
@@ -42,8 +40,17 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
         show_in_tray: map.get("show_in_tray").map(|v| v == "true").unwrap_or(true),
         pomodoro_work_min: map.get("pomodoro_work_min").and_then(|v| v.parse().ok()).unwrap_or(25),
         pomodoro_break_min: map.get("pomodoro_break_min").and_then(|v| v.parse().ok()).unwrap_or(5),
-        has_claude_token: map.get("claude_token_enc").map(|v| !v.is_empty()).unwrap_or(false),
     })
+}
+
+#[tauri::command]
+pub fn get_setting(key: String, db: State<'_, DbConnection>) -> Result<Option<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    match queries::get_setting(&conn, &key) {
+        Ok(v) if v.is_empty() => Ok(None),
+        Ok(v) => Ok(Some(v)),
+        Err(_) => Ok(None),
+    }
 }
 
 #[tauri::command]
@@ -53,55 +60,18 @@ pub fn set_setting(key: String, value: String, db: State<'_, DbConnection>) -> R
 }
 
 #[tauri::command]
-pub fn save_claude_token(token: String, db: State<'_, DbConnection>) -> Result<(), String> {
-    let encrypted = crypto::encrypt(&token).map_err(|e| e.to_string())?;
+pub fn get_global_prompt(db: State<'_, DbConnection>) -> Result<Option<String>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_setting(&conn, "claude_token_enc", &encrypted).map_err(|e| e.to_string())
+    match queries::get_setting(&conn, "global_prompt") {
+        Ok(v) if v.is_empty() => Ok(None),
+        Ok(v) => Ok(Some(v)),
+        Err(_) => Ok(None),
+    }
 }
 
 #[tauri::command]
-pub fn get_claude_token(db: State<'_, DbConnection>) -> Result<String, String> {
+pub fn set_global_prompt(prompt: String, db: State<'_, DbConnection>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let encrypted = queries::get_setting(&conn, "claude_token_enc").map_err(|e| e.to_string())?;
-    if encrypted.is_empty() {
-        return Ok(String::new());
-    }
-    crypto::decrypt(&encrypted).map_err(|e| e.to_string())
+    queries::set_setting(&conn, "global_prompt", &prompt).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn detect_claude_token() -> Result<String, String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-    let candidates = vec![
-        format!("{}/.claude/.credentials.json", home),
-        format!("{}/.claude/auth.json", home),
-        format!("{}/.config/claude/auth.json", home),
-    ];
-
-    for path in candidates {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            // Try JSON parse
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(token) = json.get("token").and_then(|t| t.as_str()) {
-                    return Ok(token.to_string());
-                }
-                if let Some(token) = json.get("access_token").and_then(|t| t.as_str()) {
-                    return Ok(token.to_string());
-                }
-                if let Some(token) = json
-                    .get("claudeAiOauth")
-                    .and_then(|t| t.get("accessToken"))
-                    .and_then(|t| t.as_str())
-                {
-                    return Ok(token.to_string());
-                }
-            }
-            // Try raw token
-            let trimmed = content.trim();
-            if trimmed.len() > 20 && !trimmed.contains('\n') {
-                return Ok(trimmed.to_string());
-            }
-        }
-    }
-    Err("Claude token not found. Please paste it manually.".to_string())
-}

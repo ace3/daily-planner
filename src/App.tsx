@@ -7,16 +7,21 @@ import { FocusMode } from './pages/FocusMode';
 import { PromptPage } from './pages/PromptPage';
 import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
+import { ProjectsPage } from './pages/ProjectsPage';
 import { MorningPlanning } from './pages/MorningPlanning';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTaskStore } from './stores/taskStore';
+import { useProjectStore } from './stores/projectStore';
+import { useProviderStore } from './stores/providerStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getLocalDate, getLocalTime, timeToMinutes } from './lib/time';
 
 const AppInner: React.FC = () => {
   const { fetchSettings, settings } = useSettingsStore();
   const { fetchTasks } = useTaskStore();
+  const { fetchProjects, initSelectedProject } = useProjectStore();
+  const { checkAvailability } = useProviderStore();
   const [showMorningPlanning, setShowMorningPlanning] = useState(false);
   const navigate = useNavigate();
 
@@ -24,6 +29,8 @@ const AppInner: React.FC = () => {
 
   useEffect(() => {
     fetchSettings().then(() => {});
+    fetchProjects().then(() => initSelectedProject());
+    checkAvailability();
   }, []);
 
   useEffect(() => {
@@ -49,7 +56,7 @@ const AppInner: React.FC = () => {
   }, [settings]);
 
   return (
-    <div className="flex h-screen bg-[#0F1117] text-[#E6EDF3] overflow-hidden" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="flex h-screen bg-white text-gray-900 dark:bg-[#0F1117] dark:text-[#E6EDF3] overflow-hidden" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
         <TopBar />
@@ -58,6 +65,7 @@ const AppInner: React.FC = () => {
           <Route path="/focus" element={<FocusMode />} />
           <Route path="/prompt" element={<PromptPage />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </div>

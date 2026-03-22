@@ -64,19 +64,19 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
     >
-      <div className="w-full max-w-sm mx-4 rounded-xl border border-[#30363D] bg-[#161B22] shadow-2xl">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#30363D]">
+      <div className="w-full max-w-sm mx-4 rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-[#30363D] dark:bg-[#161B22]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
           <div className="flex items-center gap-2">
             <AlertTriangle size={14} className={iconColor} />
-            <h2 className="text-sm font-semibold text-[#E6EDF3]">{title}</h2>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">{title}</h2>
           </div>
-          <button onClick={onCancel} className="text-[#484F58] hover:text-[#8B949E] cursor-pointer transition-colors">
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 cursor-pointer transition-colors dark:text-[#484F58] dark:hover:text-[#8B949E]">
             <X size={14} />
           </button>
         </div>
 
         <div className="p-4 space-y-4">
-          <p className="text-sm text-[#8B949E]">{description}</p>
+          <p className="text-sm text-gray-500 dark:text-[#8B949E]">{description}</p>
 
           {checkboxes && checkboxes.length > 0 && (
             <div className="space-y-2">
@@ -86,9 +86,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                     type="checkbox"
                     checked={checkValues[c.id] ?? c.defaultChecked}
                     onChange={(e) => setCheckValues((prev) => ({ ...prev, [c.id]: e.target.checked }))}
-                    className="rounded border-[#30363D] bg-[#0F1117] text-blue-500 cursor-pointer"
+                    className="rounded border-gray-300 bg-white text-blue-500 cursor-pointer dark:border-[#30363D] dark:bg-[#0F1117]"
                   />
-                  <span className="text-xs text-[#8B949E]">{c.label}</span>
+                  <span className="text-xs text-gray-500 dark:text-[#8B949E]">{c.label}</span>
                 </label>
               ))}
             </div>
@@ -96,9 +96,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
           {requireTyped && (
             <div className="space-y-1.5">
-              <p className="text-xs text-[#484F58]">
+              <p className="text-xs text-gray-400 dark:text-[#484F58]">
                 Type{' '}
-                <span className="font-mono text-[#8B949E] bg-[#0F1117] px-1 py-0.5 rounded">
+                <span className="font-mono text-gray-600 bg-gray-100 px-1 py-0.5 rounded dark:text-[#8B949E] dark:bg-[#0F1117]">
                   {requireTyped}
                 </span>{' '}
                 to confirm
@@ -109,7 +109,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 value={typedValue}
                 onChange={(e) => setTypedValue(e.target.value)}
                 placeholder={requireTyped}
-                className="w-full bg-[#0F1117] border border-[#30363D] rounded-lg text-[#E6EDF3] text-sm placeholder-[#484F58] outline-none focus:border-red-500/50 transition-colors px-3 py-2"
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg text-gray-900 text-sm placeholder-gray-400 outline-none focus:border-red-500/50 transition-colors px-3 py-2 dark:bg-[#0F1117] dark:border-[#30363D] dark:text-[#E6EDF3] dark:placeholder-[#484F58]"
               />
             </div>
           )}
@@ -117,7 +117,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <div className="flex gap-2 justify-end pt-1">
             <button
               onClick={onCancel}
-              className="text-xs text-[#8B949E] hover:text-[#E6EDF3] px-3 py-2 rounded-lg border border-[#30363D] hover:border-[#484F58] transition-colors cursor-pointer"
+              className="text-xs text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors cursor-pointer dark:text-[#8B949E] dark:hover:text-[#E6EDF3] dark:border-[#30363D] dark:hover:border-[#484F58]"
             >
               Cancel
             </button>

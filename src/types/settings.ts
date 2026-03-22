@@ -11,5 +11,4 @@ export interface AppSettings {
   show_in_tray: boolean;
   pomodoro_work_min: number;
   pomodoro_break_min: number;
-  has_claude_token: boolean;
 }

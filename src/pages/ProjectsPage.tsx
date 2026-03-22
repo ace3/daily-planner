@@ -1,0 +1,208 @@
+import React, { useEffect, useState } from 'react';
+import { FolderOpen, Plus, Trash2, FolderSearch, ChevronDown, ChevronUp, Save, MessageSquare } from 'lucide-react';
+import { useProjectStore } from '../stores/projectStore';
+import { openFolderDialog } from '../lib/tauri';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
+import { toast } from '../components/ui/Toast';
+
+export const ProjectsPage: React.FC = () => {
+  const { projects, loading, fetchProjects, createProject, deleteProject, setProjectPrompt } = useProjectStore();
+  const [selectedPath, setSelectedPath] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [promptSaving, setPromptSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
+  // Initialize prompt drafts from fetched projects
+  useEffect(() => {
+    const drafts: Record<string, string> = {};
+    projects.forEach((p) => { drafts[p.id] = p.prompt ?? ''; });
+    setPromptDrafts((prev) => {
+      const next = { ...drafts };
+      // Preserve unsaved edits for currently expanded project
+      if (expandedPrompt && prev[expandedPrompt] !== undefined) {
+        next[expandedPrompt] = prev[expandedPrompt];
+      }
+      return next;
+    });
+  }, [projects]);
+
+  const handleBrowse = async () => {
+    const path = await openFolderDialog();
+    if (path) {
+      setSelectedPath(path);
+      if (!projectName) {
+        const parts = path.replace(/\\/g, '/').split('/');
+        setProjectName(parts[parts.length - 1] || path);
+      }
+    }
+  };
+
+  const handleAdd = async () => {
+    if (!selectedPath) return;
+    const name = projectName.trim() || selectedPath.split('/').pop() || selectedPath;
+    setAdding(true);
+    try {
+      await createProject({ name, path: selectedPath });
+      setSelectedPath('');
+      setProjectName('');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleSavePrompt = async (projectId: string) => {
+    setPromptSaving(projectId);
+    try {
+      await setProjectPrompt(projectId, promptDrafts[projectId] ?? '');
+      toast.success('Project prompt saved');
+    } catch {
+      toast.error('Failed to save project prompt');
+    } finally {
+      setPromptSaving(null);
+    }
+  };
+
+  const sectionClass = "rounded-xl border border-gray-200 bg-white overflow-hidden dark:border-[#30363D] dark:bg-[#161B22]";
+  const inputClass = "w-full bg-white border border-gray-200 rounded-lg text-gray-900 text-sm placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors px-3 py-2 dark:bg-[#0F1117] dark:border-[#30363D] dark:text-[#E6EDF3] dark:placeholder-[#484F58]";
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <FolderOpen size={16} className="text-gray-500 dark:text-[#8B949E]" />
+        <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Projects</h1>
+      </div>
+
+      {/* Add project */}
+      <div className={`${sectionClass} p-4 flex flex-col gap-3`}>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">Add Project</h3>
+
+        <div className="flex gap-2">
+          <input
+            value={selectedPath}
+            readOnly
+            placeholder="Select a folder..."
+            className={inputClass}
+          />
+          <Button variant="ghost" size="sm" icon={<FolderSearch size={14} />} onClick={handleBrowse}>
+            Browse
+          </Button>
+        </div>
+
+        {selectedPath && (
+          <Input
+            label="Project name (optional)"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            placeholder="Defaults to folder name"
+          />
+        )}
+
+        {selectedPath && (
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus size={14} />}
+            onClick={handleAdd}
+            loading={adding}
+            disabled={!selectedPath}
+          >
+            Add Project
+          </Button>
+        )}
+      </div>
+
+      {/* Project list */}
+      <div className={sectionClass}>
+        {loading && (
+          <div className="p-4 text-sm text-gray-500 dark:text-[#8B949E]">Loading...</div>
+        )}
+        {!loading && projects.length === 0 && (
+          <div className="p-6 text-center text-sm text-gray-400 dark:text-[#484F58]">
+            No projects yet. Add one above.
+          </div>
+        )}
+        {projects.map((project, i) => (
+          <div key={project.id}>
+            <div
+              className={`flex items-center gap-3 px-4 py-3 ${i < projects.length - 1 || expandedPrompt === project.id ? 'border-b border-gray-100 dark:border-[#21262D]' : ''}`}
+            >
+              <FolderOpen size={15} className="text-blue-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-900 dark:text-[#E6EDF3] truncate">{project.name}</div>
+                <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
+              </div>
+              <button
+                onClick={() => setExpandedPrompt(expandedPrompt === project.id ? null : project.id)}
+                className="text-gray-400 hover:text-gray-600 dark:text-[#484F58] dark:hover:text-[#8B949E] transition-colors p-1 cursor-pointer"
+                title="Edit project prompt"
+              >
+                {expandedPrompt === project.id ? <ChevronUp size={14} /> : <MessageSquare size={14} />}
+              </button>
+              <button
+                onClick={() => setDeleteTarget(project.id)}
+                className="text-gray-400 hover:text-red-400 transition-colors p-1 cursor-pointer"
+                title="Remove project"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+
+            {/* Project prompt editor */}
+            {expandedPrompt === project.id && (
+              <div className="px-4 py-3 bg-gray-50 dark:bg-[#0F1117] border-b border-gray-100 dark:border-[#21262D] space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <MessageSquare size={12} className="text-gray-500 dark:text-[#8B949E]" />
+                  <span className="text-xs font-medium text-gray-500 dark:text-[#8B949E]">Project Prompt</span>
+                  <span className="text-xs text-gray-400 dark:text-[#484F58]">— appended to Global Prompt</span>
+                </div>
+                <textarea
+                  value={promptDrafts[project.id] ?? ''}
+                  onChange={(e) => setPromptDrafts((prev) => ({ ...prev, [project.id]: e.target.value }))}
+                  rows={4}
+                  placeholder="e.g. This is a Next.js 14 project using App Router. All new routes go in src/app/."
+                  className={`${inputClass} resize-none`}
+                />
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400 dark:text-[#484F58]">
+                    {(promptDrafts[project.id] ?? '').length} chars
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Save size={12} />}
+                    onClick={() => handleSavePrompt(project.id)}
+                    loading={promptSaving === project.id}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Remove Project"
+        description="Remove this project? Tasks linked to it will be unlinked but not deleted."
+        confirmLabel="Remove"
+        variant="warning"
+        onConfirm={async () => {
+          if (deleteTarget) await deleteProject(deleteTarget);
+          setDeleteTarget(null);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+};

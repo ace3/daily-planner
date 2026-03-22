@@ -9,14 +9,15 @@ import { ReportExport } from '../components/reports/ReportExport';
 import { Button } from '../components/ui/Button';
 import { BarChart2, RefreshCw, Sparkles } from 'lucide-react';
 import { getLocalDate } from '../lib/time';
-import { sendPrompt } from '../lib/tauri';
-import { listen } from '@tauri-apps/api/event';
+import { improvePromptWithClaude } from '../lib/tauri';
+import { useProviderStore } from '../stores/providerStore';
 import { toast } from '../components/ui/Toast';
 
 export const Reports: React.FC = () => {
   const { report, recentReports, loading, generateReport, fetchReport, fetchRecentReports, saveReflection } = useReportStore();
   const { tasks, fetchTasks, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
+  const { claudeAvailable, activeProvider } = useProviderStore();
   const [generatingReflection, setGeneratingReflection] = React.useState(false);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
 
@@ -49,25 +50,14 @@ Completion rate: ${report.tasks_planned > 0 ? Math.round((report.tasks_completed
 
 Write an encouraging, actionable reflection. Mention what went well and what to prioritize tomorrow.`;
 
-    const eventName = `reflection-stream-${Date.now()}`;
-    let fullText = '';
-
-    const unlisten = await listen<{ text: string; done: boolean }>(eventName, (e) => {
-      if (!e.payload.done) fullText += e.payload.text;
-      else {
-        unlisten();
-        saveReflection(today, fullText);
-        setGeneratingReflection(false);
-        toast.success('AI reflection generated');
-      }
-    });
-
     try {
-      await sendPrompt(prompt, settings?.claude_model ?? null, eventName);
+      const reflection = await improvePromptWithClaude(prompt, undefined, activeProvider);
+      saveReflection(today, reflection);
+      toast.success('AI reflection generated');
     } catch (e) {
-      unlisten();
+      toast.error(`Failed to generate reflection — make sure ${activeProvider} CLI is installed`);
+    } finally {
       setGeneratingReflection(false);
-      toast.error('Failed to generate reflection — check Claude token in Settings');
     }
   };
 
@@ -76,11 +66,11 @@ Write an encouraging, actionable reflection. Mention what went well and what to 
       <div className="max-w-4xl mx-auto space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <BarChart2 size={16} className="text-[#8B949E]" />
-            <h1 className="text-base font-semibold text-[#E6EDF3]">Reports</h1>
+            <BarChart2 size={16} className="text-gray-500 dark:text-[#8B949E]" />
+            <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Reports</h1>
           </div>
           <div className="flex gap-2">
-            {report && settings?.has_claude_token && (
+            {report && claudeAvailable && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -112,8 +102,8 @@ Write an encouraging, actionable reflection. Mention what went well and what to 
                 <ReportExport report={report} tasks={tasks} />
               </>
             ) : (
-              <div className="rounded-xl border border-dashed border-[#30363D] p-8 text-center">
-                <p className="text-sm text-[#484F58] mb-3">No report yet for today.</p>
+              <div className="rounded-xl border border-dashed border-gray-200 dark:border-[#30363D] p-8 text-center">
+                <p className="text-sm text-gray-400 dark:text-[#484F58] mb-3">No report yet for today.</p>
                 <Button variant="primary" onClick={handleGenerate} loading={loading}>
                   Generate Report
                 </Button>
@@ -123,10 +113,10 @@ Write an encouraging, actionable reflection. Mention what went well and what to 
 
           {/* Right: charts + calendar */}
           <div className="space-y-4">
-            <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-4">
+            <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4">
               <WeeklyChart reports={recentReports} />
             </div>
-            <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-4">
+            <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4">
               <StreakCalendar reports={recentReports} />
             </div>
           </div>

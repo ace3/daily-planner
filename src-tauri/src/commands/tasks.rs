@@ -10,6 +10,7 @@ pub struct CreateTaskInput {
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -21,6 +22,8 @@ pub struct UpdateTaskInput {
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
     pub session_slot: Option<i64>,
+    pub project_id: Option<String>,
+    pub clear_project: Option<bool>,
 }
 
 #[tauri::command]
@@ -36,6 +39,7 @@ pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Resul
         &conn, &input.date, input.session_slot, &input.title,
         &input.task_type.unwrap_or_else(|| "code".to_string()),
         input.priority.unwrap_or(2), input.estimated_min,
+        input.project_id.as_deref(),
     ).map_err(|e| e.to_string())
 }
 
@@ -47,6 +51,7 @@ pub fn update_task(input: UpdateTaskInput, db: State<'_, DbConnection>) -> Resul
         input.title.as_deref(), input.notes.as_deref(),
         input.task_type.as_deref(), input.priority,
         input.estimated_min, input.session_slot,
+        input.project_id.as_deref(), input.clear_project.unwrap_or(false),
     ).map_err(|e| e.to_string())
 }
 

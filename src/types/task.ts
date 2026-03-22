@@ -20,6 +20,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  project_id: string | null;
 }
 
 export interface CreateTaskInput {
@@ -29,6 +30,7 @@ export interface CreateTaskInput {
   task_type?: TaskType;
   priority?: TaskPriority;
   estimated_min?: number;
+  project_id?: string;
 }
 
 export interface UpdateTaskInput {
@@ -39,6 +41,8 @@ export interface UpdateTaskInput {
   priority?: TaskPriority;
   estimated_min?: number;
   session_slot?: number;
+  project_id?: string;
+  clear_project?: boolean;
 }
 
 export interface PromptTemplate {

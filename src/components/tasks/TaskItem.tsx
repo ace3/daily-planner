@@ -20,6 +20,7 @@ interface TaskItemProps {
   onDelete: (id: string) => Promise<void>;
   onCarryForward: (id: string) => Promise<void>;
   onNotesUpdate: (id: string, notes: string) => Promise<void>;
+  onProjectChange?: (id: string, projectId: string | null) => Promise<void>;
   onSelect?: (task: Task) => void;
 }
 
@@ -32,7 +33,7 @@ const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | '
   other: 'gray',
 };
 
-const priorityColors = ['', 'text-red-400', 'text-amber-400', 'text-[#484F58]'];
+const priorityColors = ['', 'text-red-400', 'text-amber-400', 'text-gray-400 dark:text-[#484F58]'];
 const priorityDots = ['', '●', '●', '●'];
 
 export const TaskItem: React.FC<TaskItemProps> = ({
@@ -41,6 +42,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onDelete,
   onCarryForward,
   onNotesUpdate,
+  onProjectChange,
   onSelect,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -55,21 +57,21 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         ${isDone
           ? 'border-emerald-500/20 bg-emerald-500/5'
           : isSkipped || isCarried
-          ? 'border-[#21262D] bg-[#0F1117] opacity-60'
-          : 'border-[#30363D] bg-[#161B22] hover:border-[#444C56]'}
+          ? 'border-gray-100 bg-gray-50 opacity-60 dark:border-[#21262D] dark:bg-[#0F1117]'
+          : 'border-gray-200 bg-white hover:border-gray-300 dark:border-[#30363D] dark:bg-[#161B22] dark:hover:border-[#444C56]'}
       `}
     >
       <div className="flex items-start gap-2.5 p-3">
         {/* Drag handle */}
         <GripVertical
           size={14}
-          className="text-[#30363D] mt-0.5 cursor-grab shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="text-gray-300 dark:text-[#30363D] mt-0.5 cursor-grab shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
         />
 
         {/* Status toggle */}
         <button
           onClick={() => onStatusChange(task.id, isDone ? 'pending' : 'done')}
-          className="mt-0.5 shrink-0 cursor-pointer text-[#484F58] hover:text-emerald-400 transition-colors"
+          className="mt-0.5 shrink-0 cursor-pointer text-gray-400 dark:text-[#484F58] hover:text-emerald-400 transition-colors"
         >
           {isDone ? (
             <CheckCircle2 size={16} className="text-emerald-400" />
@@ -83,7 +85,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className={`text-sm cursor-pointer ${
-                isDone || isSkipped ? 'line-through text-[#484F58]' : 'text-[#E6EDF3]'
+                isDone || isSkipped ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
               }`}
               onClick={() => onSelect?.(task)}
             >
@@ -94,13 +96,13 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             </span>
             <Badge variant={typeColors[task.task_type] || 'gray'}>{task.task_type}</Badge>
             {task.estimated_min && (
-              <span className="text-xs text-[#484F58]">{formatDuration(task.estimated_min)}</span>
+              <span className="text-xs text-gray-400 dark:text-[#484F58]">{formatDuration(task.estimated_min)}</span>
             )}
             {task.carried_from && <Badge variant="amber">carried</Badge>}
           </div>
 
           {task.notes && !expanded && (
-            <p className="text-xs text-[#484F58] mt-0.5 truncate">{task.notes}</p>
+            <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5 truncate">{task.notes}</p>
           )}
         </div>
 
@@ -109,7 +111,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           {!isDone && !isSkipped && !isCarried && (
             <button
               onClick={() => onStatusChange(task.id, 'skipped')}
-              className="p-1.5 text-[#484F58] hover:text-amber-400 transition-colors cursor-pointer rounded"
+              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-amber-400 transition-colors cursor-pointer rounded"
               title="Skip"
             >
               <SkipForward size={13} />
@@ -118,7 +120,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           {!isDone && !isCarried && (
             <button
               onClick={() => onCarryForward(task.id)}
-              className="p-1.5 text-[#484F58] hover:text-blue-400 transition-colors cursor-pointer rounded"
+              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-blue-400 transition-colors cursor-pointer rounded"
               title="Carry to tomorrow"
             >
               <ArrowRight size={13} />
@@ -126,14 +128,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           )}
           <button
             onClick={() => setExpanded(!expanded)}
-            className="p-1.5 text-[#484F58] hover:text-[#E6EDF3] transition-colors cursor-pointer rounded"
+            className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-gray-700 dark:hover:text-[#E6EDF3] transition-colors cursor-pointer rounded"
             title="Toggle notes"
           >
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
           <button
             onClick={() => onDelete(task.id)}
-            className="p-1.5 text-[#484F58] hover:text-red-400 transition-colors cursor-pointer rounded"
+            className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-red-400 transition-colors cursor-pointer rounded"
             title="Delete"
           >
             <Trash2 size={13} />
@@ -143,8 +145,12 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
       {/* Notes panel */}
       {expanded && (
-        <div className="px-3 pb-3 border-t border-[#21262D] pt-2">
-          <TaskNotes task={task} onSave={(notes) => onNotesUpdate(task.id, notes)} />
+        <div className="px-3 pb-3 border-t border-gray-100 dark:border-[#21262D] pt-2">
+          <TaskNotes
+            task={task}
+            onSave={(notes) => onNotesUpdate(task.id, notes)}
+            onProjectChange={onProjectChange ? (pid) => onProjectChange(task.id, pid) : undefined}
+          />
         </div>
       )}
     </div>

@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { Task, CreateTaskInput, UpdateTaskInput, PromptTemplate } from '../types/task';
 import type { AppSettings } from '../types/settings';
 import type { DailyReport } from '../types/report';
+import type { Project, CreateProjectInput } from '../types/project';
 
 // Tasks
 export const getTasks = (date: string) => invoke<Task[]>('get_tasks', { date });
@@ -26,20 +28,34 @@ export const getPromptTemplates = () => invoke<PromptTemplate[]>('get_prompt_tem
 
 // Settings
 export const getSettings = () => invoke<AppSettings>('get_settings', {});
+export const getSetting = (key: string) => invoke<string | null>('get_setting', { key });
 export const setSetting = (key: string, value: string) => invoke<void>('set_setting', { key, value });
-export const saveClaudeToken = (token: string) => invoke<void>('save_claude_token', { token });
-export const getClaudeToken = () => invoke<string>('get_claude_token', {});
-export const detectClaudeToken = () => invoke<string>('detect_claude_token', {});
 
-// Claude
-export const sendPrompt = (prompt: string, model: string | null, streamEvent: string) =>
-  invoke<string>('send_prompt', { input: { prompt, model, streamEvent } });
+// CLI / AI providers
+export const improvePromptWithClaude = (prompt: string, projectPath?: string, provider?: string, projectId?: string) =>
+  invoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId });
+
+export const checkCliAvailability = () =>
+  invoke<{ claude_available: boolean; codex_available: boolean }>('check_cli_availability', {});
 
 // Data management
 export const backupData = () => invoke<string>('backup_data', {});
 export const restoreData = () => invoke<string>('restore_data', {});
 export const resetAppData = (keepSettings: boolean, keepBuiltinTemplates: boolean) =>
   invoke<void>('reset_app_data', { keepSettings, keepBuiltinTemplates });
+
+// Projects
+export const getProjects = () => invoke<Project[]>('get_projects', {});
+export const createProject = (input: CreateProjectInput) => invoke<string>('create_project', { input });
+export const deleteProject = (id: string) => invoke<void>('delete_project', { id });
+export const getProjectPrompt = (id: string) => invoke<string | null>('get_project_prompt', { id });
+export const setProjectPrompt = (id: string, prompt: string) => invoke<void>('set_project_prompt', { id, prompt });
+export const openFolderDialog = (): Promise<string | null> =>
+  open({ directory: true, multiple: false }).then((r) => (typeof r === 'string' ? r : null));
+
+// Global / project prompts
+export const getGlobalPrompt = () => invoke<string | null>('get_global_prompt', {});
+export const setGlobalPrompt = (prompt: string) => invoke<void>('set_global_prompt', { prompt });
 
 // Reports
 export const generateReport = (date: string) => invoke<DailyReport>('generate_report', { date });

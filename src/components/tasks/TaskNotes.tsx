@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Save } from 'lucide-react';
+import { FileText, Save, FolderOpen } from 'lucide-react';
 import { Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
 import type { Task } from '../../types/task';
+import { useProjectStore } from '../../stores/projectStore';
 
 interface TaskNotesProps {
   task: Task;
   onSave: (notes: string) => Promise<void>;
+  onProjectChange?: (projectId: string | null) => Promise<void>;
 }
 
-export const TaskNotes: React.FC<TaskNotesProps> = ({ task, onSave }) => {
+export const TaskNotes: React.FC<TaskNotesProps> = ({ task, onSave, onProjectChange }) => {
   const [notes, setNotes] = useState(task.notes || '');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [projectSaving, setProjectSaving] = useState(false);
+  const { projects } = useProjectStore();
 
   useEffect(() => {
     setNotes(task.notes || '');
@@ -34,9 +38,35 @@ export const TaskNotes: React.FC<TaskNotesProps> = ({ task, onSave }) => {
     }
   };
 
+  const handleProjectChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (!onProjectChange) return;
+    setProjectSaving(true);
+    try {
+      await onProjectChange(e.target.value || null);
+    } finally {
+      setProjectSaving(false);
+    }
+  };
+
   return (
     <div className="mt-2 space-y-2">
-      <div className="flex items-center gap-1.5 text-xs text-[#8B949E]">
+      {onProjectChange && (
+        <div className="flex items-center gap-2">
+          <FolderOpen size={12} className="text-gray-500 dark:text-[#8B949E] shrink-0" />
+          <select
+            value={task.project_id ?? ''}
+            onChange={handleProjectChange}
+            disabled={projectSaving}
+            className="flex-1 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 outline-none focus:border-blue-500 transition-colors px-2 py-1 cursor-pointer disabled:opacity-50 dark:bg-[#0F1117] dark:border-[#30363D] dark:text-[#8B949E]"
+          >
+            <option value="">No project</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+      <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-[#8B949E]">
         <FileText size={12} />
         <span>Notes / Prompt context</span>
       </div>

@@ -20,6 +20,7 @@ pub struct Task {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,13 +81,22 @@ pub struct SettingRow {
     pub value: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub prompt: Option<String>,
+    pub created_at: String,
+}
+
 // ---- TASK QUERIES ----
 
 pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at
+                position, created_at, updated_at, completed_at, project_id
          FROM tasks WHERE date = ?1 ORDER BY session_slot, position, created_at"
     )?;
     let tasks = stmt.query_map(params![date], |row| {
@@ -108,13 +118,15 @@ pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
             created_at: row.get(14)?,
             updated_at: row.get(15)?,
             completed_at: row.get(16)?,
+            project_id: row.get(17)?,
         })
     })?.collect::<Result<Vec<_>>>()?;
     Ok(tasks)
 }
 
 pub fn create_task(conn: &Connection, date: &str, session_slot: i64, title: &str,
-                   task_type: &str, priority: i64, estimated_min: Option<i64>) -> Result<String> {
+                   task_type: &str, priority: i64, estimated_min: Option<i64>,
+                   project_id: Option<&str>) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string().replace("-", "");
     let max_pos: i64 = conn.query_row(
         "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE date = ?1 AND session_slot = ?2",
@@ -123,9 +135,9 @@ pub fn create_task(conn: &Connection, date: &str, session_slot: i64, title: &str
     ).unwrap_or(-1);
 
     conn.execute(
-        "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, estimated_min, position)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![id, date, session_slot, title, task_type, priority, estimated_min, max_pos + 1],
+        "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, estimated_min, position, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![id, date, session_slot, title, task_type, priority, estimated_min, max_pos + 1, project_id],
     )?;
     Ok(id)
 }
@@ -145,7 +157,7 @@ pub fn update_task_status(conn: &Connection, id: &str, status: &str) -> Result<(
 
 pub fn update_task(conn: &Connection, id: &str, title: Option<&str>, notes: Option<&str>,
                    task_type: Option<&str>, priority: Option<i64>, estimated_min: Option<i64>,
-                   session_slot: Option<i64>) -> Result<()> {
+                   session_slot: Option<i64>, project_id: Option<&str>, clear_project: bool) -> Result<()> {
     if let Some(t) = title {
         conn.execute("UPDATE tasks SET title = ?1, updated_at = datetime('now') WHERE id = ?2", params![t, id])?;
     }
@@ -164,6 +176,11 @@ pub fn update_task(conn: &Connection, id: &str, title: Option<&str>, notes: Opti
     if let Some(s) = session_slot {
         conn.execute("UPDATE tasks SET session_slot = ?1, updated_at = datetime('now') WHERE id = ?2", params![s, id])?;
     }
+    if clear_project {
+        conn.execute("UPDATE tasks SET project_id = NULL, updated_at = datetime('now') WHERE id = ?1", params![id])?;
+    } else if let Some(pid) = project_id {
+        conn.execute("UPDATE tasks SET project_id = ?1, updated_at = datetime('now') WHERE id = ?2", params![pid, id])?;
+    }
     Ok(())
 }
 
@@ -176,7 +193,7 @@ pub fn carry_task_forward(conn: &Connection, id: &str, tomorrow_date: &str, sess
     let task: Task = conn.query_row(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at
+                position, created_at, updated_at, completed_at, project_id
          FROM tasks WHERE id = ?1", params![id],
         |row| Ok(Task {
             id: row.get(0)?, date: row.get(1)?, session_slot: row.get(2)?,
@@ -184,16 +201,16 @@ pub fn carry_task_forward(conn: &Connection, id: &str, tomorrow_date: &str, sess
             priority: row.get(6)?, status: row.get(7)?, estimated_min: row.get(8)?,
             actual_min: row.get(9)?, prompt_used: row.get(10)?, prompt_result: row.get(11)?,
             carried_from: row.get(12)?, position: row.get(13)?, created_at: row.get(14)?,
-            updated_at: row.get(15)?, completed_at: row.get(16)?,
+            updated_at: row.get(15)?, completed_at: row.get(16)?, project_id: row.get(17)?,
         }),
     )?;
 
     let new_id = uuid::Uuid::new_v4().to_string().replace("-", "");
     conn.execute(
-        "INSERT INTO tasks (id, date, session_slot, title, notes, task_type, priority, estimated_min, carried_from)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO tasks (id, date, session_slot, title, notes, task_type, priority, estimated_min, carried_from, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![new_id, tomorrow_date, session_slot, task.title, task.notes,
-                task.task_type, task.priority, task.estimated_min, id],
+                task.task_type, task.priority, task.estimated_min, id, task.project_id],
     )?;
     conn.execute(
         "UPDATE tasks SET status = 'carried_over', updated_at = datetime('now') WHERE id = ?1",
@@ -252,6 +269,7 @@ pub fn end_focus_session(conn: &Connection, session_id: &str, notes: &str) -> Re
     Ok(duration_min)
 }
 
+#[allow(dead_code)]
 pub fn get_active_focus_session(conn: &Connection, task_id: &str) -> Result<Option<String>> {
     let result = conn.query_row(
         "SELECT id FROM focus_sessions WHERE task_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
@@ -286,6 +304,7 @@ pub fn get_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
     Ok(templates)
 }
 
+#[allow(dead_code)]
 pub fn increment_template_use(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("UPDATE prompt_templates SET use_count = use_count + 1 WHERE id = ?1", params![id])?;
     Ok(())
@@ -454,7 +473,7 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at
+                position, created_at, updated_at, completed_at, project_id
          FROM tasks ORDER BY created_at"
     )?;
     let tasks = stmt.query_map([], |row| {
@@ -476,6 +495,7 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
             created_at: row.get(14)?,
             updated_at: row.get(15)?,
             completed_at: row.get(16)?,
+            project_id: row.get(17)?,
         })
     })?.collect::<Result<Vec<_>>>()?;
     Ok(tasks)
@@ -580,6 +600,61 @@ pub fn get_all_settings_non_sensitive(conn: &Connection) -> Result<Vec<SettingRo
     Ok(rows)
 }
 
+// ---- PROJECT QUERIES ----
+
+pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, path, prompt, created_at FROM projects ORDER BY name"
+    )?;
+    let projects = stmt.query_map([], |row| {
+        Ok(Project {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            prompt: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(projects)
+}
+
+pub fn get_project_prompt(conn: &Connection, project_id: &str) -> Result<Option<String>> {
+    let result = conn.query_row(
+        "SELECT prompt FROM projects WHERE id = ?1",
+        params![project_id],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    match result {
+        Ok(p) => Ok(p.filter(|s| !s.is_empty())),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn set_project_prompt(conn: &Connection, project_id: &str, prompt: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE projects SET prompt = ?1 WHERE id = ?2",
+        params![prompt, project_id],
+    )?;
+    Ok(())
+}
+
+pub fn create_project(conn: &Connection, name: &str, path: &str) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string().replace("-", "");
+    conn.execute(
+        "INSERT INTO projects (id, name, path) VALUES (?1, ?2, ?3)",
+        params![id, name, path],
+    )?;
+    Ok(id)
+}
+
+pub fn delete_project(conn: &Connection, id: &str) -> Result<()> {
+    // Nullify project_id on tasks before deleting
+    conn.execute("UPDATE tasks SET project_id = NULL WHERE project_id = ?1", params![id])?;
+    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,16 +662,16 @@ mod tests {
     use crate::db::migrations::run_migrations;
 
     fn setup_test_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        run_migrations(&conn).unwrap();
+        run_migrations(&mut conn, None).unwrap();
         conn
     }
 
     #[test]
     fn test_create_and_get_task() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-22", 1, "Test task", "code", 2, Some(30)).unwrap();
+        let id = create_task(&conn, "2026-03-22", 1, "Test task", "code", 2, Some(30), None).unwrap();
         let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, id);
@@ -607,7 +682,7 @@ mod tests {
     #[test]
     fn test_update_task_status() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-22", 1, "Test", "code", 2, None).unwrap();
+        let id = create_task(&conn, "2026-03-22", 1, "Test", "code", 2, None, None).unwrap();
         update_task_status(&conn, &id, "done").unwrap();
         let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
         assert_eq!(tasks[0].status, "done");
@@ -617,7 +692,7 @@ mod tests {
     #[test]
     fn test_carry_forward() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-22", 1, "Carry me", "code", 1, None).unwrap();
+        let id = create_task(&conn, "2026-03-22", 1, "Carry me", "code", 1, None, None).unwrap();
         let _new_id = carry_task_forward(&conn, &id, "2026-03-23", 1).unwrap();
         let tomorrow_tasks = get_tasks_by_date(&conn, "2026-03-23").unwrap();
         assert_eq!(tomorrow_tasks.len(), 1);
@@ -637,8 +712,8 @@ mod tests {
     #[test]
     fn test_generate_report() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "2026-03-22", 1, "Task 1", "code", 1, Some(30)).unwrap();
-        let id2 = create_task(&conn, "2026-03-22", 1, "Task 2", "code", 2, Some(20)).unwrap();
+        let id1 = create_task(&conn, "2026-03-22", 1, "Task 1", "code", 1, Some(30), None).unwrap();
+        let id2 = create_task(&conn, "2026-03-22", 1, "Task 2", "code", 2, Some(20), None).unwrap();
         update_task_status(&conn, &id1, "done").unwrap();
         update_task_status(&conn, &id2, "skipped").unwrap();
         let report = generate_report(&conn, "2026-03-22").unwrap();
@@ -649,7 +724,7 @@ mod tests {
     #[test]
     fn test_focus_session() {
         let conn = setup_test_db();
-        let task_id = create_task(&conn, "2026-03-22", 1, "Focus task", "code", 1, None).unwrap();
+        let task_id = create_task(&conn, "2026-03-22", 1, "Focus task", "code", 1, None, None).unwrap();
         let session_id = start_focus_session(&conn, &task_id, "2026-03-22").unwrap();
         let active = get_active_focus_session(&conn, &task_id).unwrap();
         assert!(active.is_some());
@@ -663,8 +738,8 @@ mod tests {
     #[test]
     fn test_reorder_tasks() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "2026-03-22", 1, "Task A", "code", 1, None).unwrap();
-        let id2 = create_task(&conn, "2026-03-22", 1, "Task B", "code", 2, None).unwrap();
+        let id1 = create_task(&conn, "2026-03-22", 1, "Task A", "code", 1, None, None).unwrap();
+        let id2 = create_task(&conn, "2026-03-22", 1, "Task B", "code", 2, None, None).unwrap();
         reorder_tasks(&conn, &[id2.clone(), id1.clone()]).unwrap();
         let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
         // id2 should be position 0

@@ -1,4 +1,3 @@
-mod crypto;
 mod db;
 mod commands;
 mod scheduler;
@@ -21,10 +20,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Init DB
-            let db = init_db(app.handle())?;
+            let (db, db_path) = init_db(app.handle())?;
             {
-                let conn = db.0.lock().expect("DB lock");
-                run_migrations(&conn).expect("Migrations failed");
+                let mut conn = db.0.lock().expect("DB lock");
+                run_migrations(&mut *conn, Some(&db_path)).expect("Migrations failed");
             }
 
             // Load settings for scheduler
@@ -99,11 +98,10 @@ pub fn run() {
             commands::tasks::end_focus_session,
             commands::tasks::get_prompt_templates,
             commands::settings::get_settings,
+            commands::settings::get_setting,
             commands::settings::set_setting,
-            commands::settings::save_claude_token,
-            commands::settings::get_claude_token,
-            commands::settings::detect_claude_token,
-            commands::claude::send_prompt,
+            commands::claude::improve_prompt_with_claude,
+            commands::claude::check_cli_availability,
             commands::reports::generate_report,
             commands::reports::get_report,
             commands::reports::get_reports_range,
@@ -111,6 +109,13 @@ pub fn run() {
             commands::data_management::backup_data,
             commands::data_management::restore_data,
             commands::data_management::reset_app_data,
+            commands::projects::get_projects,
+            commands::projects::create_project,
+            commands::projects::delete_project,
+            commands::projects::get_project_prompt,
+            commands::projects::set_project_prompt,
+            commands::settings::get_global_prompt,
+            commands::settings::set_global_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
