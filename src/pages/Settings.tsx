@@ -1,16 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Key, Bell, Clock, Save, Search } from 'lucide-react';
+import { Settings as SettingsIcon, Key, Bell, Clock, Save, Search, Database, RotateCcw, Upload } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
-import { detectClaudeToken } from '../lib/tauri';
+import { useTaskStore } from '../stores/taskStore';
+import { useReportStore } from '../stores/reportStore';
+import { detectClaudeToken, backupData, restoreData, resetAppData } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
 
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, updateClaudeToken } = useSettingsStore();
+  const { fetchTasks, activeDate } = useTaskStore();
+  const { fetchRecentReports } = useReportStore();
   const [token, setToken] = useState('');
   const [tokenVisible, setTokenVisible] = useState(false);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [detecting, setDetecting] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [dataOpLoading, setDataOpLoading] = useState(false);
 
   useEffect(() => {
     fetchSettings();
@@ -39,6 +47,49 @@ export const SettingsPage: React.FC = () => {
       toast.success('Claude token saved');
     } finally {
       setSaving((p) => ({ ...p, token: false }));
+    }
+  };
+
+  const handleBackup = async () => {
+    setDataOpLoading(true);
+    try {
+      const result = await backupData();
+      if (result !== 'cancelled') toast.success(`Backup saved to ${result}`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setDataOpLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setShowRestoreConfirm(false);
+    setDataOpLoading(true);
+    try {
+      const result = await restoreData();
+      if (result === 'cancelled') return;
+      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      toast.success('Data restored successfully');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setDataOpLoading(false);
+    }
+  };
+
+  const handleReset = async (checkValues?: Record<string, boolean>) => {
+    setShowResetConfirm(false);
+    setDataOpLoading(true);
+    try {
+      const keepSettings = checkValues?.['keep_settings'] ?? true;
+      const keepBuiltinTemplates = checkValues?.['keep_builtin_templates'] ?? true;
+      await resetAppData(keepSettings, keepBuiltinTemplates);
+      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      toast.success('App data cleared');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setDataOpLoading(false);
     }
   };
 
@@ -269,7 +320,93 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
         </section>
+        {/* Data Management */}
+        <section className="rounded-xl border border-[#30363D] bg-[#161B22] overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-[#30363D]">
+            <Database size={14} className="text-[#8B949E]" />
+            <h2 className="text-sm font-semibold text-[#E6EDF3]">Data Management</h2>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-[#8B949E]">Backup</p>
+                <p className="text-xs text-[#484F58] mt-0.5">Export all data to a JSON file</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Database size={12} />}
+                onClick={handleBackup}
+                loading={dataOpLoading}
+              >
+                Backup
+              </Button>
+            </div>
+
+            <div className="border-t border-[#21262D]" />
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-[#8B949E]">Restore</p>
+                <p className="text-xs text-[#484F58] mt-0.5">Replace all data from a backup file</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Upload size={12} />}
+                onClick={() => setShowRestoreConfirm(true)}
+                loading={dataOpLoading}
+              >
+                Restore
+              </Button>
+            </div>
+
+            <div className="border-t border-[#21262D]" />
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-red-400">Reset App</p>
+                <p className="text-xs text-[#484F58] mt-0.5">Wipe all data — cannot be undone</p>
+              </div>
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                disabled={dataOpLoading}
+                className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <span className="flex items-center gap-1.5">
+                  <RotateCcw size={11} />
+                  Reset
+                </span>
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
+
+      <ConfirmModal
+        open={showRestoreConfirm}
+        title="Restore from Backup"
+        description="This will replace ALL current data with the backup. Your Claude token will be preserved. This cannot be undone."
+        confirmLabel="Choose File & Restore"
+        variant="warning"
+        onConfirm={handleRestore}
+        onCancel={() => setShowRestoreConfirm(false)}
+      />
+
+      <ConfirmModal
+        open={showResetConfirm}
+        title="Reset App Data"
+        description="This will permanently delete all tasks, focus sessions, and reports. This cannot be undone."
+        confirmLabel="Reset"
+        variant="danger"
+        requireTyped="RESET"
+        checkboxes={[
+          { id: 'keep_settings', label: 'Keep settings (timezone, schedule, Claude token)', defaultChecked: true },
+          { id: 'keep_builtin_templates', label: 'Keep built-in prompt templates', defaultChecked: true },
+        ]}
+        onConfirm={handleReset}
+        onCancel={() => setShowResetConfirm(false)}
+      />
     </div>
   );
 };

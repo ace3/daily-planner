@@ -61,6 +61,25 @@ pub struct DailyReport {
     pub generated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DailySession {
+    pub id: String,
+    pub date: String,
+    pub session_slot: i64,
+    pub started_at: String,
+    pub tasks_planned: i64,
+    pub tasks_completed: i64,
+    pub tasks_skipped: i64,
+    pub focus_minutes: i64,
+    pub notes: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SettingRow {
+    pub key: String,
+    pub value: String,
+}
+
 // ---- TASK QUERIES ----
 
 pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
@@ -427,6 +446,138 @@ pub fn get_reports_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<
         })
     })?.collect::<Result<Vec<_>>>()?;
     Ok(reports)
+}
+
+// ---- BULK READ QUERIES (for backup) ----
+
+pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
+                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
+                position, created_at, updated_at, completed_at
+         FROM tasks ORDER BY created_at"
+    )?;
+    let tasks = stmt.query_map([], |row| {
+        Ok(Task {
+            id: row.get(0)?,
+            date: row.get(1)?,
+            session_slot: row.get(2)?,
+            title: row.get(3)?,
+            notes: row.get(4)?,
+            task_type: row.get(5)?,
+            priority: row.get(6)?,
+            status: row.get(7)?,
+            estimated_min: row.get(8)?,
+            actual_min: row.get(9)?,
+            prompt_used: row.get(10)?,
+            prompt_result: row.get(11)?,
+            carried_from: row.get(12)?,
+            position: row.get(13)?,
+            created_at: row.get(14)?,
+            updated_at: row.get(15)?,
+            completed_at: row.get(16)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(tasks)
+}
+
+pub fn get_all_focus_sessions(conn: &Connection) -> Result<Vec<FocusSession>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, task_id, date, started_at, ended_at, duration_min, notes
+         FROM focus_sessions ORDER BY started_at"
+    )?;
+    let sessions = stmt.query_map([], |row| {
+        Ok(FocusSession {
+            id: row.get(0)?,
+            task_id: row.get(1)?,
+            date: row.get(2)?,
+            started_at: row.get(3)?,
+            ended_at: row.get(4)?,
+            duration_min: row.get(5)?,
+            notes: row.get(6)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(sessions)
+}
+
+pub fn get_all_daily_sessions(conn: &Connection) -> Result<Vec<DailySession>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, date, session_slot, started_at, tasks_planned, tasks_completed,
+                tasks_skipped, focus_minutes, notes
+         FROM daily_sessions ORDER BY date, session_slot"
+    )?;
+    let sessions = stmt.query_map([], |row| {
+        Ok(DailySession {
+            id: row.get(0)?,
+            date: row.get(1)?,
+            session_slot: row.get(2)?,
+            started_at: row.get(3)?,
+            tasks_planned: row.get(4)?,
+            tasks_completed: row.get(5)?,
+            tasks_skipped: row.get(6)?,
+            focus_minutes: row.get(7)?,
+            notes: row.get(8)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(sessions)
+}
+
+pub fn get_all_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, category, template, variables, is_builtin, use_count, created_at
+         FROM prompt_templates ORDER BY is_builtin DESC, name"
+    )?;
+    let templates = stmt.query_map([], |row| {
+        Ok(PromptTemplate {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            category: row.get(2)?,
+            template: row.get(3)?,
+            variables: row.get(4)?,
+            is_builtin: row.get::<_, i64>(5)? == 1,
+            use_count: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(templates)
+}
+
+pub fn get_all_daily_reports(conn: &Connection) -> Result<Vec<DailyReport>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
+                total_focus_min, session1_focus, session2_focus, ai_reflection, markdown_export, generated_at
+         FROM daily_reports ORDER BY date"
+    )?;
+    let reports = stmt.query_map([], |row| {
+        Ok(DailyReport {
+            id: row.get(0)?,
+            date: row.get(1)?,
+            tasks_planned: row.get(2)?,
+            tasks_completed: row.get(3)?,
+            tasks_skipped: row.get(4)?,
+            tasks_carried: row.get(5)?,
+            total_focus_min: row.get(6)?,
+            session1_focus: row.get(7)?,
+            session2_focus: row.get(8)?,
+            ai_reflection: row.get(9)?,
+            markdown_export: row.get(10)?,
+            generated_at: row.get(11)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(reports)
+}
+
+pub fn get_all_settings_non_sensitive(conn: &Connection) -> Result<Vec<SettingRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT key, value FROM settings WHERE key != 'claude_token_enc'"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(SettingRow {
+            key: row.get(0)?,
+            value: row.get(1)?,
+        })
+    })?.collect::<Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 #[cfg(test)]

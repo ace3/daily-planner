@@ -1,0 +1,199 @@
+use tauri::State;
+use tauri_plugin_dialog::DialogExt;
+use serde::{Deserialize, Serialize};
+use crate::db::{DbConnection, queries};
+use crate::db::queries::{Task, FocusSession, PromptTemplate, DailyReport, DailySession, SettingRow};
+
+#[derive(Serialize, Deserialize)]
+pub struct BackupData {
+    pub version: u32,
+    pub created_at: String,
+    pub tasks: Vec<Task>,
+    pub focus_sessions: Vec<FocusSession>,
+    pub daily_sessions: Vec<DailySession>,
+    pub prompt_templates: Vec<PromptTemplate>,
+    pub daily_reports: Vec<DailyReport>,
+    pub settings: Vec<SettingRow>,
+}
+
+#[tauri::command]
+pub fn backup_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Result<String, String> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    let file_path = app
+        .dialog()
+        .file()
+        .add_filter("JSON Backup", &["json"])
+        .set_file_name(&format!("daily-planner-backup-{}.json", today))
+        .blocking_save_file();
+
+    let path = match file_path {
+        None => return Ok("cancelled".to_string()),
+        Some(p) => match p {
+            tauri_plugin_dialog::FilePath::Path(pb) => pb,
+            _ => return Err("Unsupported path type".to_string()),
+        },
+    };
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let backup = BackupData {
+        version: 1,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        tasks: queries::get_all_tasks(&conn).map_err(|e| e.to_string())?,
+        focus_sessions: queries::get_all_focus_sessions(&conn).map_err(|e| e.to_string())?,
+        daily_sessions: queries::get_all_daily_sessions(&conn).map_err(|e| e.to_string())?,
+        prompt_templates: queries::get_all_prompt_templates(&conn).map_err(|e| e.to_string())?,
+        daily_reports: queries::get_all_daily_reports(&conn).map_err(|e| e.to_string())?,
+        settings: queries::get_all_settings_non_sensitive(&conn).map_err(|e| e.to_string())?,
+    };
+
+    let json = serde_json::to_string_pretty(&backup).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Result<String, String> {
+    let file_path = app
+        .dialog()
+        .file()
+        .add_filter("JSON Backup", &["json"])
+        .blocking_pick_file();
+
+    let path = match file_path {
+        None => return Ok("cancelled".to_string()),
+        Some(p) => match p {
+            tauri_plugin_dialog::FilePath::Path(pb) => pb,
+            _ => return Err("Unsupported path type".to_string()),
+        },
+    };
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let backup: BackupData = serde_json::from_str(&content)
+        .map_err(|e| format!("Corrupted backup: {}", e))?;
+
+    if backup.version > 1 {
+        return Err("Backup created by a newer app version".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    // Delete in FK-safe order (focus_sessions refs tasks via CASCADE, but explicit is clearer)
+    conn.execute("DELETE FROM focus_sessions", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_sessions", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_reports", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", []).map_err(|e| e.to_string())?;
+
+    for task in &backup.tasks {
+        conn.execute(
+            "INSERT OR REPLACE INTO tasks
+             (id, date, session_slot, title, notes, task_type, priority, status,
+              estimated_min, actual_min, prompt_used, prompt_result, carried_from,
+              position, created_at, updated_at, completed_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+            rusqlite::params![
+                task.id, task.date, task.session_slot, task.title, task.notes,
+                task.task_type, task.priority, task.status, task.estimated_min,
+                task.actual_min, task.prompt_used, task.prompt_result, task.carried_from,
+                task.position, task.created_at, task.updated_at, task.completed_at
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    for fs in &backup.focus_sessions {
+        conn.execute(
+            "INSERT OR REPLACE INTO focus_sessions
+             (id, task_id, date, started_at, ended_at, duration_min, notes)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                fs.id, fs.task_id, fs.date, fs.started_at,
+                fs.ended_at, fs.duration_min, fs.notes
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    for ds in &backup.daily_sessions {
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_sessions
+             (id, date, session_slot, started_at, tasks_planned, tasks_completed,
+              tasks_skipped, focus_minutes, notes)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![
+                ds.id, ds.date, ds.session_slot, ds.started_at,
+                ds.tasks_planned, ds.tasks_completed, ds.tasks_skipped,
+                ds.focus_minutes, ds.notes
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    for dr in &backup.daily_reports {
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_reports
+             (id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
+              total_focus_min, session1_focus, session2_focus, ai_reflection,
+              markdown_export, generated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            rusqlite::params![
+                dr.id, dr.date, dr.tasks_planned, dr.tasks_completed, dr.tasks_skipped,
+                dr.tasks_carried, dr.total_focus_min, dr.session1_focus, dr.session2_focus,
+                dr.ai_reflection, dr.markdown_export, dr.generated_at
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    // Only restore non-builtin templates (builtin ones are seeded by migration)
+    for pt in &backup.prompt_templates {
+        if !pt.is_builtin {
+            conn.execute(
+                "INSERT OR REPLACE INTO prompt_templates
+                 (id, name, category, template, variables, is_builtin, use_count, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                rusqlite::params![
+                    pt.id, pt.name, pt.category, pt.template, pt.variables,
+                    0i64, pt.use_count, pt.created_at
+                ],
+            ).map_err(|e| e.to_string())?;
+        }
+    }
+
+    for setting in &backup.settings {
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params![setting.key, setting.value],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub fn reset_app_data(
+    keep_settings: bool,
+    keep_builtin_templates: bool,
+    db: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    conn.execute("DELETE FROM focus_sessions", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_sessions", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_reports", []).map_err(|e| e.to_string())?;
+
+    if keep_builtin_templates {
+        conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", []).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute("DELETE FROM prompt_templates", []).map_err(|e| e.to_string())?;
+    }
+
+    if !keep_settings {
+        conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", []).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}

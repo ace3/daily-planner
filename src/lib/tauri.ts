@@ -35,6 +35,12 @@ export const detectClaudeToken = () => invoke<string>('detect_claude_token', {})
 export const sendPrompt = (prompt: string, model: string | null, streamEvent: string) =>
   invoke<string>('send_prompt', { input: { prompt, model, streamEvent } });
 
+// Data management
+export const backupData = () => invoke<string>('backup_data', {});
+export const restoreData = () => invoke<string>('restore_data', {});
+export const resetAppData = (keepSettings: boolean, keepBuiltinTemplates: boolean) =>
+  invoke<void>('reset_app_data', { keepSettings, keepBuiltinTemplates });
+
 // Reports
 export const generateReport = (date: string) => invoke<DailyReport>('generate_report', { date });
 export const getReport = (date: string) => invoke<DailyReport | null>('get_report', { date });

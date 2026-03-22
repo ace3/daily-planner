@@ -18,6 +18,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Init DB
             let db = init_db(app.handle())?;
@@ -107,6 +108,9 @@ pub fn run() {
             commands::reports::get_report,
             commands::reports::get_reports_range,
             commands::reports::save_ai_reflection,
+            commands::data_management::backup_data,
+            commands::data_management::restore_data,
+            commands::data_management::reset_app_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
