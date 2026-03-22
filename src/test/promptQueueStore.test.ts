@@ -62,10 +62,10 @@ describe('promptQueueStore.enqueue', () => {
   it('passes projectPath and provider through to the job', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'p', projectPath: '/my/app', provider: 'codex' });
+    store.getState().enqueue({ prompt: 'p', projectPath: '/my/app', provider: 'opencode' });
     const job = store.getState().queue[0];
     expect(job.projectPath).toBe('/my/app');
-    expect(job.provider).toBe('codex');
+    expect(job.provider).toBe('opencode');
   });
 });
 
@@ -95,7 +95,7 @@ describe('promptQueueStore.startJob', () => {
     store.setState({
       queue: [{
         id: 'job-42', queueNumber: 1, prompt: 'my prompt',
-        projectPath: '/app', provider: 'codex',
+        projectPath: '/app', provider: 'opencode',
         status: 'pending', logs: [], createdAt: new Date(),
       }],
       nextQueueNumber: 2,
@@ -104,7 +104,7 @@ describe('promptQueueStore.startJob', () => {
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('run_prompt', {
       prompt: 'my prompt',
       projectPath: '/app',
-      provider: 'codex',
+      provider: 'opencode',
       jobId: 'job-42',
     });
   });

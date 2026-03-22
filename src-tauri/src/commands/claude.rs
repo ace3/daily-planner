@@ -1,9 +1,9 @@
+use crate::db::{queries, DbConnection};
 use serde::Serialize;
-use tauri::State;
-use tauri::Emitter;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use std::process::Stdio;
-use crate::db::{DbConnection, queries};
+use tauri::Emitter;
+use tauri::State;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 fn strip_ansi(s: &str) -> String {
     let mut result = String::new();
@@ -12,13 +12,38 @@ fn strip_ansi(s: &str) -> String {
         if c == '\x1b' && chars.peek() == Some(&'[') {
             chars.next(); // consume '['
             while let Some(c2) = chars.next() {
-                if c2.is_ascii_alphabetic() { break; }
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
             }
         } else {
             result.push(c);
         }
     }
     result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AiProvider {
+    Claude,
+    OpenCode,
+}
+
+impl AiProvider {
+    fn from_input(raw: Option<&str>) -> Self {
+        match raw.unwrap_or("claude").to_ascii_lowercase().as_str() {
+            // Backward-compat for older frontend value.
+            "codex" | "opencode" => Self::OpenCode,
+            _ => Self::Claude,
+        }
+    }
+
+    fn cli_binary(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::OpenCode => "opencode",
+        }
+    }
 }
 
 #[tauri::command]
@@ -35,9 +60,9 @@ pub async fn improve_prompt_with_claude(
         let gp = queries::get_setting(&conn, "global_prompt")
             .ok()
             .filter(|s| !s.is_empty());
-        let pp = project_id.as_deref().and_then(|pid| {
-            queries::get_project_prompt(&conn, pid).ok().flatten()
-        });
+        let pp = project_id
+            .as_deref()
+            .and_then(|pid| queries::get_project_prompt(&conn, pid).ok().flatten());
         (gp, pp)
     };
 
@@ -49,15 +74,12 @@ pub async fn improve_prompt_with_claude(
         (None, None) => prompt.clone(),
     };
 
-    let cli = provider.as_deref().unwrap_or("claude");
+    let ai_provider = AiProvider::from_input(provider.as_deref());
+    let cli = ai_provider.cli_binary();
+    let args = build_run_args(ai_provider, &effective_prompt);
     let mut cmd = tokio::process::Command::new(cli);
-    // codex non-interactive mode: `codex exec`; -p means --profile in codex
-    // --full-auto: auto-approve shell commands (no human interaction)
-    // --skip-git-repo-check: allow running outside a git repo
-    if cli == "codex" {
-        cmd.arg("exec").arg("--full-auto").arg("--skip-git-repo-check").arg(&effective_prompt);
-    } else {
-        cmd.arg("-p").arg(&effective_prompt);
+    for arg in args {
+        cmd.arg(arg);
     }
     cmd.env("NO_COLOR", "1");
 
@@ -65,10 +87,12 @@ pub async fn improve_prompt_with_claude(
         cmd.current_dir(path);
     }
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run '{}': {}. Make sure the CLI is installed and you're logged in.", cli, e))?;
+    let output = cmd.output().await.map_err(|e| {
+        format!(
+            "Failed to run '{}': {}. Make sure the CLI is installed and you're logged in.",
+            cli, e
+        )
+    })?;
 
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout);
@@ -83,7 +107,7 @@ pub async fn improve_prompt_with_claude(
 #[derive(Serialize)]
 pub struct CliStatus {
     pub claude_available: bool,
-    pub codex_available: bool,
+    pub opencode_available: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -105,16 +129,11 @@ pub struct PromptJobDonePayload {
 
 /// Build the CLI argument list for a given provider and prompt.
 /// Extracted to a pure function so it can be unit-tested independently.
-pub fn build_run_args(cli: &str, prompt: &str) -> Vec<String> {
-    if cli == "codex" {
-        vec![
-            "exec".to_string(),
-            "--full-auto".to_string(),
-            "--skip-git-repo-check".to_string(),
-            prompt.to_string(),
-        ]
-    } else {
-        vec!["-p".to_string(), prompt.to_string()]
+fn build_run_args(provider: AiProvider, prompt: &str) -> Vec<String> {
+    match provider {
+        // OpenCode CLI docs use: `opencode run [message..]` for non-interactive execution.
+        AiProvider::OpenCode => vec!["run".to_string(), prompt.to_string()],
+        AiProvider::Claude => vec!["-p".to_string(), prompt.to_string()],
     }
 }
 
@@ -128,8 +147,9 @@ pub async fn run_prompt(
     job_id: String,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let cli = provider.as_deref().unwrap_or("claude").to_string();
-    let args = build_run_args(&cli, &prompt);
+    let ai_provider = AiProvider::from_input(provider.as_deref());
+    let cli = ai_provider.cli_binary().to_string();
+    let args = build_run_args(ai_provider, &prompt);
 
     let mut cmd = tokio::process::Command::new(&cli);
     for arg in &args {
@@ -148,11 +168,14 @@ pub async fn run_prompt(
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[run_prompt] Failed to spawn '{}': {}", cli, e);
-                let _ = app_handle.emit("prompt_job_done", PromptJobDonePayload {
-                    job_id,
-                    success: false,
-                    exit_code: -1,
-                });
+                let _ = app_handle.emit(
+                    "prompt_job_done",
+                    PromptJobDonePayload {
+                        job_id,
+                        success: false,
+                        exit_code: -1,
+                    },
+                );
                 return;
             }
         };
@@ -169,16 +192,19 @@ pub async fn run_prompt(
                 while let Ok(Some(line)) = lines.next_line().await {
                     let clean = strip_ansi(&line);
                     if !clean.trim().is_empty() {
-                        let _ = app_out.emit("prompt_job_log", PromptJobLogPayload {
-                            job_id: jid_out.clone(),
-                            line: clean,
-                        });
+                        let _ = app_out.emit(
+                            "prompt_job_log",
+                            PromptJobLogPayload {
+                                job_id: jid_out.clone(),
+                                line: clean,
+                            },
+                        );
                     }
                 }
             }
         });
 
-        // Stream stderr lines (codex writes progress to stderr)
+        // Stream stderr lines (some CLIs write progress to stderr)
         let app_err = app_handle.clone();
         let jid_err = job_id.clone();
         let stderr_task = tokio::spawn(async move {
@@ -187,10 +213,13 @@ pub async fn run_prompt(
                 while let Ok(Some(line)) = lines.next_line().await {
                     let clean = strip_ansi(&line);
                     if !clean.trim().is_empty() {
-                        let _ = app_err.emit("prompt_job_log", PromptJobLogPayload {
-                            job_id: jid_err.clone(),
-                            line: clean,
-                        });
+                        let _ = app_err.emit(
+                            "prompt_job_log",
+                            PromptJobLogPayload {
+                                job_id: jid_err.clone(),
+                                line: clean,
+                            },
+                        );
                     }
                 }
             }
@@ -203,11 +232,14 @@ pub async fn run_prompt(
             Err(_) => (false, -1),
         };
 
-        let _ = app_handle.emit("prompt_job_done", PromptJobDonePayload {
-            job_id,
-            success,
-            exit_code,
-        });
+        let _ = app_handle.emit(
+            "prompt_job_done",
+            PromptJobDonePayload {
+                job_id,
+                success,
+                exit_code,
+            },
+        );
     });
 
     Ok(())
@@ -222,14 +254,17 @@ pub async fn check_cli_availability() -> Result<CliStatus, String> {
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    let codex_available = tokio::process::Command::new("which")
-        .arg("codex")
+    let opencode_available = tokio::process::Command::new("which")
+        .arg("opencode")
         .output()
         .await
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    Ok(CliStatus { claude_available, codex_available })
+    Ok(CliStatus {
+        claude_available,
+        opencode_available,
+    })
 }
 
 #[cfg(test)]
@@ -238,36 +273,37 @@ mod tests {
 
     #[test]
     fn test_build_run_args_claude() {
-        let args = build_run_args("claude", "hello world");
+        let args = build_run_args(AiProvider::Claude, "hello world");
         assert_eq!(args, vec!["-p", "hello world"]);
     }
 
     #[test]
-    fn test_build_run_args_codex() {
-        let args = build_run_args("codex", "fix the bug");
-        assert_eq!(args, vec!["exec", "--full-auto", "--skip-git-repo-check", "fix the bug"]);
+    fn test_build_run_args_opencode() {
+        let args = build_run_args(AiProvider::OpenCode, "fix the bug");
+        assert_eq!(args, vec!["run", "fix the bug"]);
     }
 
     #[test]
-    fn test_build_run_args_unknown_defaults_to_claude_style() {
-        // Any unknown CLI uses the -p convention
-        let args = build_run_args("my-custom-cli", "do something");
-        assert_eq!(args, vec!["-p", "do something"]);
+    fn test_provider_parsing_maps_legacy_codex_to_opencode() {
+        assert_eq!(AiProvider::from_input(Some("codex")), AiProvider::OpenCode);
+        assert_eq!(
+            AiProvider::from_input(Some("opencode")),
+            AiProvider::OpenCode
+        );
     }
 
     #[test]
     fn test_build_run_args_preserves_prompt_with_special_chars() {
         let prompt = "fix: handle edge case with 'quotes' and \"double quotes\"";
-        let args = build_run_args("claude", prompt);
+        let args = build_run_args(AiProvider::Claude, prompt);
         assert_eq!(args[1], prompt);
     }
 
     #[test]
-    fn test_build_run_args_codex_prompt_is_last_arg() {
+    fn test_build_run_args_opencode_prompt_is_last_arg() {
         let prompt = "my prompt";
-        let args = build_run_args("codex", prompt);
+        let args = build_run_args(AiProvider::OpenCode, prompt);
         assert_eq!(args.last().unwrap(), prompt);
-        // exec must be first
-        assert_eq!(args[0], "exec");
+        assert_eq!(args[0], "run");
     }
 }

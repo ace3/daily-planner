@@ -35,6 +35,7 @@ const defaultSettings: AppSettings = {
   warn_before_min: 15,
   autostart: false,
   claude_model: 'claude-sonnet-4-6',
+  ai_provider: 'claude',
   theme: 'dark',
   work_days: [1, 2, 3, 4, 5],
   show_in_tray: true,

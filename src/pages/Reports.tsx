@@ -17,7 +17,9 @@ export const Reports: React.FC = () => {
   const { report, recentReports, loading, generateReport, fetchReport, fetchRecentReports, saveReflection } = useReportStore();
   const { tasks, fetchTasks, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
-  const { claudeAvailable, activeProvider } = useProviderStore();
+  const { claudeAvailable, opencodeAvailable } = useProviderStore();
+  const activeProvider = settings?.ai_provider ?? 'claude';
+  const activeProviderAvailable = activeProvider === 'opencode' ? opencodeAvailable : claudeAvailable;
   const [generatingReflection, setGeneratingReflection] = React.useState(false);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
 
@@ -70,7 +72,7 @@ Write an encouraging, actionable reflection. Mention what went well and what to 
             <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Reports</h1>
           </div>
           <div className="flex gap-2">
-            {report && claudeAvailable && (
+            {report && activeProviderAvailable && (
               <Button
                 variant="ghost"
                 size="sm"

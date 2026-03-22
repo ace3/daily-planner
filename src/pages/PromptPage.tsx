@@ -6,9 +6,8 @@ import type { TaskContext } from '../components/claude/PromptBuilder';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useProjectStore } from '../stores/projectStore';
-import { useProviderStore } from '../stores/providerStore';
 import { getLocalDate } from '../lib/time';
-import { improvePromptWithClaude } from '../lib/tauri';
+import { improvePromptWithClaude, invokeCopilotCli } from '../lib/tauri';
 import type { Task } from '../types/task';
 import type { Project } from '../types/project';
 import { Badge } from '../components/ui/Badge';
@@ -79,7 +78,8 @@ export const PromptPage: React.FC = () => {
   const { tasks, fetchTasks, savePromptResult, updateTaskStatus, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
   const { projects, fetchProjects } = useProjectStore();
-  const { activeProvider } = useProviderStore();
+  const selectedAiProvider = settings?.ai_provider ?? 'claude';
+  const runProvider = selectedAiProvider === 'copilot_cli' ? 'claude' : selectedAiProvider;
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
 
@@ -144,20 +144,24 @@ export const PromptPage: React.FC = () => {
     const capturedKey = taskKey;
     const capturedContext = selectedTask ? buildTaskContext(selectedTask, projects) : undefined;
     const capturedPrompt = currentPrompt.trim();
-    const capturedProvider = activeProvider;
+    const capturedProvider = selectedAiProvider;
 
     patchState(capturedKey, { loading: true, error: null, improved: '' });
 
     const metaPrompt = buildImprovementPrompt(capturedPrompt, capturedContext);
 
-    improvePromptWithClaude(metaPrompt, capturedContext?.project?.path, capturedProvider, capturedContext?.project?.id)
+    const request = capturedProvider === 'copilot_cli'
+      ? invokeCopilotCli(metaPrompt, 'suggest', capturedContext?.project?.path)
+      : improvePromptWithClaude(metaPrompt, capturedContext?.project?.path, capturedProvider, capturedContext?.project?.id);
+
+    request
       .then((result) => {
         patchState(capturedKey, { improved: result, loading: false });
       })
       .catch((e: unknown) => {
         patchState(capturedKey, { error: String(e), loading: false });
       });
-  }, [taskKey, selectedTask, projects, promptStates, patchState, activeProvider]);
+  }, [taskKey, selectedTask, projects, promptStates, patchState, selectedAiProvider]);
 
   const handleReset = useCallback(() => {
     patchState(taskKey, { improved: '', error: null });
@@ -246,7 +250,7 @@ export const PromptPage: React.FC = () => {
             projectPath={selectedTask?.project_id
               ? projects.find((p) => p.id === selectedTask.project_id)?.path
               : undefined}
-            provider={activeProvider}
+            provider={runProvider}
           />
         </div>
       </div>

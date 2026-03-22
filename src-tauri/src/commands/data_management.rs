@@ -1,8 +1,10 @@
+use crate::db::queries::{
+    DailyReport, DailySession, FocusSession, PromptTemplate, SettingRow, Task,
+};
+use crate::db::{queries, DbConnection};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
-use serde::{Deserialize, Serialize};
-use crate::db::{DbConnection, queries};
-use crate::db::queries::{Task, FocusSession, PromptTemplate, DailyReport, DailySession, SettingRow};
 
 #[derive(Serialize, Deserialize)]
 pub struct BackupData {
@@ -70,11 +72,11 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
         },
     };
 
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let backup: BackupData = serde_json::from_str(&content)
-        .map_err(|e| format!("Corrupted backup: {}", e))?;
+    let backup: BackupData =
+        serde_json::from_str(&content).map_err(|e| format!("Corrupted backup: {}", e))?;
 
     if backup.version > 1 {
         return Err("Backup created by a newer app version".to_string());
@@ -83,12 +85,18 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     // Delete in FK-safe order (focus_sessions refs tasks via CASCADE, but explicit is clearer)
-    conn.execute("DELETE FROM focus_sessions", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM daily_sessions", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM daily_reports", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM focus_sessions", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tasks", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_sessions", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_reports", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", [])
+        .map_err(|e| e.to_string())?;
 
     for task in &backup.tasks {
         conn.execute(
@@ -98,12 +106,26 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
               position, created_at, updated_at, completed_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             rusqlite::params![
-                task.id, task.date, task.session_slot, task.title, task.notes,
-                task.task_type, task.priority, task.status, task.estimated_min,
-                task.actual_min, task.prompt_used, task.prompt_result, task.carried_from,
-                task.position, task.created_at, task.updated_at, task.completed_at
+                task.id,
+                task.date,
+                task.session_slot,
+                task.title,
+                task.notes,
+                task.task_type,
+                task.priority,
+                task.status,
+                task.estimated_min,
+                task.actual_min,
+                task.prompt_used,
+                task.prompt_result,
+                task.carried_from,
+                task.position,
+                task.created_at,
+                task.updated_at,
+                task.completed_at
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     for fs in &backup.focus_sessions {
@@ -112,10 +134,16 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
              (id, task_id, date, started_at, ended_at, duration_min, notes)
              VALUES (?1,?2,?3,?4,?5,?6,?7)",
             rusqlite::params![
-                fs.id, fs.task_id, fs.date, fs.started_at,
-                fs.ended_at, fs.duration_min, fs.notes
+                fs.id,
+                fs.task_id,
+                fs.date,
+                fs.started_at,
+                fs.ended_at,
+                fs.duration_min,
+                fs.notes
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     for ds in &backup.daily_sessions {
@@ -125,11 +153,18 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
               tasks_skipped, focus_minutes, notes)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             rusqlite::params![
-                ds.id, ds.date, ds.session_slot, ds.started_at,
-                ds.tasks_planned, ds.tasks_completed, ds.tasks_skipped,
-                ds.focus_minutes, ds.notes
+                ds.id,
+                ds.date,
+                ds.session_slot,
+                ds.started_at,
+                ds.tasks_planned,
+                ds.tasks_completed,
+                ds.tasks_skipped,
+                ds.focus_minutes,
+                ds.notes
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     for dr in &backup.daily_reports {
@@ -140,11 +175,21 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
               markdown_export, generated_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             rusqlite::params![
-                dr.id, dr.date, dr.tasks_planned, dr.tasks_completed, dr.tasks_skipped,
-                dr.tasks_carried, dr.total_focus_min, dr.session1_focus, dr.session2_focus,
-                dr.ai_reflection, dr.markdown_export, dr.generated_at
+                dr.id,
+                dr.date,
+                dr.tasks_planned,
+                dr.tasks_completed,
+                dr.tasks_skipped,
+                dr.tasks_carried,
+                dr.total_focus_min,
+                dr.session1_focus,
+                dr.session2_focus,
+                dr.ai_reflection,
+                dr.markdown_export,
+                dr.generated_at
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     // Only restore non-builtin templates (builtin ones are seeded by migration)
@@ -155,10 +200,17 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
                  (id, name, category, template, variables, is_builtin, use_count, created_at)
                  VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                 rusqlite::params![
-                    pt.id, pt.name, pt.category, pt.template, pt.variables,
-                    0i64, pt.use_count, pt.created_at
+                    pt.id,
+                    pt.name,
+                    pt.category,
+                    pt.template,
+                    pt.variables,
+                    0i64,
+                    pt.use_count,
+                    pt.created_at
                 ],
-            ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
 
@@ -166,7 +218,8 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![setting.key, setting.value],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok("ok".to_string())
@@ -180,19 +233,26 @@ pub fn reset_app_data(
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
-    conn.execute("DELETE FROM focus_sessions", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM daily_sessions", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM daily_reports", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM focus_sessions", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tasks", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_sessions", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM daily_reports", [])
+        .map_err(|e| e.to_string())?;
 
     if keep_builtin_templates {
-        conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", []).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", [])
+            .map_err(|e| e.to_string())?;
     } else {
-        conn.execute("DELETE FROM prompt_templates", []).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM prompt_templates", [])
+            .map_err(|e| e.to_string())?;
     }
 
     if !keep_settings {
-        conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", []).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", [])
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())

@@ -1,9 +1,9 @@
-use rusqlite::{Connection, params};
-use std::path::Path;
 use anyhow::Context;
+use rusqlite::{params, Connection};
+use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -43,11 +43,11 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     if current < 4 {
         apply_v4(conn)?;
     }
-    if current < 5 {
-        apply_v5(conn)?;
-    }
 
-    eprintln!("[migrations] All migrations applied.  Schema is now v{}.", SCHEMA_VERSION);
+    eprintln!(
+        "[migrations] All migrations applied.  Schema is now v{}.",
+        SCHEMA_VERSION
+    );
     Ok(())
 }
 
@@ -134,22 +134,12 @@ fn infer_legacy_version(conn: &Connection) -> anyhow::Result<u32> {
         return Ok(3);
     }
 
-    if !column_exists(conn, "tasks", "worktree_path")? {
-        eprintln!("[migrations] Legacy DB detected; inferred v4.");
-        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
-        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
-        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
-        record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
-        return Ok(4);
-    }
-
-    eprintln!("[migrations] Legacy DB detected; inferred v5.");
+    eprintln!("[migrations] Legacy DB detected; inferred v4.");
     record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
     record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
     record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
     record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
-    record_version_row(conn, 5, "legacy v5 (inferred on startup)")?;
-    Ok(5)
+    Ok(4)
 }
 
 fn record_version_row(conn: &Connection, version: u32, description: &str) -> anyhow::Result<()> {
@@ -185,12 +175,13 @@ fn create_backup(conn: &Connection, db_path: &Path, from_version: u32) -> anyhow
         return Ok(());
     }
 
-    eprintln!("[migrations] Creating pre-migration backup at {:?} …", backup_path);
+    eprintln!(
+        "[migrations] Creating pre-migration backup at {:?} …",
+        backup_path
+    );
 
     // VACUUM INTO produces a defragmented, fully consistent snapshot.
-    let escaped = backup_path
-        .to_string_lossy()
-        .replace('\'', "''");
+    let escaped = backup_path.to_string_lossy().replace('\'', "''");
     conn.execute_batch(&format!("VACUUM INTO '{}';", escaped))
         .with_context(|| format!("VACUUM INTO {:?} failed", backup_path))?;
 
@@ -221,7 +212,12 @@ where
         .context("Failed to open migration transaction")?;
 
     // Run the user-supplied DDL.  On Err, `tx` is dropped → auto-rollback.
-    f(&tx).with_context(|| format!("Migration v{} body failed; transaction rolled back", version))?;
+    f(&tx).with_context(|| {
+        format!(
+            "Migration v{} body failed; transaction rolled back",
+            version
+        )
+    })?;
 
     // Record the version inside the same transaction so it's atomic.
     tx.execute(
@@ -337,6 +333,7 @@ fn apply_v1(conn: &mut Connection) -> anyhow::Result<()> {
             INSERT OR IGNORE INTO settings VALUES ('show_in_tray',       'true');
             INSERT OR IGNORE INTO settings VALUES ('pomodoro_work_min',  '25');
             INSERT OR IGNORE INTO settings VALUES ('pomodoro_break_min', '5');
+            INSERT OR IGNORE INTO settings VALUES ('ai_provider',        'claude');
 
             INSERT OR IGNORE INTO prompt_templates
                 (id, name, category, template, variables, is_builtin) VALUES
@@ -364,7 +361,8 @@ fn apply_v1(conn: &mut Connection) -> anyhow::Result<()> {
 
 fn apply_v2(conn: &mut Connection) -> anyhow::Result<()> {
     with_migration(conn, 2, "Add projects table and tasks.project_id", |tx| {
-        tx.execute_batch("
+        tx.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS projects (
                 id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
                 name       TEXT NOT NULL,
@@ -372,15 +370,14 @@ fn apply_v2(conn: &mut Connection) -> anyhow::Result<()> {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
-        ")
+        ",
+        )
         .context("Failed to create projects table")?;
 
         // ALTER TABLE fails if column already exists; guard with existence check.
         if !column_exists(tx, "tasks", "project_id")? {
-            tx.execute_batch(
-                "ALTER TABLE tasks ADD COLUMN project_id TEXT DEFAULT NULL;",
-            )
-            .context("ALTER TABLE tasks ADD COLUMN project_id")?;
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN project_id TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN project_id")?;
         }
         Ok(())
     })
@@ -389,10 +386,8 @@ fn apply_v2(conn: &mut Connection) -> anyhow::Result<()> {
 fn apply_v3(conn: &mut Connection) -> anyhow::Result<()> {
     with_migration(conn, 3, "Add projects.prompt column", |tx| {
         if !column_exists(tx, "projects", "prompt")? {
-            tx.execute_batch(
-                "ALTER TABLE projects ADD COLUMN prompt TEXT DEFAULT NULL;",
-            )
-            .context("ALTER TABLE projects ADD COLUMN prompt")?;
+            tx.execute_batch("ALTER TABLE projects ADD COLUMN prompt TEXT DEFAULT NULL;")
+                .context("ALTER TABLE projects ADD COLUMN prompt")?;
         }
         Ok(())
     })
@@ -405,24 +400,6 @@ fn apply_v4(conn: &mut Connection) -> anyhow::Result<()> {
             [],
         )
         .context("Insert default ai_provider setting")?;
-        Ok(())
-    })
-}
-
-fn apply_v5(conn: &mut Connection) -> anyhow::Result<()> {
-    with_migration(conn, 5, "Add task worktree metadata columns", |tx| {
-        if !column_exists(tx, "tasks", "worktree_path")? {
-            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_path TEXT DEFAULT NULL;")
-                .context("ALTER TABLE tasks ADD COLUMN worktree_path")?;
-        }
-        if !column_exists(tx, "tasks", "worktree_branch")? {
-            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_branch TEXT DEFAULT NULL;")
-                .context("ALTER TABLE tasks ADD COLUMN worktree_branch")?;
-        }
-        if !column_exists(tx, "tasks", "worktree_status")? {
-            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_status TEXT DEFAULT NULL;")
-                .context("ALTER TABLE tasks ADD COLUMN worktree_status")?;
-        }
         Ok(())
     })
 }
@@ -482,7 +459,8 @@ mod tests {
 
     /// Build a minimal v1-equivalent schema with no schema_version rows.
     fn seed_v1_schema(conn: &Connection) {
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE tasks (
                 id TEXT PRIMARY KEY, date TEXT NOT NULL,
                 session_slot INTEGER NOT NULL DEFAULT 1,
@@ -541,7 +519,9 @@ mod tests {
                 generated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             INSERT OR IGNORE INTO settings VALUES ('timezone_offset', '7');
-        ").unwrap();
+        ",
+        )
+        .unwrap();
     }
 
     // --- 1. Fresh install ---
@@ -552,17 +532,21 @@ mod tests {
         run_migrations(&mut conn, None).unwrap();
 
         // All expected tables exist.
-        for tbl in &["tasks", "focus_sessions", "daily_sessions",
-                      "prompt_templates", "daily_reports", "settings",
-                      "projects", "schema_version"] {
+        for tbl in &[
+            "tasks",
+            "focus_sessions",
+            "daily_sessions",
+            "prompt_templates",
+            "daily_reports",
+            "settings",
+            "projects",
+            "schema_version",
+        ] {
             assert!(table_exists(&conn, tbl).unwrap(), "Table '{}' missing", tbl);
         }
 
         // New columns added.
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
-        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
-        assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
-        assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         // Schema version recorded correctly.
@@ -573,13 +557,21 @@ mod tests {
 
         // 6 builtin templates seeded.
         let tmpl_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM prompt_templates WHERE is_builtin=1", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM prompt_templates WHERE is_builtin=1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tmpl_count, 6);
 
         // Default settings populated.
         let tz: String = conn
-            .query_row("SELECT value FROM settings WHERE key='timezone_offset'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM settings WHERE key='timezone_offset'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tz, "7");
     }
@@ -611,11 +603,9 @@ mod tests {
 
         // Data must survive migration.
         let title: String = conn
-            .query_row(
-                "SELECT title FROM tasks WHERE id='legacy-1'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT title FROM tasks WHERE id='legacy-1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(title, "Legacy Task", "Task title must be preserved");
 
@@ -631,7 +621,6 @@ mod tests {
         // New schema elements added.
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
-        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         let v: i64 = conn
@@ -672,11 +661,9 @@ mod tests {
 
         // Original data must be untouched.
         let val: String = conn
-            .query_row(
-                "SELECT value FROM user_data WHERE id='row1'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT value FROM user_data WHERE id='row1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(val, "important");
     }
@@ -716,11 +703,7 @@ mod tests {
 
         // Data must still be intact.
         let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM tasks WHERE id='t1'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM tasks WHERE id='t1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1, "User data must survive a no-op second run");
     }
@@ -748,7 +731,6 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION as i64);
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
-        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
     }
 
     // --- 5b. Edge case: corrupt negative version ---
@@ -789,7 +771,11 @@ mod tests {
 
         // Must not panic or corrupt anything.
         let result = run_migrations(&mut conn, None);
-        assert!(result.is_ok(), "Future DB version must not crash: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Future DB version must not crash: {:?}",
+            result
+        );
     }
 
     // --- 5d. Edge case: completely empty schema_version (no user tables) ---
@@ -801,6 +787,9 @@ mod tests {
         bootstrap_version_table(&conn).unwrap();
 
         let version = detect_version(&conn).unwrap();
-        assert_eq!(version, 0, "Empty DB should be detected as v0 (fresh install)");
+        assert_eq!(
+            version, 0,
+            "Empty DB should be detected as v0 (fresh install)"
+        );
     }
 }

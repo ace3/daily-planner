@@ -1,13 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type {
-  Task,
-  CreateTaskInput,
-  UpdateTaskInput,
-  PromptTemplate,
-  TaskWorktreeRunResult,
-  TaskWorktreeCleanupResult,
-} from '../types/task';
+import type { Task, CreateTaskInput, UpdateTaskInput, PromptTemplate } from '../types/task';
 import type { AppSettings } from '../types/settings';
 import type { DailyReport } from '../types/report';
 import type { Project, CreateProjectInput } from '../types/project';
@@ -23,10 +16,6 @@ export const carryTaskForward = (id: string, tomorrowDate: string, sessionSlot: 
 export const reorderTasks = (taskIds: string[]) => invoke<void>('reorder_tasks', { taskIds });
 export const savePromptResult = (id: string, promptUsed: string, promptResult: string) =>
   invoke<void>('save_prompt_result', { id, promptUsed, promptResult });
-export const runTaskAsWorktree = (taskId: string) =>
-  invoke<TaskWorktreeRunResult>('run_task_as_worktree', { taskId });
-export const cleanupTaskWorktree = (taskId: string) =>
-  invoke<TaskWorktreeCleanupResult>('cleanup_task_worktree', { taskId });
 
 // Focus sessions
 export const startFocusSession = (taskId: string, date: string) =>
@@ -45,12 +34,16 @@ export const setSetting = (key: string, value: string) => invoke<void>('set_sett
 // CLI / AI providers
 export const improvePromptWithClaude = (prompt: string, projectPath?: string, provider?: string, projectId?: string) =>
   invoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId });
+export const invokeCopilotCli = (input: string, mode: 'suggest' | 'explain' = 'suggest', projectPath?: string) =>
+  invoke<string>('invoke_copilot_cli', { input, mode, projectPath });
 
 export const runPrompt = (prompt: string, projectPath?: string, provider?: string, jobId?: string) =>
   invoke<void>('run_prompt', { prompt, projectPath, provider, jobId });
 
 export const checkCliAvailability = () =>
-  invoke<{ claude_available: boolean; codex_available: boolean }>('check_cli_availability', {});
+  invoke<{ claude_available: boolean; opencode_available: boolean }>('check_cli_availability', {});
+export const checkCopilotCliAvailability = () =>
+  invoke<{ available: boolean }>('check_copilot_cli_availability', {});
 
 // Data management
 export const backupData = () => invoke<string>('backup_data', {});

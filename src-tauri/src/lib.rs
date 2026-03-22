@@ -1,10 +1,10 @@
-mod db;
 mod commands;
+mod db;
 mod scheduler;
 mod tray;
 
-use tauri::Manager;
 use db::{init_db, run_migrations};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -94,8 +94,6 @@ pub fn run() {
             commands::tasks::carry_task_forward,
             commands::tasks::reorder_tasks,
             commands::tasks::save_prompt_result,
-            commands::tasks::run_task_as_worktree,
-            commands::tasks::cleanup_task_worktree,
             commands::tasks::start_focus_session,
             commands::tasks::end_focus_session,
             commands::tasks::get_prompt_templates,
@@ -105,6 +103,8 @@ pub fn run() {
             commands::claude::improve_prompt_with_claude,
             commands::claude::run_prompt,
             commands::claude::check_cli_availability,
+            commands::copilot::invoke_copilot_cli,
+            commands::copilot::check_copilot_cli_availability,
             commands::reports::generate_report,
             commands::reports::get_report,
             commands::reports::get_reports_range,

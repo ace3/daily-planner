@@ -161,8 +161,8 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
         placeholder={taskContext
-          ? 'Describe what you want to do... Claude CLI will improve this into a detailed agent prompt.'
-          : 'Write your rough prompt idea... Claude CLI will polish it into a detailed, actionable agent prompt.'}
+          ? 'Describe what you want to do... the selected AI provider will improve this into a detailed agent prompt.'
+          : 'Write your rough prompt idea... the selected AI provider will polish it into a detailed, actionable agent prompt.'}
         rows={5}
       />
 

@@ -17,7 +17,7 @@ interface TaskListProps {
 }
 
 export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
-  const { tasks, createTask, updateTaskStatus, deleteTask, carryTaskForward, updateTask, activeDate, runTaskAsWorktree, cleanupTaskWorktree } =
+  const { tasks, createTask, updateTaskStatus, deleteTask, carryTaskForward, updateTask, activeDate } =
     useTaskStore();
   const { settings } = useSettingsStore();
   const { projects } = useProjectStore();
@@ -54,29 +54,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       await updateTask({ id, project_id: projectId });
     } else {
       await updateTask({ id, clear_project: true });
-    }
-  };
-
-  const handleRunAsWorktree = async (task: Task) => {
-    const result = await runTaskAsWorktree(task.id);
-    try {
-      await navigator.clipboard.writeText(result.launch_command);
-      toast.success(`Worktree ready (${result.branch_name}). Launch command copied.`);
-    } catch {
-      toast.info(`Worktree ready (${result.branch_name}). Copy launch command from prompt result.`);
-    }
-  };
-
-  const handleCleanupWorktree = async (task: Task) => {
-    const result = await cleanupTaskWorktree(task.id);
-    if (result.warning) {
-      toast.warning(result.warning);
-    } else {
-      toast.success(
-        result.branch_deleted
-          ? 'Worktree cleaned and branch deleted'
-          : 'Worktree cleaned',
-      );
     }
   };
 
@@ -120,8 +97,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       onNotesUpdate={handleNotesUpdate}
       onProjectChange={handleProjectChange}
       onSelect={onTaskSelect}
-      onRunAsWorktree={handleRunAsWorktree}
-      onCleanupWorktree={handleCleanupWorktree}
     />
   );
 
@@ -190,8 +165,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
               onCarryForward={handleCarryForward}
               onNotesUpdate={handleNotesUpdate}
               onSelect={onTaskSelect}
-              onRunAsWorktree={handleRunAsWorktree}
-              onCleanupWorktree={handleCleanupWorktree}
             />
           ))}
         </div>

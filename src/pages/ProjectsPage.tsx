@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, Plus, Trash2, FolderSearch, ChevronDown, ChevronUp, Save, MessageSquare } from 'lucide-react';
+import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare } from 'lucide-react';
 import { useProjectStore } from '../stores/projectStore';
 import { openFolderDialog } from '../lib/tauri';
 import { Button } from '../components/ui/Button';

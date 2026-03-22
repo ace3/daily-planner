@@ -8,9 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   GripVertical,
-  GitBranch,
-  Trash,
-  FolderGit2,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { TaskNotes } from './TaskNotes';
@@ -25,8 +22,6 @@ interface TaskItemProps {
   onNotesUpdate: (id: string, notes: string) => Promise<void>;
   onProjectChange?: (id: string, projectId: string | null) => Promise<void>;
   onSelect?: (task: Task) => void;
-  onRunAsWorktree?: (task: Task) => Promise<void>;
-  onCleanupWorktree?: (task: Task) => Promise<void>;
 }
 
 const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple'> = {
@@ -49,14 +44,11 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onNotesUpdate,
   onProjectChange,
   onSelect,
-  onRunAsWorktree,
-  onCleanupWorktree,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isDone = task.status === 'done';
   const isSkipped = task.status === 'skipped';
   const isCarried = task.status === 'carried_over';
-  const hasWorktree = Boolean(task.worktree_path && task.worktree_branch && task.worktree_status);
 
   return (
     <div
@@ -107,21 +99,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <span className="text-xs text-gray-400 dark:text-[#484F58]">{formatDuration(task.estimated_min)}</span>
             )}
             {task.carried_from && <Badge variant="amber">carried</Badge>}
-            {task.worktree_status === 'active' && <Badge variant="blue">worktree active</Badge>}
-            {task.worktree_status === 'merged' && <Badge variant="green">worktree merged</Badge>}
-            {task.worktree_status === 'abandoned' && <Badge variant="gray">worktree abandoned</Badge>}
           </div>
 
           {task.notes && !expanded && (
             <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5 truncate">{task.notes}</p>
-          )}
-          {task.worktree_path && (
-            <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5 truncate">
-              <span className="inline-flex items-center gap-1">
-                <FolderGit2 size={10} />
-                {task.worktree_path}
-              </span>
-            </p>
           )}
         </div>
 
@@ -143,24 +124,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               title="Carry to tomorrow"
             >
               <ArrowRight size={13} />
-            </button>
-          )}
-          {!hasWorktree && onRunAsWorktree && !isDone && (
-            <button
-              onClick={() => onRunAsWorktree(task)}
-              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-blue-400 transition-colors cursor-pointer rounded"
-              title="Run as Worktree"
-            >
-              <GitBranch size={13} />
-            </button>
-          )}
-          {hasWorktree && onCleanupWorktree && (
-            <button
-              onClick={() => onCleanupWorktree(task)}
-              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-amber-400 transition-colors cursor-pointer rounded"
-              title="Clean up worktree"
-            >
-              <Trash size={13} />
             </button>
           )}
           <button

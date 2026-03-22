@@ -1,11 +1,5 @@
 import { create } from 'zustand';
-import type {
-  Task,
-  CreateTaskInput,
-  UpdateTaskInput,
-  TaskWorktreeRunResult,
-  TaskWorktreeCleanupResult,
-} from '../types/task';
+import type { Task, CreateTaskInput, UpdateTaskInput } from '../types/task';
 import * as api from '../lib/tauri';
 
 interface TaskState {
@@ -22,8 +16,6 @@ interface TaskState {
   carryTaskForward: (id: string, tomorrowDate: string, sessionSlot: number) => Promise<void>;
   reorderTasks: (taskIds: string[]) => Promise<void>;
   savePromptResult: (id: string, promptUsed: string, promptResult: string) => Promise<void>;
-  runTaskAsWorktree: (taskId: string) => Promise<TaskWorktreeRunResult>;
-  cleanupTaskWorktree: (taskId: string) => Promise<TaskWorktreeCleanupResult>;
   getTasksBySlot: (slot: number) => Task[];
 }
 
@@ -83,18 +75,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   savePromptResult: async (id, promptUsed, promptResult) => {
     await api.savePromptResult(id, promptUsed, promptResult);
     await get().fetchTasks(get().activeDate);
-  },
-
-  runTaskAsWorktree: async (taskId) => {
-    const result = await api.runTaskAsWorktree(taskId);
-    await get().fetchTasks(get().activeDate);
-    return result;
-  },
-
-  cleanupTaskWorktree: async (taskId) => {
-    const result = await api.cleanupTaskWorktree(taskId);
-    await get().fetchTasks(get().activeDate);
-    return result;
   },
 
   getTasksBySlot: (slot) => {

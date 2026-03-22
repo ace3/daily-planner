@@ -6,6 +6,7 @@ export interface AppSettings {
   warn_before_min: number;
   autostart: boolean;
   claude_model: string;
+  ai_provider: 'claude' | 'opencode' | 'codex' | 'copilot_cli';
   theme: string;
   work_days: number[];
   show_in_tray: boolean;

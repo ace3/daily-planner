@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
-use tokio_cron_scheduler::{JobScheduler, Job};
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 #[derive(Clone, serde::Serialize)]
 struct PhaseChangedPayload {
@@ -48,9 +48,12 @@ pub async fn setup_scheduler(
                     .title("Good morning! Start prompting NOW")
                     .body("Your 5-hour Claude session counter starts ticking. Fire up Claude and begin planning!")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "kickstart".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "kickstart".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;
@@ -69,9 +72,12 @@ pub async fn setup_scheduler(
                     .title("Time to code!")
                     .body("Planning phase over. Switch to Claude Code and start building.")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "coding".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "coding".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;
@@ -90,9 +96,12 @@ pub async fn setup_scheduler(
                     .title("Session resets in 15 min!")
                     .body("Wrap up your current work. Fresh session starts soon — make it count!")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "session1_warning".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "session1_warning".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;
@@ -111,9 +120,12 @@ pub async fn setup_scheduler(
                     .title("Fresh session! Keep building.")
                     .body("Your 5-hour session just reset. You've doubled your Claude usage today!")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "session2".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "session2".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;
@@ -132,9 +144,12 @@ pub async fn setup_scheduler(
                     .title("15 min left in afternoon session")
                     .body("Finish up or queue tasks for tomorrow. Almost done for the day!")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "session2_warning".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "session2_warning".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;
@@ -153,9 +168,12 @@ pub async fn setup_scheduler(
                     .title("Great work today!")
                     .body("Your dev day is done. Generate your daily report to capture your progress.")
                     .show();
-                let _ = app.emit("phase-changed", PhaseChangedPayload {
-                    phase: "end_of_day".to_string(),
-                });
+                let _ = app.emit(
+                    "phase-changed",
+                    PhaseChangedPayload {
+                        phase: "end_of_day".to_string(),
+                    },
+                );
             })
         })?;
         sched.add(job).await?;

@@ -8,8 +8,9 @@ import { formatCountdown } from '../../lib/time';
 
 export const TopBar: React.FC = () => {
   const { sessionInfo, currentDate } = useSessionStore();
-  const { activeProvider, claudeAvailable, codexAvailable, setActiveProvider } = useProviderStore();
+  const { claudeAvailable, opencodeAvailable } = useProviderStore();
   const { settings, setTheme } = useSettingsStore();
+  const activeProvider = settings?.ai_provider ?? 'claude';
 
   const isDark = settings?.theme === 'dark';
 
@@ -71,32 +72,12 @@ export const TopBar: React.FC = () => {
           <div className="flex items-center gap-1.5">
             <span
               className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: codexAvailable ? '#3FB950' : '#484F58' }}
+              style={{ backgroundColor: opencodeAvailable ? '#3FB950' : '#484F58' }}
             />
-            <span className={`text-xs ${activeProvider === 'codex' ? 'text-gray-900 dark:text-[#E6EDF3]' : 'text-gray-500 dark:text-[#8B949E]'}`}>
-              Codex
+            <span className={`text-xs ${activeProvider === 'opencode' ? 'text-gray-900 dark:text-[#E6EDF3]' : 'text-gray-500 dark:text-[#8B949E]'}`}>
+              OpenCode
             </span>
           </div>
-        </div>
-
-        {/* Provider toggle pill */}
-        <div className="flex items-center bg-gray-200 dark:bg-[#21262D] rounded-full p-0.5">
-          <button
-            onClick={() => claudeAvailable && setActiveProvider('claude')}
-            className={`text-xs px-2.5 py-0.5 rounded-full transition-colors leading-none
-              ${activeProvider === 'claude' ? 'bg-[#388BFD] text-[#E6EDF3]' : 'text-gray-500 dark:text-[#484F58]'}
-              ${!claudeAvailable ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-          >
-            Claude
-          </button>
-          <button
-            onClick={() => codexAvailable && setActiveProvider('codex')}
-            className={`text-xs px-2.5 py-0.5 rounded-full transition-colors leading-none
-              ${activeProvider === 'codex' ? 'bg-[#388BFD] text-[#E6EDF3]' : 'text-gray-500 dark:text-[#484F58]'}
-              ${!codexAvailable ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-          >
-            Codex
-          </button>
         </div>
       </div>
     </div>

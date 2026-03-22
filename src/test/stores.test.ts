@@ -32,12 +32,94 @@ describe('settingsStore defaults', () => {
     const store = useSettingsStore.getState();
     expect(store.globalPrompt).toBeNull();
   });
+
+  it('defaults ai_provider to claude', async () => {
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    const store = useSettingsStore.getState();
+    expect(store.settings?.ai_provider).toBe('claude');
+  });
+});
+
+describe('settingsStore ai_provider persistence', () => {
+  it('fetchSettings loads ai_provider from backend settings', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockResolvedValue({
+      theme: 'dark',
+      timezone_offset: 7,
+      session1_kickstart: '09:00',
+      planning_end: '11:00',
+      session2_start: '14:00',
+      warn_before_min: 15,
+      autostart: false,
+      claude_model: 'claude-sonnet-4-6',
+      work_days: [1, 2, 3, 4, 5],
+      show_in_tray: true,
+      pomodoro_work_min: 25,
+      pomodoro_break_min: 5,
+      ai_provider: 'opencode',
+    });
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    await useSettingsStore.getState().fetchSettings();
+    expect(useSettingsStore.getState().settings?.ai_provider).toBe('opencode');
+  });
+
+  it('updateSetting persists ai_provider with set_setting', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        theme: 'dark',
+        timezone_offset: 7,
+        session1_kickstart: '09:00',
+        planning_end: '11:00',
+        session2_start: '14:00',
+        warn_before_min: 15,
+        autostart: false,
+        claude_model: 'claude-sonnet-4-6',
+        work_days: [1, 2, 3, 4, 5],
+        show_in_tray: true,
+        pomodoro_work_min: 25,
+        pomodoro_break_min: 5,
+        ai_provider: 'opencode',
+      });
+
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    await useSettingsStore.getState().updateSetting('ai_provider', 'opencode');
+    expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'ai_provider', value: 'opencode' });
+    expect(useSettingsStore.getState().settings?.ai_provider).toBe('opencode');
+  });
+
+  it('updateSetting persists copilot_cli provider', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        theme: 'dark',
+        timezone_offset: 7,
+        session1_kickstart: '09:00',
+        planning_end: '11:00',
+        session2_start: '14:00',
+        warn_before_min: 15,
+        autostart: false,
+        claude_model: 'claude-sonnet-4-6',
+        work_days: [1, 2, 3, 4, 5],
+        show_in_tray: true,
+        pomodoro_work_min: 25,
+        pomodoro_break_min: 5,
+        ai_provider: 'copilot_cli',
+      });
+
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    await useSettingsStore.getState().updateSetting('ai_provider', 'copilot_cli');
+    expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'ai_provider', value: 'copilot_cli' });
+    expect(useSettingsStore.getState().settings?.ai_provider).toBe('copilot_cli');
+  });
 });
 
 describe('settingsStore setTheme', () => {
   it('setTheme calls set_setting and refreshes settings', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ theme: 'light', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5 });
+    mockInvoke.mockResolvedValue({ theme: 'light', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5, ai_provider: 'claude' });
     const { useSettingsStore } = await import('../stores/settingsStore');
     await useSettingsStore.getState().setTheme('light');
     expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'theme', value: 'light' });
@@ -46,7 +128,7 @@ describe('settingsStore setTheme', () => {
 
   it('setTheme to dark calls set_setting with dark', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ theme: 'dark', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5 });
+    mockInvoke.mockResolvedValue({ theme: 'dark', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5, ai_provider: 'claude' });
     const { useSettingsStore } = await import('../stores/settingsStore');
     await useSettingsStore.getState().setTheme('dark');
     expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'theme', value: 'dark' });
@@ -175,89 +257,30 @@ describe('taskStore project assignment', () => {
       input: expect.not.objectContaining({ project_id: expect.anything() }),
     });
   });
-
-  it('runTaskAsWorktree calls invoke and refreshes tasks', async () => {
-    const mockInvoke = vi.mocked(invoke);
-    mockInvoke
-      .mockResolvedValueOnce({
-        task_id: 'task-1',
-        worktree_path: '/tmp/daily-planner-worktrees/task-1',
-        branch_name: 'task/my-task-12345678',
-        launch_command: "cd '/tmp/daily-planner-worktrees/task-1' && claude --worktree -p 'Task: test'",
-        prompt: 'Task: test',
-        status: 'active',
-      })
-      .mockResolvedValueOnce([]);
-    const { useTaskStore } = await import('../stores/taskStore');
-    useTaskStore.setState({ activeDate: '2026-03-22', tasks: [] });
-    const result = await useTaskStore.getState().runTaskAsWorktree('task-1');
-    expect(result.status).toBe('active');
-    expect(mockInvoke).toHaveBeenCalledWith('run_task_as_worktree', { taskId: 'task-1' });
-    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
-  });
-
-  it('cleanupTaskWorktree calls invoke and refreshes tasks', async () => {
-    const mockInvoke = vi.mocked(invoke);
-    mockInvoke
-      .mockResolvedValueOnce({
-        task_id: 'task-1',
-        status: 'abandoned',
-        branch_deleted: false,
-        warning: 'branch kept',
-      })
-      .mockResolvedValueOnce([]);
-    const { useTaskStore } = await import('../stores/taskStore');
-    useTaskStore.setState({ activeDate: '2026-03-22', tasks: [] });
-    const result = await useTaskStore.getState().cleanupTaskWorktree('task-1');
-    expect(result.status).toBe('abandoned');
-    expect(mockInvoke).toHaveBeenCalledWith('cleanup_task_worktree', { taskId: 'task-1' });
-    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
-  });
 });
 
 describe('providerStore', () => {
   beforeEach(() => {
-    localStorage.clear();
     vi.resetModules();
   });
 
-  it('defaults to claude provider', async () => {
-    const { useProviderStore } = await import('../stores/providerStore');
-    const store = useProviderStore.getState();
-    expect(store.activeProvider).toBe('claude');
-  });
-
-  it('restores provider from localStorage', async () => {
-    localStorage.setItem('active_provider', 'codex');
-    const { useProviderStore } = await import('../stores/providerStore');
-    const store = useProviderStore.getState();
-    expect(store.activeProvider).toBe('codex');
-  });
-
-  it('setActiveProvider persists to localStorage', async () => {
-    const { useProviderStore } = await import('../stores/providerStore');
-    useProviderStore.getState().setActiveProvider('codex');
-    expect(localStorage.getItem('active_provider')).toBe('codex');
-    expect(useProviderStore.getState().activeProvider).toBe('codex');
-  });
-
-  it('checkAvailability updates claudeAvailable/codexAvailable from invoke', async () => {
+  it('checkAvailability updates claudeAvailable/opencodeAvailable from invoke', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ claude_available: true, codex_available: false });
+    mockInvoke.mockResolvedValue({ claude_available: true, opencode_available: false });
     const { useProviderStore } = await import('../stores/providerStore');
     await useProviderStore.getState().checkAvailability();
     expect(useProviderStore.getState().claudeAvailable).toBe(true);
-    expect(useProviderStore.getState().codexAvailable).toBe(false);
+    expect(useProviderStore.getState().opencodeAvailable).toBe(false);
     expect(mockInvoke).toHaveBeenCalledWith('check_cli_availability', {});
   });
 
   it('checkAvailability handles both CLIs available', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ claude_available: true, codex_available: true });
+    mockInvoke.mockResolvedValue({ claude_available: true, opencode_available: true });
     const { useProviderStore } = await import('../stores/providerStore');
     await useProviderStore.getState().checkAvailability();
     expect(useProviderStore.getState().claudeAvailable).toBe(true);
-    expect(useProviderStore.getState().codexAvailable).toBe(true);
+    expect(useProviderStore.getState().opencodeAvailable).toBe(true);
   });
 
   it('checkAvailability sets both false on invoke error', async () => {
@@ -266,7 +289,7 @@ describe('providerStore', () => {
     const { useProviderStore } = await import('../stores/providerStore');
     await useProviderStore.getState().checkAvailability();
     expect(useProviderStore.getState().claudeAvailable).toBe(false);
-    expect(useProviderStore.getState().codexAvailable).toBe(false);
+    expect(useProviderStore.getState().opencodeAvailable).toBe(false);
   });
 });
 

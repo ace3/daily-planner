@@ -1,28 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, Bell, Clock, Database, RotateCcw, Upload, MessageSquare, Save } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
-import { backupData, restoreData, resetAppData } from '../lib/tauri';
+import { backupData, restoreData, resetAppData, checkCopilotCliAvailability } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
 
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
   const { fetchTasks, activeDate } = useTaskStore();
   const { fetchRecentReports } = useReportStore();
-  const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptDraft, setPromptDraft] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
+  const [copilotCliAvailable, setCopilotCliAvailable] = useState<boolean | null>(null);
   const promptInitialized = useRef(false);
 
   useEffect(() => {
     fetchSettings();
     fetchGlobalPrompt();
+    checkCopilotCliAvailability()
+      .then((status) => setCopilotCliAvailable(status.available))
+      .catch(() => setCopilotCliAvailable(false));
   }, []);
 
   useEffect(() => {
@@ -38,14 +41,11 @@ export const SettingsPage: React.FC = () => {
   if (!settings) return <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-[#484F58] text-sm">Loading...</div>;
 
   const handleSave = async (key: string, value: string) => {
-    setSaving((p) => ({ ...p, [key]: true }));
     try {
       await updateSetting(key as any, value);
       toast.success('Setting saved');
     } catch {
       toast.error('Failed to save setting');
-    } finally {
-      setSaving((p) => ({ ...p, [key]: false }));
     }
   };
 
@@ -209,6 +209,35 @@ export const SettingsPage: React.FC = () => {
         {/* Model */}
         <section className={sectionClass}>
           <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">AI Provider</h2>
+          </div>
+          <div className="p-4 space-y-3">
+            <select
+              value={settings.ai_provider}
+              onChange={(e) => handleSave('ai_provider', e.target.value)}
+              className={`w-full ${inputClass} cursor-pointer`}
+            >
+              <option value="claude">Claude CLI</option>
+              <option value="opencode">OpenCode CLI</option>
+              <option value="copilot_cli">GitHub Copilot CLI (gh copilot)</option>
+            </select>
+            <p className="text-xs text-gray-400 dark:text-[#484F58]">
+              Used for prompt improvements, queued runs, and AI report reflections.
+            </p>
+            {settings.ai_provider === 'copilot_cli' && copilotCliAvailable === false && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400 flex items-start gap-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  <strong>Copilot CLI unavailable.</strong> Install/authenticate with <code>gh</code> and <code>gh copilot</code> before using this provider.
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Claude model */}
+        <section className={sectionClass}>
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Claude Model</h2>
           </div>
           <div className="p-4">
@@ -261,15 +290,15 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Global Claude Prompt */}
+        {/* Global AI Prompt */}
         <section className={sectionClass}>
           <div className={sectionHeaderClass}>
             <MessageSquare size={14} className="text-gray-500 dark:text-[#8B949E]" />
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Global Claude Prompt</h2>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Global AI Prompt</h2>
           </div>
           <div className="p-4 space-y-3">
             <p className="text-xs text-gray-400 dark:text-[#484F58]">
-              Prepended to every Claude CLI call across the app. Use it to set a persistent system context or persona.
+              Prepended to every AI provider call across the app. Use it to set a persistent system context or persona.
             </p>
             <textarea
               value={promptDraft}
