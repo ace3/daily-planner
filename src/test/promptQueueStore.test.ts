@@ -23,7 +23,7 @@ describe('promptQueueStore.enqueue', () => {
   it('adds a job with pending status and correct queueNumber', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'hello', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'hello', provider: 'claude' });
     const { queue } = store.getState();
     expect(queue).toHaveLength(1);
     expect(queue[0].status).toBe('running'); // auto-started since nothing running
@@ -35,8 +35,8 @@ describe('promptQueueStore.enqueue', () => {
   it('increments queueNumber on successive enqueues', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
-    store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
     const { queue } = store.getState();
     expect(queue[0].queueNumber).toBe(1);
     expect(queue[1].queueNumber).toBe(2);
@@ -45,15 +45,15 @@ describe('promptQueueStore.enqueue', () => {
   it('auto-starts first job immediately (no running job)', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'first', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'first', provider: 'claude' });
     expect(store.getState().queue[0].status).toBe('running');
   });
 
   it('does NOT start second job if first is already running', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
-    store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
     const { queue } = store.getState();
     expect(queue[0].status).toBe('running');
     expect(queue[1].status).toBe('pending');
@@ -62,7 +62,7 @@ describe('promptQueueStore.enqueue', () => {
   it('passes projectPath and provider through to the job', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
-    store.getState().enqueue({ prompt: 'p', projectPath: '/my/app', provider: 'opencode' });
+    await store.getState().enqueue({ prompt: 'p', projectPath: '/my/app', provider: 'opencode' });
     const job = store.getState().queue[0];
     expect(job.projectPath).toBe('/my/app');
     expect(job.provider).toBe('opencode');
@@ -256,8 +256,8 @@ describe('promptQueueStore serial queue', () => {
     const store = await getStore();
 
     // Enqueue two jobs
-    store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
-    store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job1', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'job2', provider: 'claude' });
 
     let queue = store.getState().queue;
     expect(queue[0].status).toBe('running');
@@ -279,11 +279,11 @@ describe('promptQueueStore serial queue', () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     const store = await getStore();
 
-    store.getState().enqueue({ prompt: 'first', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'first', provider: 'claude' });
     const job1Id = store.getState().queue[0].id;
 
     store.getState().finishJob(job1Id, true);
-    store.getState().enqueue({ prompt: 'second', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'second', provider: 'claude' });
     const job2Id = store.getState().queue.find((j) => j.prompt === 'second')!.id;
 
     const calls = vi.mocked(invoke).mock.calls;
@@ -291,5 +291,65 @@ describe('promptQueueStore serial queue', () => {
     expect(runCalls.length).toBe(2);
     expect(runCalls[0][1]).toMatchObject({ jobId: job1Id });
     expect(runCalls[1][1]).toMatchObject({ jobId: job2Id });
+  });
+});
+
+describe('promptQueueStore worktree concurrency', () => {
+  it('queues non-worktree job when another non-worktree job is running', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === 'is_git_worktree') return false;
+      if (command === 'run_prompt') return undefined;
+      return undefined;
+    });
+
+    const store = await getStore();
+    await store.getState().enqueue({ prompt: 'main-1', projectPath: '/repo', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'main-2', projectPath: '/repo', provider: 'claude' });
+
+    const queue = store.getState().queue;
+    expect(queue[0].status).toBe('running');
+    expect(queue[1].status).toBe('pending');
+    expect(queue[0].isWorktree).toBe(false);
+    expect(queue[1].isWorktree).toBe(false);
+  });
+
+  it('starts worktree job immediately while a non-worktree job is running', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockImplementation(async (command, args) => {
+      if (command === 'is_git_worktree') {
+        return (args as { projectPath?: string } | undefined)?.projectPath === '/tmp/wt1';
+      }
+      if (command === 'run_prompt') return undefined;
+      return undefined;
+    });
+
+    const store = await getStore();
+    await store.getState().enqueue({ prompt: 'main', projectPath: '/repo', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'worktree', projectPath: '/tmp/wt1', provider: 'claude' });
+
+    const queue = store.getState().queue;
+    expect(queue[0].status).toBe('running');
+    expect(queue[1].status).toBe('running');
+    expect(queue[1].isWorktree).toBe(true);
+  });
+
+  it('runs two worktree jobs concurrently', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === 'is_git_worktree') return true;
+      if (command === 'run_prompt') return undefined;
+      return undefined;
+    });
+
+    const store = await getStore();
+    await store.getState().enqueue({ prompt: 'wt-1', projectPath: '/tmp/wt1', provider: 'claude' });
+    await store.getState().enqueue({ prompt: 'wt-2', projectPath: '/tmp/wt2', provider: 'claude' });
+
+    const queue = store.getState().queue;
+    expect(queue[0].status).toBe('running');
+    expect(queue[1].status).toBe('running');
+    expect(queue[0].isWorktree).toBe(true);
+    expect(queue[1].isWorktree).toBe(true);
   });
 });

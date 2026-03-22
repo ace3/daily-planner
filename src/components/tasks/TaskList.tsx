@@ -4,6 +4,7 @@ import { TaskForm } from './TaskForm';
 import { SessionBadge } from '../session/SessionBadge';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { usePromptQueue } from '../../hooks/usePromptQueue';
 import type { Task } from '../../types/task';
 import { getLocalDate } from '../../lib/time';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -17,10 +18,20 @@ interface TaskListProps {
 }
 
 export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
-  const { tasks, createTask, updateTaskStatus, deleteTask, carryTaskForward, updateTask, activeDate } =
-    useTaskStore();
+  const {
+    tasks,
+    createTask,
+    updateTaskStatus,
+    deleteTask,
+    carryTaskForward,
+    updateTask,
+    runTaskAsWorktree,
+    cleanupTaskWorktree,
+    activeDate,
+  } = useTaskStore();
   const { settings } = useSettingsStore();
   const { projects } = useProjectStore();
+  const { enqueue } = usePromptQueue();
   const slotTasks = tasks.filter((t) => t.session_slot === slot);
 
   const handleCreate = async (input: Parameters<typeof createTask>[0]) => {
@@ -55,6 +66,30 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     } else {
       await updateTask({ id, clear_project: true });
     }
+  };
+
+  const handleRunAsWorktree = async (task: Task) => {
+    if (!task.project_id) {
+      toast.warning('Assign a project before running as worktree');
+      return;
+    }
+
+    const result = await runTaskAsWorktree(task.id);
+    enqueue({
+      prompt: result.prompt_to_run,
+      projectPath: result.worktree_path,
+      provider: 'claude',
+    });
+    toast.success(`Running in worktree branch ${result.branch_name}`);
+  };
+
+  const handleCleanupWorktree = async (task: Task) => {
+    const result = await cleanupTaskWorktree(task.id);
+    if (result.warning) {
+      toast.warning(result.warning);
+      return;
+    }
+    toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
   const doneTasks = slotTasks.filter((t) => t.status === 'done');
@@ -97,6 +132,8 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       onNotesUpdate={handleNotesUpdate}
       onProjectChange={handleProjectChange}
       onSelect={onTaskSelect}
+      onRunAsWorktree={handleRunAsWorktree}
+      onCleanupWorktree={handleCleanupWorktree}
     />
   );
 
@@ -165,6 +202,8 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
               onCarryForward={handleCarryForward}
               onNotesUpdate={handleNotesUpdate}
               onSelect={onTaskSelect}
+              onRunAsWorktree={handleRunAsWorktree}
+              onCleanupWorktree={handleCleanupWorktree}
             />
           ))}
         </div>

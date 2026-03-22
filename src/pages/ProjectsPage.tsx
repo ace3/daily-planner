@@ -6,16 +6,20 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../components/ui/Toast';
+import { useSessionDraftState } from '../hooks/useSessionDraftState';
 
 export const ProjectsPage: React.FC = () => {
   const { projects, loading, fetchProjects, createProject, deleteProject, setProjectPrompt } = useProjectStore();
-  const [selectedPath, setSelectedPath] = useState('');
-  const [projectName, setProjectName] = useState('');
+  const [draft, setDraft] = useSessionDraftState('projects-page-draft', {
+    selectedPath: '',
+    projectName: '',
+    expandedPrompt: null as string | null,
+    promptDrafts: {} as Record<string, string>,
+  });
   const [adding, setAdding] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
-  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
   const [promptSaving, setPromptSaving] = useState<string | null>(null);
+  const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
 
   useEffect(() => {
     fetchProjects();
@@ -23,25 +27,30 @@ export const ProjectsPage: React.FC = () => {
 
   // Initialize prompt drafts from fetched projects
   useEffect(() => {
-    const drafts: Record<string, string> = {};
-    projects.forEach((p) => { drafts[p.id] = p.prompt ?? ''; });
-    setPromptDrafts((prev) => {
-      const next = { ...drafts };
-      // Preserve unsaved edits for currently expanded project
-      if (expandedPrompt && prev[expandedPrompt] !== undefined) {
-        next[expandedPrompt] = prev[expandedPrompt];
-      }
-      return next;
+    setDraft((prev) => {
+      const nextDrafts: Record<string, string> = {};
+      projects.forEach((project) => {
+        nextDrafts[project.id] = prev.promptDrafts[project.id] ?? project.prompt ?? '';
+      });
+
+      return {
+        ...prev,
+        promptDrafts: nextDrafts,
+        expandedPrompt:
+          prev.expandedPrompt && projects.some((project) => project.id === prev.expandedPrompt)
+            ? prev.expandedPrompt
+            : null,
+      };
     });
-  }, [projects]);
+  }, [projects, setDraft]);
 
   const handleBrowse = async () => {
     const path = await openFolderDialog();
     if (path) {
-      setSelectedPath(path);
+      setDraft((prev) => ({ ...prev, selectedPath: path }));
       if (!projectName) {
         const parts = path.replace(/\\/g, '/').split('/');
-        setProjectName(parts[parts.length - 1] || path);
+        setDraft((prev) => ({ ...prev, projectName: parts[parts.length - 1] || path }));
       }
     }
   };
@@ -52,8 +61,7 @@ export const ProjectsPage: React.FC = () => {
     setAdding(true);
     try {
       await createProject({ name, path: selectedPath });
-      setSelectedPath('');
-      setProjectName('');
+      setDraft((prev) => ({ ...prev, selectedPath: '', projectName: '' }));
     } finally {
       setAdding(false);
     }
@@ -101,7 +109,7 @@ export const ProjectsPage: React.FC = () => {
           <Input
             label="Project name (optional)"
             value={projectName}
-            onChange={(e) => setProjectName(e.target.value)}
+            onChange={(e) => setDraft((prev) => ({ ...prev, projectName: e.target.value }))}
             placeholder="Defaults to folder name"
           />
         )}
@@ -141,7 +149,12 @@ export const ProjectsPage: React.FC = () => {
                 <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
               </div>
               <button
-                onClick={() => setExpandedPrompt(expandedPrompt === project.id ? null : project.id)}
+                onClick={() =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    expandedPrompt: prev.expandedPrompt === project.id ? null : project.id,
+                  }))
+                }
                 className="text-gray-400 hover:text-gray-600 dark:text-[#484F58] dark:hover:text-[#8B949E] transition-colors p-1 cursor-pointer"
                 title="Edit project prompt"
               >
@@ -166,7 +179,12 @@ export const ProjectsPage: React.FC = () => {
                 </div>
                 <textarea
                   value={promptDrafts[project.id] ?? ''}
-                  onChange={(e) => setPromptDrafts((prev) => ({ ...prev, [project.id]: e.target.value }))}
+                  onChange={(e) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      promptDrafts: { ...prev.promptDrafts, [project.id]: e.target.value },
+                    }))
+                  }
                   rows={4}
                   placeholder="e.g. This is a Next.js 14 project using App Router. All new routes go in src/app/."
                   className={`${inputClass} resize-none`}

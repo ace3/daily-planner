@@ -2,15 +2,13 @@ import React from 'react';
 import { format } from 'date-fns';
 import { Sun, Moon } from 'lucide-react';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useProviderStore } from '../../stores/providerStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatCountdown } from '../../lib/time';
+import { AiProviderSelector } from '../AiProviderSelector';
 
 export const TopBar: React.FC = () => {
   const { sessionInfo, currentDate } = useSessionStore();
-  const { claudeAvailable, opencodeAvailable } = useProviderStore();
   const { settings, setTheme } = useSettingsStore();
-  const activeProvider = settings?.ai_provider ?? 'claude';
 
   const isDark = settings?.theme === 'dark';
 
@@ -58,27 +56,7 @@ export const TopBar: React.FC = () => {
 
         <span className="text-gray-300 dark:text-[#30363D] select-none">|</span>
 
-        {/* CLI status badges */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: claudeAvailable ? '#3FB950' : '#484F58' }}
-            />
-            <span className={`text-xs ${activeProvider === 'claude' ? 'text-gray-900 dark:text-[#E6EDF3]' : 'text-gray-500 dark:text-[#8B949E]'}`}>
-              Claude
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: opencodeAvailable ? '#3FB950' : '#484F58' }}
-            />
-            <span className={`text-xs ${activeProvider === 'opencode' ? 'text-gray-900 dark:text-[#E6EDF3]' : 'text-gray-500 dark:text-[#8B949E]'}`}>
-              OpenCode
-            </span>
-          </div>
-        </div>
+        <AiProviderSelector />
       </div>
     </div>
   );

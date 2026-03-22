@@ -8,6 +8,8 @@ import {
   ChevronDown,
   ChevronUp,
   GripVertical,
+  GitBranchPlus,
+  FolderX,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { TaskNotes } from './TaskNotes';
@@ -22,6 +24,8 @@ interface TaskItemProps {
   onNotesUpdate: (id: string, notes: string) => Promise<void>;
   onProjectChange?: (id: string, projectId: string | null) => Promise<void>;
   onSelect?: (task: Task) => void;
+  onRunAsWorktree?: (task: Task) => Promise<void>;
+  onCleanupWorktree?: (task: Task) => Promise<void>;
 }
 
 const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple'> = {
@@ -44,6 +48,8 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onNotesUpdate,
   onProjectChange,
   onSelect,
+  onRunAsWorktree,
+  onCleanupWorktree,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isDone = task.status === 'done';
@@ -95,6 +101,9 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               {priorityDots[task.priority]}
             </span>
             <Badge variant={typeColors[task.task_type] || 'gray'}>{task.task_type}</Badge>
+            {task.worktree_status === 'active' && <Badge variant="blue">worktree active</Badge>}
+            {task.worktree_status === 'merged' && <Badge variant="green">worktree merged</Badge>}
+            {task.worktree_status === 'abandoned' && <Badge variant="amber">worktree abandoned</Badge>}
             {task.estimated_min && (
               <span className="text-xs text-gray-400 dark:text-[#484F58]">{formatDuration(task.estimated_min)}</span>
             )}
@@ -124,6 +133,25 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               title="Carry to tomorrow"
             >
               <ArrowRight size={13} />
+            </button>
+          )}
+          {!isCarried && (
+            <button
+              onClick={() => onRunAsWorktree?.(task)}
+              disabled={!task.project_id}
+              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer rounded"
+              title={task.project_id ? 'Run as worktree' : 'Assign a project first'}
+            >
+              <GitBranchPlus size={13} />
+            </button>
+          )}
+          {task.worktree_status === 'active' && (
+            <button
+              onClick={() => onCleanupWorktree?.(task)}
+              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-amber-400 transition-colors cursor-pointer rounded"
+              title="Clean up worktree"
+            >
+              <FolderX size={13} />
             </button>
           )}
           <button

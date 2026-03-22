@@ -1,5 +1,6 @@
 use crate::db::{queries, DbConnection};
 use serde::Serialize;
+use std::path::Path;
 use std::process::Stdio;
 use tauri::Emitter;
 use tauri::State;
@@ -29,6 +30,21 @@ enum AiProvider {
     OpenCode,
 }
 
+fn default_model_setting_key(raw_provider: Option<&str>) -> &'static str {
+    match raw_provider.unwrap_or("claude").to_ascii_lowercase().as_str() {
+        "codex" => "default_model_codex",
+        "opencode" => "default_model_opencode",
+        _ => "default_model_claude",
+    }
+}
+
+fn hardcoded_default_model(provider: AiProvider) -> &'static str {
+    match provider {
+        AiProvider::Claude => "claude-sonnet-4-6",
+        AiProvider::OpenCode => "gpt-4.1",
+    }
+}
+
 impl AiProvider {
     fn from_input(raw: Option<&str>) -> Self {
         match raw.unwrap_or("claude").to_ascii_lowercase().as_str() {
@@ -55,7 +71,7 @@ pub async fn improve_prompt_with_claude(
     db: State<'_, DbConnection>,
 ) -> Result<String, String> {
     // Fetch global and project prompts synchronously before the async CLI call
-    let (global_prompt, project_prompt) = {
+    let (global_prompt, project_prompt, selected_model) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         let gp = queries::get_setting(&conn, "global_prompt")
             .ok()
@@ -63,7 +79,20 @@ pub async fn improve_prompt_with_claude(
         let pp = project_id
             .as_deref()
             .and_then(|pid| queries::get_project_prompt(&conn, pid).ok().flatten());
-        (gp, pp)
+        let model_key = default_model_setting_key(provider.as_deref());
+        let configured_model = queries::get_setting(&conn, model_key)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let legacy_claude_model = if model_key == "default_model_claude" {
+            queries::get_setting(&conn, "claude_model")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        (gp, pp, configured_model.or(legacy_claude_model))
     };
 
     // Compose effective prompt: prepend system context if any
@@ -76,7 +105,8 @@ pub async fn improve_prompt_with_claude(
 
     let ai_provider = AiProvider::from_input(provider.as_deref());
     let cli = ai_provider.cli_binary();
-    let args = build_run_args(ai_provider, &effective_prompt);
+    let resolved_model = selected_model.unwrap_or_else(|| hardcoded_default_model(ai_provider).to_string());
+    let args = build_run_args(ai_provider, &effective_prompt, Some(resolved_model.as_str()));
     let mut cmd = tokio::process::Command::new(cli);
     for arg in args {
         cmd.arg(arg);
@@ -110,6 +140,19 @@ pub struct CliStatus {
     pub opencode_available: bool,
 }
 
+#[tauri::command]
+pub async fn is_git_worktree(project_path: String) -> bool {
+    if project_path.trim().is_empty() {
+        return false;
+    }
+
+    let git_entry = Path::new(&project_path).join(".git");
+    match tokio::fs::metadata(git_entry).await {
+        Ok(metadata) => metadata.is_file(),
+        Err(_) => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // run_prompt — execute a prompt via the CLI with live log streaming
 // ---------------------------------------------------------------------------
@@ -129,11 +172,29 @@ pub struct PromptJobDonePayload {
 
 /// Build the CLI argument list for a given provider and prompt.
 /// Extracted to a pure function so it can be unit-tested independently.
-fn build_run_args(provider: AiProvider, prompt: &str) -> Vec<String> {
+fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&str>) -> Vec<String> {
+    let trimmed_model = model.map(str::trim).filter(|s| !s.is_empty());
     match provider {
         // OpenCode CLI docs use: `opencode run [message..]` for non-interactive execution.
-        AiProvider::OpenCode => vec!["run".to_string(), prompt.to_string()],
-        AiProvider::Claude => vec!["-p".to_string(), prompt.to_string()],
+        AiProvider::OpenCode => {
+            let mut args = vec!["run".to_string()];
+            if let Some(model) = trimmed_model {
+                args.push("--model".to_string());
+                args.push(model.to_string());
+            }
+            args.push(prompt.to_string());
+            args
+        }
+        AiProvider::Claude => {
+            let mut args = Vec::new();
+            if let Some(model) = trimmed_model {
+                args.push("-m".to_string());
+                args.push(model.to_string());
+            }
+            args.push("-p".to_string());
+            args.push(prompt.to_string());
+            args
+        }
     }
 }
 
@@ -146,10 +207,30 @@ pub async fn run_prompt(
     provider: Option<String>,
     job_id: String,
     app_handle: tauri::AppHandle,
+    db: State<'_, DbConnection>,
 ) -> Result<(), String> {
     let ai_provider = AiProvider::from_input(provider.as_deref());
     let cli = ai_provider.cli_binary().to_string();
-    let args = build_run_args(ai_provider, &prompt);
+    let selected_model = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let model_key = default_model_setting_key(provider.as_deref());
+        let configured_model = queries::get_setting(&conn, model_key)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let legacy_claude_model = if model_key == "default_model_claude" {
+            queries::get_setting(&conn, "claude_model")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        configured_model
+            .or(legacy_claude_model)
+            .unwrap_or_else(|| hardcoded_default_model(ai_provider).to_string())
+    };
+    let args = build_run_args(ai_provider, &prompt, Some(selected_model.as_str()));
 
     let mut cmd = tokio::process::Command::new(&cli);
     for arg in &args {
@@ -270,16 +351,27 @@ pub async fn check_cli_availability() -> Result<CliStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("daily-planner-{prefix}-{pid}-{ts}"))
+    }
 
     #[test]
     fn test_build_run_args_claude() {
-        let args = build_run_args(AiProvider::Claude, "hello world");
+        let args = build_run_args(AiProvider::Claude, "hello world", None);
         assert_eq!(args, vec!["-p", "hello world"]);
     }
 
     #[test]
     fn test_build_run_args_opencode() {
-        let args = build_run_args(AiProvider::OpenCode, "fix the bug");
+        let args = build_run_args(AiProvider::OpenCode, "fix the bug", None);
         assert_eq!(args, vec!["run", "fix the bug"]);
     }
 
@@ -295,15 +387,50 @@ mod tests {
     #[test]
     fn test_build_run_args_preserves_prompt_with_special_chars() {
         let prompt = "fix: handle edge case with 'quotes' and \"double quotes\"";
-        let args = build_run_args(AiProvider::Claude, prompt);
+        let args = build_run_args(AiProvider::Claude, prompt, None);
         assert_eq!(args[1], prompt);
     }
 
     #[test]
     fn test_build_run_args_opencode_prompt_is_last_arg() {
         let prompt = "my prompt";
-        let args = build_run_args(AiProvider::OpenCode, prompt);
+        let args = build_run_args(AiProvider::OpenCode, prompt, None);
         assert_eq!(args.last().unwrap(), prompt);
         assert_eq!(args[0], "run");
+    }
+
+    #[test]
+    fn test_build_run_args_with_model_for_claude() {
+        let args = build_run_args(AiProvider::Claude, "prompt", Some("claude-opus-4-6"));
+        assert_eq!(args, vec!["-m", "claude-opus-4-6", "-p", "prompt"]);
+    }
+
+    #[test]
+    fn test_build_run_args_with_model_for_opencode() {
+        let args = build_run_args(AiProvider::OpenCode, "prompt", Some("gpt-4.1"));
+        assert_eq!(args, vec!["run", "--model", "gpt-4.1", "prompt"]);
+    }
+
+    #[tokio::test]
+    async fn test_is_git_worktree_true_when_dot_git_is_file() {
+        let root = test_temp_dir("worktree-file");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(".git"), "gitdir: /tmp/repo/.git/worktrees/wt").unwrap();
+
+        let result = is_git_worktree(root.to_string_lossy().to_string()).await;
+        assert!(result);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_is_git_worktree_false_when_dot_git_is_directory() {
+        let root = test_temp_dir("repo-dir");
+        fs::create_dir_all(root.join(".git")).unwrap();
+
+        let result = is_git_worktree(root.to_string_lossy().to_string()).await;
+        assert!(!result);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

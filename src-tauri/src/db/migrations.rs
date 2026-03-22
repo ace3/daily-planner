@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -42,6 +42,18 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 4 {
         apply_v4(conn)?;
+    }
+    if current < 5 {
+        apply_v5(conn)?;
+    }
+    if current < 6 {
+        apply_v6(conn)?;
+    }
+    if current < 7 {
+        apply_v7(conn)?;
+    }
+    if current < 8 {
+        apply_v8(conn)?;
     }
 
     eprintln!(
@@ -134,12 +146,52 @@ fn infer_legacy_version(conn: &Connection) -> anyhow::Result<u32> {
         return Ok(3);
     }
 
-    eprintln!("[migrations] Legacy DB detected; inferred v4.");
+    if !column_exists(conn, "tasks", "worktree_path")?
+        || !column_exists(conn, "tasks", "worktree_branch")?
+        || !column_exists(conn, "tasks", "worktree_status")?
+    {
+        eprintln!("[migrations] Legacy DB detected; inferred v4.");
+        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
+        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
+        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
+        record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
+        return Ok(4);
+    }
+
+    if !setting_exists(conn, "default_model_codex")?
+        || !setting_exists(conn, "default_model_claude")?
+        || !setting_exists(conn, "default_model_opencode")?
+        || !setting_exists(conn, "default_model_copilot")?
+    {
+        eprintln!("[migrations] Legacy DB detected; inferred v5.");
+        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
+        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
+        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
+        record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
+        record_version_row(conn, 5, "legacy v5 (inferred on startup)")?;
+        return Ok(5);
+    }
+
+    if !setting_exists(conn, "active_ai_provider")? {
+        eprintln!("[migrations] Legacy DB detected; inferred v6.");
+        record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
+        record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
+        record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
+        record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
+        record_version_row(conn, 5, "legacy v5 (inferred on startup)")?;
+        record_version_row(conn, 6, "legacy v6 (inferred on startup)")?;
+        return Ok(6);
+    }
+
+    eprintln!("[migrations] Legacy DB detected; inferred v7.");
     record_version_row(conn, 1, "legacy v1 (inferred on startup)")?;
     record_version_row(conn, 2, "legacy v2 (inferred on startup)")?;
     record_version_row(conn, 3, "legacy v3 (inferred on startup)")?;
     record_version_row(conn, 4, "legacy v4 (inferred on startup)")?;
-    Ok(4)
+    record_version_row(conn, 5, "legacy v5 (inferred on startup)")?;
+    record_version_row(conn, 6, "legacy v6 (inferred on startup)")?;
+    record_version_row(conn, 7, "legacy v7 (inferred on startup)")?;
+    Ok(7)
 }
 
 fn record_version_row(conn: &Connection, version: u32, description: &str) -> anyhow::Result<()> {
@@ -254,6 +306,9 @@ fn apply_v1(conn: &mut Connection) -> anyhow::Result<()> {
                 prompt_used   TEXT DEFAULT NULL,
                 prompt_result TEXT DEFAULT NULL,
                 carried_from  TEXT DEFAULT NULL,
+                worktree_path TEXT DEFAULT NULL,
+                worktree_branch TEXT DEFAULT NULL,
+                worktree_status TEXT DEFAULT NULL,
                 position      INTEGER NOT NULL DEFAULT 0,
                 created_at    TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
@@ -328,11 +383,14 @@ fn apply_v1(conn: &mut Connection) -> anyhow::Result<()> {
             INSERT OR IGNORE INTO settings VALUES ('warn_before_min',    '15');
             INSERT OR IGNORE INTO settings VALUES ('autostart',          'false');
             INSERT OR IGNORE INTO settings VALUES ('claude_model',       'claude-sonnet-4-6');
+            INSERT OR IGNORE INTO settings VALUES ('default_model_codex', 'codex-mini-latest');
+            INSERT OR IGNORE INTO settings VALUES ('default_model_claude', 'claude-sonnet-4-6');
+            INSERT OR IGNORE INTO settings VALUES ('default_model_opencode', 'gpt-4.1');
+            INSERT OR IGNORE INTO settings VALUES ('default_model_copilot', 'gpt-4.1');
+            INSERT OR IGNORE INTO settings VALUES ('active_ai_provider', 'claude');
             INSERT OR IGNORE INTO settings VALUES ('theme',              'dark');
             INSERT OR IGNORE INTO settings VALUES ('work_days',          '[1,2,3,4,5]');
             INSERT OR IGNORE INTO settings VALUES ('show_in_tray',       'true');
-            INSERT OR IGNORE INTO settings VALUES ('pomodoro_work_min',  '25');
-            INSERT OR IGNORE INTO settings VALUES ('pomodoro_break_min', '5');
             INSERT OR IGNORE INTO settings VALUES ('ai_provider',        'claude');
 
             INSERT OR IGNORE INTO prompt_templates
@@ -400,6 +458,84 @@ fn apply_v4(conn: &mut Connection) -> anyhow::Result<()> {
             [],
         )
         .context("Insert default ai_provider setting")?;
+        Ok(())
+    })
+}
+
+fn apply_v5(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 5, "Add task worktree metadata columns", |tx| {
+        if !column_exists(tx, "tasks", "worktree_path")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_path TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_path")?;
+        }
+        if !column_exists(tx, "tasks", "worktree_branch")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_branch TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_branch")?;
+        }
+        if !column_exists(tx, "tasks", "worktree_status")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN worktree_status TEXT DEFAULT NULL;")
+                .context("ALTER TABLE tasks ADD COLUMN worktree_status")?;
+        }
+        Ok(())
+    })
+}
+
+fn apply_v6(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 6, "Add per-provider default model settings", |tx| {
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_model_codex', 'codex-mini-latest')",
+            [],
+        )
+        .context("Insert default_model_codex setting")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_model_claude', 'claude-sonnet-4-6')",
+            [],
+        )
+        .context("Insert default_model_claude setting")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_model_opencode', 'gpt-4.1')",
+            [],
+        )
+        .context("Insert default_model_opencode setting")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_model_copilot', 'gpt-4.1')",
+            [],
+        )
+        .context("Insert default_model_copilot setting")?;
+        Ok(())
+    })
+}
+
+fn apply_v7(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 7, "Add active AI provider setting", |tx| {
+        tx.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('active_ai_provider', 'claude')",
+            [],
+        )
+        .context("Insert active_ai_provider setting")?;
+        Ok(())
+    })
+}
+
+fn apply_v8(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 8, "Remove Pomodoro-only settings", |tx| {
+        tx.execute_batch(
+            "
+            DROP TABLE IF EXISTS pomodoro_sessions;
+            DROP TABLE IF EXISTS pomodoro_cycles;
+            ",
+        )
+        .context("Drop legacy Pomodoro tables")?;
+        tx.execute(
+            "DELETE FROM settings WHERE key = 'pomodoro_work_min'",
+            [],
+        )
+        .context("Delete pomodoro_work_min setting")?;
+        tx.execute(
+            "DELETE FROM settings WHERE key = 'pomodoro_break_min'",
+            [],
+        )
+        .context("Delete pomodoro_break_min setting")?;
         Ok(())
     })
 }
@@ -547,6 +683,9 @@ mod tests {
 
         // New columns added.
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         // Schema version recorded correctly.
@@ -574,6 +713,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tz, "7");
+        assert!(setting_exists(&conn, "default_model_codex").unwrap());
+        assert!(setting_exists(&conn, "default_model_claude").unwrap());
+        assert!(setting_exists(&conn, "default_model_opencode").unwrap());
+        assert!(setting_exists(&conn, "default_model_copilot").unwrap());
+        assert!(setting_exists(&conn, "active_ai_provider").unwrap());
     }
 
     // --- 2. Upgrade with existing populated data ---
@@ -621,6 +765,9 @@ mod tests {
         // New schema elements added.
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
+        assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         let v: i64 = conn
@@ -782,7 +929,7 @@ mod tests {
 
     #[test]
     fn test_empty_db_is_fresh_install() {
-        let mut conn = open_test_db();
+        let conn = open_test_db();
         // Only bootstrap the version table, add no user tables.
         bootstrap_version_table(&conn).unwrap();
 

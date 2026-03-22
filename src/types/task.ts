@@ -1,6 +1,7 @@
 export type TaskType = 'code' | 'research' | 'prompt' | 'meeting' | 'review' | 'other';
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'skipped' | 'carried_over';
 export type TaskPriority = 1 | 2 | 3; // 1=high, 2=medium, 3=low
+export type WorktreeStatus = 'active' | 'merged' | 'abandoned';
 
 export interface Task {
   id: string;
@@ -21,6 +22,9 @@ export interface Task {
   updated_at: string;
   completed_at: string | null;
   project_id: string | null;
+  worktree_path: string | null;
+  worktree_branch: string | null;
+  worktree_status: WorktreeStatus | null;
 }
 
 export interface CreateTaskInput {
@@ -49,4 +53,22 @@ export interface PromptTemplate {
   id: string;
   name: string;
   content: string;
+}
+
+export interface RunTaskWorktreeResult {
+  task_id: string;
+  worktree_path: string;
+  branch_name: string;
+  status: WorktreeStatus;
+  launch_command: string;
+  prompt_to_run: string;
+}
+
+export interface CleanupTaskWorktreeResult {
+  task_id: string;
+  worktree_path: string | null;
+  branch_name: string | null;
+  status: WorktreeStatus;
+  branch_deleted: boolean;
+  warning: string | null;
 }

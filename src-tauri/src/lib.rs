@@ -86,6 +86,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::ai_providers::detect_ai_providers,
             commands::tasks::get_tasks,
             commands::tasks::create_task,
             commands::tasks::update_task,
@@ -94,6 +95,8 @@ pub fn run() {
             commands::tasks::carry_task_forward,
             commands::tasks::reorder_tasks,
             commands::tasks::save_prompt_result,
+            commands::tasks::run_task_as_worktree,
+            commands::tasks::cleanup_task_worktree,
             commands::tasks::start_focus_session,
             commands::tasks::end_focus_session,
             commands::tasks::get_prompt_templates,
@@ -105,6 +108,7 @@ pub fn run() {
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
             commands::claude::run_prompt,
+            commands::claude::is_git_worktree,
             commands::claude::check_cli_availability,
             commands::copilot::invoke_copilot_cli,
             commands::copilot::check_copilot_cli_availability,

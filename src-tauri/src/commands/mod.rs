@@ -1,3 +1,4 @@
+pub mod ai_providers;
 pub mod claude;
 pub mod copilot;
 pub mod data_management;

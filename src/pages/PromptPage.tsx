@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
 import { PromptQueuePanel } from '../components/claude/PromptQueuePanel';
@@ -11,6 +11,7 @@ import { improvePromptWithClaude, invokeCopilotCli } from '../lib/tauri';
 import type { Task } from '../types/task';
 import type { Project } from '../types/project';
 import { Badge } from '../components/ui/Badge';
+import { useSessionDraftState } from '../hooks/useSessionDraftState';
 
 // Per-task improvement state
 interface PromptState {
@@ -80,11 +81,12 @@ export const PromptPage: React.FC = () => {
   const { projects, fetchProjects } = useProjectStore();
   const selectedAiProvider = settings?.ai_provider ?? 'claude';
   const runProvider = selectedAiProvider === 'copilot_cli' ? 'claude' : selectedAiProvider;
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useSessionDraftState<string | null>('prompt-page:selected-task-id', null);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
 
   // Per-task state — keyed by task id ('' = standalone)
-  const [promptStates, setPromptStates] = useState<Record<string, PromptState>>({});
+  const [promptStates, setPromptStates] = useSessionDraftState<Record<string, PromptState>>('prompt-page:states', {});
+  const selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null;
 
   useEffect(() => {
     if (today !== activeDate) fetchTasks(today);
@@ -110,7 +112,7 @@ export const PromptPage: React.FC = () => {
     });
   }, [selectedTask]);
 
-  const taskKey = selectedTask?.id ?? STANDALONE_KEY;
+  const taskKey = selectedTaskId ?? STANDALONE_KEY;
   const state = promptStates[taskKey] ?? defaultPromptState();
 
   const builtPrompt = useMemo(() => {
@@ -176,7 +178,7 @@ export const PromptPage: React.FC = () => {
   const handleMarkDone = async () => {
     if (!selectedTask) return;
     await updateTaskStatus(selectedTask.id, 'done');
-    setSelectedTask(null);
+    setSelectedTaskId(null);
   };
 
   const activeTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
@@ -196,7 +198,7 @@ export const PromptPage: React.FC = () => {
           </h3>
           <div className="space-y-1.5">
             <button
-              onClick={() => setSelectedTask(null)}
+              onClick={() => setSelectedTaskId(null)}
               className={`w-full text-left p-2 rounded-lg text-xs transition-colors cursor-pointer
                 ${!selectedTask ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-[#484F58] dark:hover:text-[#8B949E] dark:hover:bg-[#0F1117]'}`}
             >
@@ -208,7 +210,7 @@ export const PromptPage: React.FC = () => {
               return (
                 <button
                   key={task.id}
-                  onClick={() => setSelectedTask(task)}
+                  onClick={() => setSelectedTaskId(task.id)}
                   className={`w-full text-left p-2.5 rounded-lg border transition-colors cursor-pointer
                     ${selectedTask?.id === task.id
                       ? 'border-blue-500/40 bg-blue-500/10'

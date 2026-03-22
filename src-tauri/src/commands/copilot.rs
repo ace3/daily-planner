@@ -1,5 +1,7 @@
+use crate::db::{queries, DbConnection};
 use serde::Serialize;
 use std::process::Output;
+use tauri::State;
 use tokio::process::Command;
 
 #[derive(Serialize)]
@@ -66,6 +68,7 @@ pub async fn invoke_copilot_cli_internal(
     input: String,
     mode: Option<String>,
     project_path: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
     if input.trim().is_empty() {
         return Err("Copilot input cannot be empty.".to_string());
@@ -89,7 +92,15 @@ pub async fn invoke_copilot_cli_internal(
         "GitHub CLI authentication check (run: gh auth login)",
     )?;
 
-    let output = run_command("gh", &["copilot", mode, &input], project_path).await?;
+    let mut copilot_args = vec!["copilot".to_string(), mode.to_string()];
+    if let Some(m) = model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        copilot_args.push("--model".to_string());
+        copilot_args.push(m.to_string());
+    }
+    copilot_args.push(input.clone());
+    let copilot_args_refs: Vec<&str> = copilot_args.iter().map(String::as_str).collect();
+
+    let output = run_command("gh", &copilot_args_refs, project_path).await?;
     if output.status.success() {
         let body = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if body.is_empty() {
@@ -119,8 +130,25 @@ pub async fn invoke_copilot_cli(
     input: String,
     mode: Option<String>,
     project_path: Option<String>,
+    model: Option<String>,
+    db: State<'_, DbConnection>,
 ) -> Result<String, String> {
-    invoke_copilot_cli_internal(input, mode, project_path).await
+    let configured_default = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        queries::get_setting(&conn, "default_model_copilot")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "gpt-4.1".to_string())
+    };
+    let selected_model = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .or(Some(configured_default));
+
+    invoke_copilot_cli_internal(input, mode, project_path, selected_model).await
 }
 
 #[tauri::command]

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from '../components/ui/Toast';
+import { isGitWorktree } from '../lib/tauri';
 
 export interface PromptJob {
   id: string;
@@ -9,6 +10,7 @@ export interface PromptJob {
   prompt: string;
   projectPath?: string;
   provider?: string;
+  isWorktree?: boolean;
   status: 'pending' | 'running' | 'done' | 'error';
   logs: string[];
   createdAt: Date;
@@ -29,7 +31,7 @@ interface JobDonePayload {
 interface PromptQueueState {
   queue: PromptJob[];
   nextQueueNumber: number;
-  enqueue: (input: Pick<PromptJob, 'prompt' | 'projectPath' | 'provider'>) => void;
+  enqueue: (input: Pick<PromptJob, 'prompt' | 'projectPath' | 'provider'>) => Promise<void>;
   startJob: (id: string) => void;
   appendLog: (id: string, line: string) => void;
   finishJob: (id: string, success: boolean) => void;
@@ -40,7 +42,7 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
   queue: [],
   nextQueueNumber: 1,
 
-  enqueue: (input) => {
+  enqueue: async (input) => {
     const id = crypto.randomUUID();
     const queueNumber = get().nextQueueNumber;
     const newJob: PromptJob = {
@@ -49,6 +51,7 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       prompt: input.prompt,
       projectPath: input.projectPath,
       provider: input.provider,
+      isWorktree: false,
       status: 'pending',
       logs: [],
       createdAt: new Date(),
@@ -59,11 +62,43 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       nextQueueNumber: state.nextQueueNumber + 1,
     }));
 
-    // Auto-start immediately if nothing is running
-    const hasRunning = get().queue.some((j) => j.status === 'running');
-    if (!hasRunning) {
-      get().startJob(id);
+    let detectedWorktree = false;
+    if (input.projectPath) {
+      try {
+        detectedWorktree = await isGitWorktree(input.projectPath);
+      } catch {
+        detectedWorktree = false;
+      }
     }
+
+    set((state) => ({
+      queue: state.queue.map((job) =>
+        job.id === id ? { ...job, isWorktree: detectedWorktree } : job,
+      ),
+    }));
+
+    const schedulePendingJobs = () => {
+      const pendingWorktreeJobs = get().queue.filter(
+        (job) => job.status === 'pending' && job.isWorktree,
+      );
+      for (const job of pendingWorktreeJobs) {
+        get().startJob(job.id);
+      }
+
+      const hasRunningNonWorktree = get().queue.some(
+        (job) => job.status === 'running' && !job.isWorktree,
+      );
+      if (!hasRunningNonWorktree) {
+        const nextNonWorktree = get().queue.find(
+          (job) => job.status === 'pending' && !job.isWorktree,
+        );
+        if (nextNonWorktree) {
+          get().startJob(nextNonWorktree.id);
+        }
+      }
+    };
+
+    schedulePendingJobs();
   },
 
   startJob: (id) => {
@@ -112,10 +147,23 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       success ? toast.success(msg) : toast.error(msg);
     }
 
-    // Start next pending job serially
-    const next = get().queue.find((j) => j.status === 'pending');
-    if (next) {
-      get().startJob(next.id);
+    const pendingWorktreeJobs = get().queue.filter(
+      (queueJob) => queueJob.status === 'pending' && queueJob.isWorktree,
+    );
+    for (const pendingWorktree of pendingWorktreeJobs) {
+      get().startJob(pendingWorktree.id);
+    }
+
+    const hasRunningNonWorktree = get().queue.some(
+      (queueJob) => queueJob.status === 'running' && !queueJob.isWorktree,
+    );
+    if (!hasRunningNonWorktree) {
+      const nextNonWorktree = get().queue.find(
+        (queueJob) => queueJob.status === 'pending' && !queueJob.isWorktree,
+      );
+      if (nextNonWorktree) {
+        get().startJob(nextNonWorktree.id);
+      }
     }
   },
 

@@ -38,6 +38,15 @@ describe('settingsStore defaults', () => {
     const store = useSettingsStore.getState();
     expect(store.settings?.ai_provider).toBe('claude');
   });
+
+  it('has per-provider default models', async () => {
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    const store = useSettingsStore.getState();
+    expect(store.settings?.default_model_codex).toBe('codex-mini-latest');
+    expect(store.settings?.default_model_claude).toBe('claude-sonnet-4-6');
+    expect(store.settings?.default_model_opencode).toBe('gpt-4.1');
+    expect(store.settings?.default_model_copilot).toBe('gpt-4.1');
+  });
 });
 
 describe('settingsStore ai_provider persistence', () => {
@@ -54,8 +63,7 @@ describe('settingsStore ai_provider persistence', () => {
       claude_model: 'claude-sonnet-4-6',
       work_days: [1, 2, 3, 4, 5],
       show_in_tray: true,
-      pomodoro_work_min: 25,
-      pomodoro_break_min: 5,
+      active_ai_provider: 'opencode',
       ai_provider: 'opencode',
     });
     const { useSettingsStore } = await import('../stores/settingsStore');
@@ -78,8 +86,7 @@ describe('settingsStore ai_provider persistence', () => {
         claude_model: 'claude-sonnet-4-6',
         work_days: [1, 2, 3, 4, 5],
         show_in_tray: true,
-        pomodoro_work_min: 25,
-        pomodoro_break_min: 5,
+        active_ai_provider: 'opencode',
         ai_provider: 'opencode',
       });
 
@@ -104,8 +111,7 @@ describe('settingsStore ai_provider persistence', () => {
         claude_model: 'claude-sonnet-4-6',
         work_days: [1, 2, 3, 4, 5],
         show_in_tray: true,
-        pomodoro_work_min: 25,
-        pomodoro_break_min: 5,
+        active_ai_provider: 'copilot',
         ai_provider: 'copilot_cli',
       });
 
@@ -119,7 +125,7 @@ describe('settingsStore ai_provider persistence', () => {
 describe('settingsStore setTheme', () => {
   it('setTheme calls set_setting and refreshes settings', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ theme: 'light', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5, ai_provider: 'claude' });
+    mockInvoke.mockResolvedValue({ theme: 'light', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, active_ai_provider: 'claude', ai_provider: 'claude' });
     const { useSettingsStore } = await import('../stores/settingsStore');
     await useSettingsStore.getState().setTheme('light');
     expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'theme', value: 'light' });
@@ -128,7 +134,7 @@ describe('settingsStore setTheme', () => {
 
   it('setTheme to dark calls set_setting with dark', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ theme: 'dark', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, pomodoro_work_min: 25, pomodoro_break_min: 5, ai_provider: 'claude' });
+    mockInvoke.mockResolvedValue({ theme: 'dark', timezone_offset: 7, session1_kickstart: '09:00', planning_end: '11:00', session2_start: '14:00', warn_before_min: 15, autostart: false, claude_model: 'claude-sonnet-4-6', work_days: [1,2,3,4,5], show_in_tray: true, active_ai_provider: 'claude', ai_provider: 'claude' });
     const { useSettingsStore } = await import('../stores/settingsStore');
     await useSettingsStore.getState().setTheme('dark');
     expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'theme', value: 'dark' });

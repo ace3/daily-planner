@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings } from '../types/settings';
+import type { AppSettings, AiProvider, AiProviderId } from '../types/settings';
 import { getSettings, setSetting, getGlobalPrompt, setGlobalPrompt } from '../lib/tauri';
 
 // Apply the dark class immediately based on default theme to avoid FOUC
@@ -17,11 +17,15 @@ function applyTheme(theme: string) {
 
 interface SettingsState {
   settings: AppSettings | null;
+  activeProvider: AiProviderId;
+  availableProviders: AiProvider[];
   loading: boolean;
   error: string | null;
   globalPrompt: string | null;
   fetchSettings: () => Promise<void>;
+  setAvailableProviders: (providers: AiProvider[]) => void;
   updateSetting: (key: keyof AppSettings, value: string) => Promise<void>;
+  setActiveProvider: (id: AiProviderId) => Promise<void>;
   setTheme: (theme: 'dark' | 'light') => Promise<void>;
   fetchGlobalPrompt: () => Promise<void>;
   setGlobalPrompt: (prompt: string) => Promise<void>;
@@ -35,16 +39,42 @@ const defaultSettings: AppSettings = {
   warn_before_min: 15,
   autostart: false,
   claude_model: 'claude-sonnet-4-6',
+  default_model_codex: 'codex-mini-latest',
+  default_model_claude: 'claude-sonnet-4-6',
+  default_model_opencode: 'gpt-4.1',
+  default_model_copilot: 'gpt-4.1',
+  active_ai_provider: 'claude',
   ai_provider: 'claude',
   theme: 'dark',
   work_days: [1, 2, 3, 4, 5],
   show_in_tray: true,
-  pomodoro_work_min: 25,
-  pomodoro_break_min: 5,
+};
+
+const providerToLegacyAiProvider: Record<AiProviderId, AppSettings['ai_provider']> = {
+  claude: 'claude',
+  codex: 'codex',
+  opencode: 'opencode',
+  copilot: 'copilot_cli',
+};
+
+const normalizeProvider = (value: string | null | undefined): AiProviderId | null => {
+  switch (value) {
+    case 'claude':
+    case 'codex':
+    case 'opencode':
+    case 'copilot':
+      return value;
+    case 'copilot_cli':
+      return 'copilot';
+    default:
+      return null;
+  }
 };
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: defaultSettings,
+  activeProvider: defaultSettings.active_ai_provider,
+  availableProviders: [],
   loading: false,
   error: null,
   globalPrompt: null,
@@ -53,20 +83,50 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ loading: true, error: null });
     try {
       const settings = await getSettings();
+      const activeProvider = normalizeProvider(settings.active_ai_provider)
+        ?? normalizeProvider(settings.ai_provider)
+        ?? 'claude';
       applyTheme(settings.theme ?? 'dark');
-      set({ settings, loading: false });
+      set({ settings, activeProvider, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
+  },
+
+  setAvailableProviders: (providers) => {
+    set({ availableProviders: providers });
   },
 
   updateSetting: async (key, value) => {
     try {
       await setSetting(String(key), value);
       const settings = await getSettings();
-      set({ settings });
+      const activeProvider = normalizeProvider(settings.active_ai_provider)
+        ?? normalizeProvider(settings.ai_provider)
+        ?? 'claude';
+      set({ settings, activeProvider });
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  setActiveProvider: async (id) => {
+    try {
+      await setSetting('active_ai_provider', id);
+      await setSetting('ai_provider', providerToLegacyAiProvider[id]);
+      set((state) => ({
+        activeProvider: id,
+        settings: state.settings
+          ? {
+              ...state.settings,
+              active_ai_provider: id,
+              ai_provider: providerToLegacyAiProvider[id],
+            }
+          : state.settings,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
     }
   },
 
@@ -75,7 +135,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await setSetting('theme', theme);
       applyTheme(theme);
       const settings = await getSettings();
-      set({ settings });
+      const activeProvider = normalizeProvider(settings.active_ai_provider)
+        ?? normalizeProvider(settings.ai_provider)
+        ?? 'claude';
+      set({ settings, activeProvider });
     } catch (e) {
       set({ error: String(e) });
     }

@@ -12,12 +12,15 @@ const baseSettings = {
   warn_before_min: 15,
   autostart: false,
   claude_model: 'claude-sonnet-4-6',
+  default_model_codex: 'codex-mini-latest',
+  default_model_claude: 'claude-sonnet-4-6',
+  default_model_opencode: 'gpt-4.1',
+  default_model_copilot: 'gpt-4.1',
+  active_ai_provider: 'claude' as const,
   ai_provider: 'claude' as const,
   theme: 'dark',
   work_days: [1, 2, 3, 4, 5],
   show_in_tray: true,
-  pomodoro_work_min: 25,
-  pomodoro_break_min: 5,
 };
 
 beforeEach(() => {

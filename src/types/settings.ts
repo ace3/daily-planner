@@ -1,3 +1,5 @@
+export type AiProviderId = 'claude' | 'codex' | 'opencode' | 'copilot';
+
 export interface AppSettings {
   timezone_offset: number;
   session1_kickstart: string; // "HH:MM"
@@ -6,10 +8,19 @@ export interface AppSettings {
   warn_before_min: number;
   autostart: boolean;
   claude_model: string;
+  default_model_codex: string;
+  default_model_claude: string;
+  default_model_opencode: string;
+  default_model_copilot: string;
+  active_ai_provider: AiProviderId;
   ai_provider: 'claude' | 'opencode' | 'codex' | 'copilot_cli';
   theme: string;
   work_days: number[];
   show_in_tray: boolean;
-  pomodoro_work_min: number;
-  pomodoro_break_min: number;
+}
+
+export interface AiProvider {
+  id: AiProviderId;
+  name: string;
+  available: boolean;
 }

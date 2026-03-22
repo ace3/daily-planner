@@ -21,6 +21,9 @@ pub struct Task {
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub project_id: Option<String>,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -103,7 +106,8 @@ pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id
+                position, created_at, updated_at, completed_at, project_id,
+                worktree_path, worktree_branch, worktree_status
          FROM tasks WHERE date = ?1 ORDER BY session_slot, position, created_at",
     )?;
     let tasks = stmt
@@ -127,6 +131,9 @@ pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
                 updated_at: row.get(15)?,
                 completed_at: row.get(16)?,
                 project_id: row.get(17)?,
+                worktree_path: row.get(18)?,
+                worktree_branch: row.get(19)?,
+                worktree_status: row.get(20)?,
             })
         })?
         .collect::<Result<Vec<_>>>()?;
@@ -249,7 +256,8 @@ pub fn carry_task_forward(
     let task: Task = conn.query_row(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id
+                position, created_at, updated_at, completed_at, project_id,
+                worktree_path, worktree_branch, worktree_status
          FROM tasks WHERE id = ?1",
         params![id],
         |row| {
@@ -272,6 +280,9 @@ pub fn carry_task_forward(
                 updated_at: row.get(15)?,
                 completed_at: row.get(16)?,
                 project_id: row.get(17)?,
+                worktree_path: row.get(18)?,
+                worktree_branch: row.get(19)?,
+                worktree_status: row.get(20)?,
             })
         },
     )?;
@@ -301,6 +312,62 @@ pub fn save_prompt_result(
         params![prompt_used, prompt_result, id],
     )?;
     Ok(())
+}
+
+pub fn set_task_worktree_metadata(
+    conn: &Connection,
+    id: &str,
+    worktree_path: Option<&str>,
+    worktree_branch: Option<&str>,
+    worktree_status: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks
+         SET worktree_path = ?1,
+             worktree_branch = ?2,
+             worktree_status = ?3,
+             updated_at = datetime('now')
+         WHERE id = ?4",
+        params![worktree_path, worktree_branch, worktree_status, id],
+    )?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskWorktreeContext {
+    pub id: String,
+    pub title: String,
+    pub notes: String,
+    pub prompt_used: Option<String>,
+    pub prompt_result: Option<String>,
+    pub project_path: Option<String>,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_status: Option<String>,
+}
+
+pub fn get_task_worktree_context(conn: &Connection, id: &str) -> Result<TaskWorktreeContext> {
+    conn.query_row(
+        "SELECT t.id, t.title, t.notes, t.prompt_used, t.prompt_result,
+                p.path, t.worktree_path, t.worktree_branch, t.worktree_status
+         FROM tasks t
+         LEFT JOIN projects p ON p.id = t.project_id
+         WHERE t.id = ?1",
+        params![id],
+        |row| {
+            Ok(TaskWorktreeContext {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                notes: row.get(2)?,
+                prompt_used: row.get(3)?,
+                prompt_result: row.get(4)?,
+                project_path: row.get(5)?,
+                worktree_path: row.get(6)?,
+                worktree_branch: row.get(7)?,
+                worktree_status: row.get(8)?,
+            })
+        },
+    )
 }
 
 pub fn reorder_tasks(conn: &Connection, task_ids: &[String]) -> Result<()> {
@@ -607,7 +674,8 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,
                 estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id
+                position, created_at, updated_at, completed_at, project_id,
+                worktree_path, worktree_branch, worktree_status
          FROM tasks ORDER BY created_at",
     )?;
     let tasks = stmt
@@ -631,6 +699,9 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
                 updated_at: row.get(15)?,
                 completed_at: row.get(16)?,
                 project_id: row.get(17)?,
+                worktree_path: row.get(18)?,
+                worktree_branch: row.get(19)?,
+                worktree_status: row.get(20)?,
             })
         })?
         .collect::<Result<Vec<_>>>()?;
@@ -836,6 +907,7 @@ mod tests {
         assert_eq!(tasks[0].id, id);
         assert_eq!(tasks[0].title, "Test task");
         assert_eq!(tasks[0].status, "pending");
+        assert_eq!(tasks[0].worktree_status, None);
     }
 
     #[test]
@@ -905,5 +977,41 @@ mod tests {
         // id2 should be position 0
         let t2 = tasks.iter().find(|t| t.id == id2).unwrap();
         assert_eq!(t2.position, 0);
+    }
+
+    #[test]
+    fn test_set_task_worktree_metadata() {
+        let conn = setup_test_db();
+        let id = create_task(
+            &conn,
+            "2026-03-22",
+            1,
+            "Worktree task",
+            "code",
+            2,
+            None,
+            None,
+        )
+        .unwrap();
+
+        set_task_worktree_metadata(
+            &conn,
+            &id,
+            Some("/tmp/daily-planner-worktrees/abc"),
+            Some("task/worktree-task-abc"),
+            Some("active"),
+        )
+        .unwrap();
+
+        let task = get_tasks_by_date(&conn, "2026-03-22").unwrap().remove(0);
+        assert_eq!(
+            task.worktree_path.as_deref(),
+            Some("/tmp/daily-planner-worktrees/abc")
+        );
+        assert_eq!(
+            task.worktree_branch.as_deref(),
+            Some("task/worktree-task-abc")
+        );
+        assert_eq!(task.worktree_status.as_deref(), Some("active"));
     }
 }

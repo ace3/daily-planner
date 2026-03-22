@@ -11,12 +11,15 @@ pub struct AppSettings {
     pub warn_before_min: i64,
     pub autostart: bool,
     pub claude_model: String,
+    pub default_model_codex: String,
+    pub default_model_claude: String,
+    pub default_model_opencode: String,
+    pub default_model_copilot: String,
+    pub active_ai_provider: String,
     pub ai_provider: String,
     pub theme: String,
     pub work_days: Vec<i64>,
     pub show_in_tray: bool,
-    pub pomodoro_work_min: i64,
-    pub pomodoro_break_min: i64,
 }
 
 fn normalize_ai_provider(value: Option<&String>) -> String {
@@ -27,10 +30,53 @@ fn normalize_ai_provider(value: Option<&String>) -> String {
     }
 }
 
+fn normalize_active_ai_provider(value: Option<&String>) -> Option<String> {
+    match value.map(String::as_str) {
+        Some("claude") => Some("claude".to_string()),
+        Some("codex") => Some("codex".to_string()),
+        Some("opencode") => Some("opencode".to_string()),
+        Some("copilot") | Some("copilot_cli") => Some("copilot".to_string()),
+        _ => None,
+    }
+}
+
+fn resolve_default_active_ai_provider(
+    configured: Option<String>,
+    detected: &[crate::commands::ai_providers::AiProvider],
+) -> String {
+    if let Some(value) = configured {
+        return value;
+    }
+
+    if detected.iter().any(|provider| provider.id == "claude") {
+        return "claude".to_string();
+    }
+
+    detected
+        .first()
+        .map(|provider| provider.id.clone())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
 #[tauri::command]
 pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let map = queries::get_all_settings(&conn).map_err(|e| e.to_string())?;
+    let detected_providers = crate::commands::ai_providers::detect_available_providers();
+    let active_ai_provider = resolve_default_active_ai_provider(
+        normalize_active_ai_provider(
+            map.get("active_ai_provider").or_else(|| map.get("ai_provider")),
+        ),
+        &detected_providers,
+    );
+    let should_persist_active_provider = map
+        .get("active_ai_provider")
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true);
+    if should_persist_active_provider {
+        queries::set_setting(&conn, "active_ai_provider", &active_ai_provider)
+            .map_err(|e| e.to_string())?;
+    }
 
     let work_days: Vec<i64> = serde_json::from_str(
         map.get("work_days")
@@ -65,6 +111,27 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
             .get("claude_model")
             .cloned()
             .unwrap_or_else(|| "claude-sonnet-4-6".to_string()),
+        default_model_codex: map
+            .get("default_model_codex")
+            .cloned()
+            .unwrap_or_else(|| "codex-mini-latest".to_string()),
+        default_model_claude: map
+            .get("default_model_claude")
+            .cloned()
+            .unwrap_or_else(|| {
+                map.get("claude_model")
+                    .cloned()
+                    .unwrap_or_else(|| "claude-sonnet-4-6".to_string())
+            }),
+        default_model_opencode: map
+            .get("default_model_opencode")
+            .cloned()
+            .unwrap_or_else(|| "gpt-4.1".to_string()),
+        default_model_copilot: map
+            .get("default_model_copilot")
+            .cloned()
+            .unwrap_or_else(|| "gpt-4.1".to_string()),
+        active_ai_provider,
         ai_provider: normalize_ai_provider(map.get("ai_provider")),
         theme: map
             .get("theme")
@@ -72,14 +139,6 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
             .unwrap_or_else(|| "dark".to_string()),
         work_days,
         show_in_tray: map.get("show_in_tray").map(|v| v == "true").unwrap_or(true),
-        pomodoro_work_min: map
-            .get("pomodoro_work_min")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(25),
-        pomodoro_break_min: map
-            .get("pomodoro_break_min")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5),
     })
 }
 
@@ -104,6 +163,20 @@ pub fn set_setting(key: String, value: String, db: State<'_, DbConnection>) -> R
         return Err(
             "Invalid ai_provider. Allowed values: claude, opencode, codex, copilot_cli".to_string(),
         );
+    }
+    if key == "active_ai_provider"
+        && value != "claude"
+        && value != "opencode"
+        && value != "codex"
+        && value != "copilot"
+    {
+        return Err(
+            "Invalid active_ai_provider. Allowed values: claude, opencode, codex, copilot"
+                .to_string(),
+        );
+    }
+    if key.starts_with("default_model_") && value.trim().is_empty() {
+        return Err("Default model value cannot be empty.".to_string());
     }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::set_setting(&conn, &key, &value).map_err(|e| e.to_string())

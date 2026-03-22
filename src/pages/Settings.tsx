@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, Bell, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -7,6 +7,22 @@ import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
 import { backupData, restoreData, resetAppData, checkCopilotCliAvailability } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
+import { useSessionDraftState } from '../hooks/useSessionDraftState';
+
+interface SettingsDraft {
+  timezone_offset: string;
+  session1_kickstart: string;
+  planning_end: string;
+  session2_start: string;
+  warn_before_min: string;
+  default_model_codex: string;
+  default_model_claude: string;
+  default_model_opencode: string;
+  default_model_copilot: string;
+  promptDraft: string;
+  initializedFromSettings: boolean;
+  initializedPrompt: boolean;
+}
 
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
@@ -15,10 +31,22 @@ export const SettingsPage: React.FC = () => {
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
-  const [promptDraft, setPromptDraft] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
   const [copilotCliAvailable, setCopilotCliAvailable] = useState<boolean | null>(null);
-  const promptInitialized = useRef(false);
+  const [draft, setDraft] = useSessionDraftState<SettingsDraft>('settings-page-draft', {
+    timezone_offset: '',
+    session1_kickstart: '',
+    planning_end: '',
+    session2_start: '',
+    warn_before_min: '',
+    default_model_codex: '',
+    default_model_claude: '',
+    default_model_opencode: '',
+    default_model_copilot: '',
+    promptDraft: '',
+    initializedFromSettings: false,
+    initializedPrompt: false,
+  });
 
   useEffect(() => {
     fetchSettings();
@@ -29,14 +57,44 @@ export const SettingsPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!promptInitialized.current && globalPrompt !== null) {
-      setPromptDraft(globalPrompt ?? '');
-      promptInitialized.current = true;
-    } else if (!promptInitialized.current && globalPrompt === null) {
-      // globalPrompt loaded and is null (no value saved)
-      promptInitialized.current = true;
-    }
-  }, [globalPrompt]);
+    if (!settings) return;
+    const needsModelDefaults =
+      !draft.default_model_codex ||
+      !draft.default_model_claude ||
+      !draft.default_model_opencode ||
+      !draft.default_model_copilot;
+    if (draft.initializedFromSettings && !needsModelDefaults) return;
+    setDraft((prev) => ({
+      ...prev,
+      timezone_offset: String(settings.timezone_offset),
+      session1_kickstart: settings.session1_kickstart,
+      planning_end: settings.planning_end,
+      session2_start: settings.session2_start,
+      warn_before_min: String(settings.warn_before_min),
+      default_model_codex: settings.default_model_codex,
+      default_model_claude: settings.default_model_claude,
+      default_model_opencode: settings.default_model_opencode,
+      default_model_copilot: settings.default_model_copilot,
+      initializedFromSettings: true,
+    }));
+  }, [
+    settings,
+    draft.initializedFromSettings,
+    draft.default_model_codex,
+    draft.default_model_claude,
+    draft.default_model_opencode,
+    draft.default_model_copilot,
+    setDraft,
+  ]);
+
+  useEffect(() => {
+    if (draft.initializedPrompt) return;
+    setDraft((prev) => ({
+      ...prev,
+      promptDraft: globalPrompt ?? '',
+      initializedPrompt: true,
+    }));
+  }, [globalPrompt, draft.initializedPrompt, setDraft]);
 
   if (!settings) return <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-[#484F58] text-sm">Loading...</div>;
 
@@ -49,10 +107,23 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleSaveDefaultModel = async (
+    key: 'default_model_codex' | 'default_model_claude' | 'default_model_opencode' | 'default_model_copilot',
+    value: string,
+  ) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      toast.error('Model value cannot be empty');
+      return;
+    }
+    setDraft((prev) => ({ ...prev, [key]: trimmed }));
+    await handleSave(key, trimmed);
+  };
+
   const handleSaveGlobalPrompt = async () => {
     setPromptSaving(true);
     try {
-      await setGlobalPrompt(promptDraft);
+      await setGlobalPrompt(draft.promptDraft);
       toast.success('Global prompt saved');
     } catch {
       toast.error('Failed to save global prompt');
@@ -130,10 +201,11 @@ export const SettingsPage: React.FC = () => {
               <div className="flex gap-2">
                 <input
                   type="number"
-                  defaultValue={settings.timezone_offset}
+                  value={draft.timezone_offset}
                   min={-12}
                   max={14}
                   step={1}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, timezone_offset: e.target.value }))}
                   onBlur={(e) => handleSave('timezone_offset', e.target.value)}
                   className={`w-24 ${inputClass}`}
                 />
@@ -145,10 +217,10 @@ export const SettingsPage: React.FC = () => {
 
             {/* Time settings */}
             {[
-              { key: 'session1_kickstart', label: 'Morning Kickstart', desc: 'When to start prompting (5-hour session begins)', default: settings.session1_kickstart },
-              { key: 'planning_end', label: 'Switch to Claude Code', desc: 'End of planning phase — switch to development', default: settings.planning_end },
-              { key: 'session2_start', label: 'Session Reset', desc: 'When Claude Pro session resets (5-hour cycle)', default: settings.session2_start },
-            ].map(({ key, label, desc, default: def }) => (
+              { key: 'session1_kickstart', label: 'Morning Kickstart', desc: 'When to start prompting (5-hour session begins)' },
+              { key: 'planning_end', label: 'Switch to Claude Code', desc: 'End of planning phase — switch to development' },
+              { key: 'session2_start', label: 'Session Reset', desc: 'When Claude Pro session resets (5-hour cycle)' },
+            ].map(({ key, label, desc }) => (
               <div key={key} className="space-y-1.5">
                 <div>
                   <label className={labelClass}>{label}</label>
@@ -157,7 +229,13 @@ export const SettingsPage: React.FC = () => {
                 <div className="flex gap-2 items-center">
                   <input
                     type="time"
-                    defaultValue={def}
+                    value={draft[key as 'session1_kickstart' | 'planning_end' | 'session2_start']}
+                    onChange={(e) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        [key]: e.target.value,
+                      }))
+                    }
                     onBlur={(e) => handleSave(key, e.target.value)}
                     className={inputClass}
                   />
@@ -170,39 +248,14 @@ export const SettingsPage: React.FC = () => {
               <label className={labelClass}>Warning Before Reset (minutes)</label>
               <input
                 type="number"
-                defaultValue={settings.warn_before_min}
+                value={draft.warn_before_min}
                 min={5}
                 max={60}
+                onChange={(e) => setDraft((prev) => ({ ...prev, warn_before_min: e.target.value }))}
                 onBlur={(e) => handleSave('warn_before_min', e.target.value)}
                 className={`w-24 ${inputClass}`}
               />
             </div>
-          </div>
-        </section>
-
-        {/* Pomodoro */}
-        <section className={sectionClass}>
-          <div className={sectionHeaderClass}>
-            <Bell size={14} className="text-gray-500 dark:text-[#8B949E]" />
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Pomodoro</h2>
-          </div>
-          <div className="p-4 grid grid-cols-2 gap-4">
-            {[
-              { key: 'pomodoro_work_min', label: 'Work interval (min)', default: settings.pomodoro_work_min },
-              { key: 'pomodoro_break_min', label: 'Break interval (min)', default: settings.pomodoro_break_min },
-            ].map(({ key, label, default: def }) => (
-              <div key={key} className="space-y-1.5">
-                <label className={labelClass}>{label}</label>
-                <input
-                  type="number"
-                  defaultValue={def}
-                  min={1}
-                  max={120}
-                  onBlur={(e) => handleSave(key, e.target.value)}
-                  className={`w-full ${inputClass}`}
-                />
-              </div>
-            ))}
           </div>
         </section>
 
@@ -235,21 +288,63 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Claude model */}
+        {/* Default models */}
         <section className={sectionClass}>
           <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Claude Model</h2>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Default Models</h2>
           </div>
-          <div className="p-4">
-            <select
-              defaultValue={settings.claude_model}
-              onChange={(e) => handleSave('claude_model', e.target.value)}
-              className={`w-full ${inputClass} cursor-pointer`}
-            >
-              <option value="claude-sonnet-4-6">claude-sonnet-4-6 (recommended)</option>
-              <option value="claude-opus-4-6">claude-opus-4-6 (most capable)</option>
-              <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fastest)</option>
-            </select>
+          <div className="p-4 space-y-3">
+            {[
+              {
+                key: 'default_model_codex' as const,
+                label: 'Codex',
+                options: ['codex-mini-latest', 'o4-mini', 'gpt-4.1', 'gpt-4o'],
+              },
+              {
+                key: 'default_model_claude' as const,
+                label: 'Claude',
+                options: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+              },
+              {
+                key: 'default_model_opencode' as const,
+                label: 'OpenCode',
+                options: ['gpt-4.1', 'gpt-4o', 'o4-mini', 'claude-sonnet-4-6'],
+              },
+              {
+                key: 'default_model_copilot' as const,
+                label: 'Copilot',
+                options: ['gpt-4o', 'gpt-4.1', 'claude-sonnet-4-6', 'o4-mini'],
+              },
+            ].map(({ key, label, options }) => (
+              <div key={key} className="space-y-1.5">
+                <label className={labelClass}>{label}</label>
+                <div className="flex gap-2">
+                  <input
+                    list={`${key}-models`}
+                    value={draft[key]}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                    onBlur={(e) => void handleSaveDefaultModel(key, e.target.value)}
+                    placeholder={`Default ${label} model`}
+                    className={`flex-1 ${inputClass}`}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleSaveDefaultModel(key, draft[key])}
+                  >
+                    Save
+                  </Button>
+                  <datalist id={`${key}-models`}>
+                    {options.map((model) => (
+                      <option key={model} value={model} />
+                    ))}
+                  </datalist>
+                </div>
+                <p className="text-xs text-gray-400 dark:text-[#484F58]">
+                  Choose from suggestions or type a custom model.
+                </p>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -301,14 +396,14 @@ export const SettingsPage: React.FC = () => {
               Prepended to every AI provider call across the app. Use it to set a persistent system context or persona.
             </p>
             <textarea
-              value={promptDraft}
-              onChange={(e) => setPromptDraft(e.target.value)}
+              value={draft.promptDraft}
+              onChange={(e) => setDraft((prev) => ({ ...prev, promptDraft: e.target.value }))}
               rows={5}
               placeholder="e.g. You are working in a TypeScript monorepo. Always prefer functional patterns and avoid classes unless absolutely necessary."
               className={`w-full resize-none ${inputClass}`}
             />
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 dark:text-[#484F58]">{promptDraft.length} chars</span>
+              <span className="text-xs text-gray-400 dark:text-[#484F58]">{draft.promptDraft.length} chars</span>
               <Button
                 variant="secondary"
                 size="sm"
