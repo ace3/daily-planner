@@ -9,6 +9,7 @@ import { useProjectStore } from '../stores/projectStore';
 import { usePromptQueueStore } from '../stores/promptQueueStore';
 import { getLocalDate } from '../lib/time';
 import { improvePromptWithClaude, invokeCopilotCli } from '../lib/tauri';
+import { buildImprovementPrompt } from '../lib/promptImprover';
 import type { Task } from '../types/task';
 import type { Project } from '../types/project';
 import { Badge } from '../components/ui/Badge';
@@ -29,41 +30,7 @@ const defaultPromptState = (): PromptState => ({
   error: null,
 });
 
-function buildImprovementPrompt(userPrompt: string, ctx?: TaskContext): string {
-  const lines: string[] = [];
-
-  lines.push('You are a prompt engineering expert specializing in AI coding agents (like Claude Code).');
-  lines.push('');
-  lines.push('Your job: take a rough prompt and rewrite it into a clear, detailed, actionable prompt ready for an AI coding agent.');
-  lines.push('Return ONLY the improved prompt — no explanation, no preamble.');
-
-  if (ctx) {
-    lines.push('');
-    lines.push('## Task Context');
-    lines.push(`- Task: ${ctx.title}`);
-    if (ctx.notes) {
-      lines.push(`- Notes: ${ctx.notes}`);
-    }
-    if (ctx.project) {
-      lines.push(`- Project: ${ctx.project.name}`);
-      lines.push(`- Project path: ${ctx.project.path}`);
-    }
-  }
-
-  lines.push('');
-  lines.push('## Rough Prompt');
-  lines.push(userPrompt);
-  lines.push('');
-  lines.push('## Rewrite the above into a polished Claude Code prompt:');
-  lines.push('- State the specific goal and desired outcome clearly');
-  lines.push('- Include relevant technical context from the notes');
-  if (ctx?.project) {
-    lines.push(`- Reference the project at \`${ctx.project.path}\` where relevant`);
-  }
-  lines.push('- Structure it so the AI agent can act immediately without clarifying questions');
-
-  return lines.join('\n');
-}
+// buildImprovementPrompt is now imported from src/lib/promptImprover.ts
 
 function buildTaskContext(task: Task, projects: Project[]): TaskContext {
   return {

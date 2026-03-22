@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -57,6 +57,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 9 {
         apply_v9(conn)?;
+    }
+    if current < 10 {
+        apply_v10(conn)?;
     }
 
     eprintln!(
@@ -579,6 +582,32 @@ fn apply_v9(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v10(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 10, "Optimize builtin templates and add Fix Issue / Implement Feature", |tx| {
+        tx.execute_batch("
+            UPDATE prompt_templates SET template = 'I have these tasks for today:\n\n[list your tasks here]\n\nPrioritize by impact, estimate durations, flag blockers, and suggest execution order for a focused work session.', variables = '[]' WHERE id = 'builtin-1';
+
+            UPDATE prompt_templates SET template = 'I''m debugging an issue.\n\nProblem: [describe symptom]\nError: [paste error message]\nCode: [paste relevant code]\n\nIdentify the root cause and provide a minimal fix.', variables = '[]' WHERE id = 'builtin-2';
+
+            UPDATE prompt_templates SET template = 'Review the following code for bugs, performance issues, and security vulnerabilities. Suggest specific fixes.\n\n[paste code here]', variables = '[]' WHERE id = 'builtin-3';
+
+            UPDATE prompt_templates SET template = 'Explain [topic] with practical examples.\n\nFocus on: [specific questions].', variables = '[]' WHERE id = 'builtin-4';
+
+            UPDATE prompt_templates SET template = 'Write tests for the following code covering happy path, edge cases, and error cases.\n\n[paste code here]', variables = '[]' WHERE id = 'builtin-5';
+
+            UPDATE prompt_templates SET template = 'Session ending.\n\nCompleted: [what was done]\nPending: [what remains]\n\nSummarize progress, recommend next-session priorities, and capture context to remember.', variables = '[]' WHERE id = 'builtin-6';
+
+            INSERT OR IGNORE INTO prompt_templates (id, name, category, template, variables, is_builtin) VALUES
+            ('builtin-7', 'Fix Issue', 'debugging',
+             'Fix this issue in the codebase.\n\nSymptom: [describe what''s wrong]\nExpected behavior: [what should happen]\nContext: [relevant files, recent changes]\n\nFind the root cause, implement the fix, and add a test that reproduces the bug and passes after the fix.',
+             '[]', 1),
+            ('builtin-8', 'Implement Feature', 'coding',
+             'Implement this feature.\n\nGoal: [what to build]\nAcceptance criteria: [list requirements]\nContext: [relevant existing code, patterns to follow]\n\nImplement end-to-end with validation, error handling, and tests. Follow existing codebase patterns.',
+             '[]', 1);
+        ").context("v10 DDL failed")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -733,7 +762,7 @@ mod tests {
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION as i64);
 
-        // 6 builtin templates seeded.
+        // 8 builtin templates seeded (6 original + 2 from v10).
         let tmpl_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM prompt_templates WHERE is_builtin=1",
@@ -741,7 +770,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tmpl_count, 6);
+        assert_eq!(tmpl_count, 8);
 
         // Default settings populated.
         let tz: String = conn

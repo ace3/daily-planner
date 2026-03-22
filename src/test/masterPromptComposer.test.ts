@@ -22,7 +22,7 @@ describe('validatePromptSources', () => {
 });
 
 describe('generateMasterPrompt', () => {
-  it('merges prompts and includes explicit iterative completion loop', () => {
+  it('merges prompts and includes concise process section', () => {
     const result = generateMasterPrompt([
       {
         id: 'p1',
@@ -38,10 +38,10 @@ describe('generateMasterPrompt', () => {
       },
     ]);
 
-    expect(result.masterPrompt).toContain('Execution Loop (Repeat Until Done)');
-    expect(result.masterPrompt).toContain('Plan -> Execute -> Verify -> Fix -> Repeat');
-    expect(result.masterPrompt).toContain('Completion Criteria (All Required)');
-    expect(result.masterPrompt).toContain('No TODOs, placeholders, or partial implementations.');
+    expect(result.masterPrompt).toContain('## Process');
+    expect(result.masterPrompt).toContain('Plan, implement, test, fix');
+    expect(result.masterPrompt).toContain('## Done When');
+    expect(result.masterPrompt).toContain('No TODOs or placeholders');
     expect(result.warnings).toHaveLength(0);
   });
 
@@ -83,7 +83,7 @@ describe('generateMasterPrompt', () => {
     expect(result.warnings.some((w) => w.code === 'SOURCE_TRUNCATED')).toBe(true);
   });
 
-  it('supports single prompt input while still producing task-loop structure', () => {
+  it('supports single prompt input while still producing process structure', () => {
     const result = generateMasterPrompt([
       {
         id: 'single',
@@ -94,6 +94,31 @@ describe('generateMasterPrompt', () => {
     ]);
 
     expect(result.usedSourceIds).toEqual(['single']);
-    expect(result.masterPrompt).toContain('Execution Loop (Repeat Until Done)');
+    expect(result.masterPrompt).toContain('## Process');
+  });
+
+  it('does not contain removed bloat', () => {
+    const result = generateMasterPrompt([
+      {
+        id: 'p1',
+        label: 'Task',
+        selected: true,
+        content: 'Implement the feature end-to-end with tests.',
+      },
+    ]);
+
+    expect(result.masterPrompt).not.toContain('empty input, single input');
+    expect(result.masterPrompt).not.toContain('partial failure handling');
+    expect(result.masterPrompt).not.toContain('Output Requirements');
+    expect(result.masterPrompt).not.toContain('Execution Loop');
+  });
+
+  it('master prompt stays under 1500 characters for typical 2-source merge', () => {
+    const result = generateMasterPrompt([
+      { id: 'a', label: 'Source A', selected: true, content: 'Implement login with OAuth support.' },
+      { id: 'b', label: 'Source B', selected: true, content: 'Add unit tests for all auth flows.' },
+    ]);
+
+    expect(result.masterPrompt.length).toBeLessThan(1500);
   });
 });

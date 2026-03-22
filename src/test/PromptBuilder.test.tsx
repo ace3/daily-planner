@@ -120,7 +120,7 @@ describe('PromptBuilder master prompt composer', () => {
 
     expect(onImprovedChange).toHaveBeenCalled();
     const merged = onImprovedChange.mock.calls.at(-1)?.[0] as string;
-    expect(merged).toContain('Execution Loop (Repeat Until Done)');
-    expect(merged).toContain('Plan -> Execute -> Verify -> Fix -> Repeat');
+    expect(merged).toContain('## Process');
+    expect(merged).toContain('Plan, implement, test, fix');
   });
 });

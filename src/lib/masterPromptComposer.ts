@@ -181,16 +181,13 @@ function buildMasterPrompt(mergedDirectives: string[], conflictDirectives: strin
   const directives = dedupeDirectives([...mergedDirectives, ...conflictDirectives]);
 
   const lines: string[] = [];
-  lines.push('# Master Agent Execution Prompt');
+  lines.push('# Task');
+  lines.push(`Deliver a complete, production-ready result combining intent from: ${sourceLabels.join(', ')}.`);
   lines.push('');
-  lines.push('## Mission');
-  lines.push('- Combine all source intent into one coherent execution path and deliver a fully complete, production-ready result.');
-  lines.push(`- Source prompts merged: ${sourceLabels.join(', ')}.`);
-  lines.push('');
-  lines.push('## Consolidated Constraints');
+  lines.push('## Constraints');
 
   if (directives.length === 0) {
-    lines.push('- Execute with strict quality gates: complete implementation, full validation, and passing tests before completion.');
+    lines.push('- Complete implementation with full validation and passing tests.');
   } else {
     for (const directive of directives.slice(0, MAX_DIRECTIVE_LINES)) {
       lines.push(`- ${directive}`);
@@ -198,24 +195,13 @@ function buildMasterPrompt(mergedDirectives: string[], conflictDirectives: strin
   }
 
   lines.push('');
-  lines.push('## Execution Loop (Repeat Until Done)');
-  lines.push('1. Plan -> Execute -> Verify -> Fix -> Repeat.');
-  lines.push('2. Plan: define exact subtask scope, assumptions, and acceptance checks.');
-  lines.push('3. Execute: implement only required changes with clean, idiomatic architecture.');
-  lines.push('4. Verify: run relevant tests and manual behavior checks for changed areas.');
-  lines.push('5. Fix: resolve failures, regressions, and edge-case gaps immediately.');
-  lines.push('6. Repeat the loop until every completion criterion passes.');
+  lines.push('## Process');
+  lines.push('Plan, implement, test, fix. Repeat until all criteria pass.');
   lines.push('');
-  lines.push('## Completion Criteria (All Required)');
-  lines.push('- Functional requirements are fully implemented end-to-end.');
-  lines.push('- Validation, error handling, and logging are robust for success and failure paths.');
-  lines.push('- Edge cases are covered (empty input, single input, conflicting instructions, long input, partial failure handling).');
-  lines.push('- Relevant automated tests pass without skipping.');
-  lines.push('- No TODOs, placeholders, or partial implementations.');
-  lines.push('');
-  lines.push('## Output Requirements');
-  lines.push('- Return concise implementation notes, changed files, and verification results.');
-  lines.push('- If assumptions were required, state them explicitly and keep them minimal.');
+  lines.push('## Done When');
+  lines.push('- All requirements implemented and tested');
+  lines.push('- No TODOs or placeholders');
+  lines.push('- Tests pass');
 
   return lines.join('\n');
 }
