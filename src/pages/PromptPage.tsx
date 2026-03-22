@@ -323,8 +323,9 @@ export const PromptPage: React.FC = () => {
             provider={runProvider}
             onRunAsWorktree={handleRunAsWorktree}
             worktreeButtonDisabled={
-              !!worktreePipelineJob &&
-              !['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus)
+              !state.improved.trim() ||
+              (!!worktreePipelineJob &&
+              !['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus))
             }
             worktreeButtonLabel={
               worktreePipelineJob && !['merged', 'tests_failed', 'none'].includes(worktreePipelineJob.worktreeStatus)

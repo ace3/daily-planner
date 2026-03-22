@@ -24,6 +24,7 @@ interface TaskState {
   savePromptResult: (id: string, promptUsed: string, promptResult: string) => Promise<void>;
   runTaskAsWorktree: (id: string) => Promise<RunTaskWorktreeResult>;
   cleanupTaskWorktree: (id: string) => Promise<CleanupTaskWorktreeResult>;
+  moveTaskToSession: (id: string, targetSession: 1 | 2) => Promise<void>;
   getTasksBySlot: (slot: number) => Task[];
 }
 
@@ -95,6 +96,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const result = await api.cleanupTaskWorktree(id);
     await get().fetchTasks(get().activeDate);
     return result;
+  },
+
+  moveTaskToSession: async (id, targetSession) => {
+    await api.moveTaskToSession(id, targetSession);
+    set((state) => ({
+      tasks: state.tasks.map((t) =>
+        t.id === id ? { ...t, session_slot: targetSession } : t
+      ),
+    }));
   },
 
   getTasksBySlot: (slot) => {

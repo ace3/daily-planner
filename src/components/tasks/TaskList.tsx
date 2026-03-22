@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { TaskItem } from './TaskItem';
 import { TaskForm } from './TaskForm';
 import { SessionBadge } from '../session/SessionBadge';
@@ -10,7 +10,7 @@ import { getLocalDate } from '../../lib/time';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { addDays, format } from 'date-fns';
 import { toast } from '../ui/Toast';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
 
 interface TaskListProps {
   slot: number;
@@ -18,6 +18,7 @@ interface TaskListProps {
 }
 
 export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
+  const [completedOpen, setCompletedOpen] = useState(false);
   const {
     tasks,
     createTask,
@@ -27,6 +28,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     updateTask,
     runTaskAsWorktree,
     cleanupTaskWorktree,
+    moveTaskToSession,
     activeDate,
   } = useTaskStore();
   const { settings } = useSettingsStore();
@@ -92,6 +94,11 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
+  const handleMoveToSession = async (task: Task, targetSlot: number) => {
+    await moveTaskToSession(task.id, targetSlot as 1 | 2);
+    toast.success(`Moved to Session ${targetSlot}`);
+  };
+
   const doneTasks = slotTasks.filter((t) => t.status === 'done');
   const pendingTasks = slotTasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
 
@@ -134,6 +141,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       onSelect={onTaskSelect}
       onRunAsWorktree={handleRunAsWorktree}
       onCleanupWorktree={handleCleanupWorktree}
+      onMoveToSession={handleMoveToSession}
     />
   );
 
@@ -192,20 +200,31 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
 
       {doneTasks.length > 0 && (
         <div className="space-y-1.5">
-          <span className="text-xs text-gray-400 dark:text-[#484F58]">Completed ({doneTasks.length})</span>
-          {doneTasks.map((task) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDelete}
-              onCarryForward={handleCarryForward}
-              onNotesUpdate={handleNotesUpdate}
-              onSelect={onTaskSelect}
-              onRunAsWorktree={handleRunAsWorktree}
-              onCleanupWorktree={handleCleanupWorktree}
-            />
-          ))}
+          <button
+            onClick={() => setCompletedOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-[#484F58] hover:text-gray-600 dark:hover:text-[#8B949E] transition-colors cursor-pointer w-full text-left"
+          >
+            {completedOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            Completed ({doneTasks.length})
+          </button>
+          {completedOpen && (
+            <div className="space-y-1.5">
+              {doneTasks.map((task) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  onStatusChange={handleStatusChange}
+                  onDelete={handleDelete}
+                  onCarryForward={handleCarryForward}
+                  onNotesUpdate={handleNotesUpdate}
+                  onSelect={onTaskSelect}
+                  onRunAsWorktree={handleRunAsWorktree}
+                  onCleanupWorktree={handleCleanupWorktree}
+                  onMoveToSession={handleMoveToSession}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -73,6 +73,15 @@
     /* Toast */
     #toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; white-space: nowrap; }
     #toast.show { opacity: 1; }
+    /* Task detail */
+    .detail-back-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .detail-task-info { padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; margin-bottom:4px; }
+    .detail-task-title { font-size:16px; font-weight:600; line-height:1.3; }
+    .detail-task-notes { font-size:13px; color:var(--muted); margin-top:6px; line-height:1.4; }
+    .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .task-item-tappable { flex:1; cursor:pointer; }
+    .task-item-tappable:active { opacity:.7; }
   </style>
 </head>
 <body>
@@ -145,6 +154,62 @@
       </div>
     </div>
 
+    <!-- Task Detail Page -->
+    <div class="page" id="page-task-detail">
+      <div class="card">
+        <div class="detail-back-row">
+          <button class="btn btn-ghost btn-sm" onclick="goBackToTasks()">← Back</button>
+          <span id="td-type-badge" class="badge" style="font-size:11px;"></span>
+        </div>
+        <div class="detail-task-info">
+          <div class="detail-task-title" id="td-title"></div>
+          <div class="detail-task-notes" id="td-notes" style="display:none;"></div>
+          <div id="td-path" style="display:none;font-size:11px;color:var(--dim);margin-top:4px;font-family:monospace;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="margin-bottom:12px;">
+          <label>Template</label>
+          <select id="td-template-select" onchange="applyDetailTemplate(this.value)">
+            <option value="">— No template —</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label>Provider</label>
+          <select id="td-provider">
+            <option value="claude">Claude</option>
+            <option value="opencode">OpenCode</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label>Raw Prompt</label>
+          <textarea id="td-prompt" rows="5" placeholder="Describe what you want to do..."></textarea>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-ghost w-full" id="td-btn-improve" onclick="detailRunImprove()">✨ Improve</button>
+          <button class="btn btn-ghost btn-sm" id="td-btn-reset" onclick="detailReset()" style="display:none;">🔄 Reset</button>
+        </div>
+      </div>
+
+      <div class="card" id="td-improved-card" style="display:none;">
+        <h2>Improved Prompt</h2>
+        <textarea id="td-improved" rows="8" style="font-family:monospace;font-size:12px;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="detailCopy()">Copy</button>
+          <button class="btn btn-ghost btn-sm" onclick="detailSaveToTask()">Save to Task</button>
+          <button class="btn btn-primary btn-sm" onclick="detailRunPrompt()">▶ Run</button>
+        </div>
+      </div>
+
+      <div class="card" id="td-run-output-card" style="display:none;">
+        <h2>Run Output</h2>
+        <div id="td-run-sse" class="sse-output"></div>
+        <button class="btn btn-primary w-full" id="td-btn-done" onclick="detailMarkDone()" style="margin-top:12px;">✓ Mark Done</button>
+      </div>
+    </div>
+
     <!-- Session Page -->
     <div class="page" id="page-session">
       <div class="card" style="text-align:center;">
@@ -179,6 +244,10 @@
     <button class="nav-btn" onclick="switchPage('session', this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Session
+    </button>
+    <button class="nav-btn" id="nav-btn-detail" onclick="switchPage('task-detail', this)" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 8h8M8 16h5"/></svg>
+      Detail
     </button>
   </div>
 </div>
@@ -250,12 +319,13 @@ function renderTasks(tasks) {
   el.innerHTML = tasks.map(t => `
     <div class="task-item" id="task-${t.id}">
       <button class="task-check ${t.status==='done'?'done':''}" onclick="toggleTask('${t.id}','${t.status}')"></button>
-      <div style="flex:1;">
+      <div class="task-item-tappable" onclick="openTaskDetail('${t.id}')">
         <div class="task-title ${t.status==='done'?'done':''}">${escHtml(t.title)}</div>
         <div class="task-meta">
           <span class="badge">${t.task_type}</span>
           <span class="badge" style="background:rgba(61,185,80,.1);color:#3FB950;">S${t.session_slot}</span>
           ${t.notes ? '<span class="badge" style="background:rgba(188,140,255,.1);color:#BC8CFF;">notes</span>' : ''}
+          ${t.prompt_used ? '<span class="badge" style="background:rgba(88,166,255,.1);color:#58A6FF;">prompt</span>' : ''}
         </div>
       </div>
       <button onclick="deleteTaskUI('${t.id}')" style="background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:2px 4px;">×</button>
@@ -463,6 +533,236 @@ function startClock() {
   setInterval(() => {
     if (document.getElementById('page-session').classList.contains('active')) loadSession();
   }, 300000);
+}
+
+// ── Task Detail ──────────────────────────────────────────────────────────────
+
+let currentTask = null;
+let detailTemplates = [];
+
+function goBackToTasks() {
+  const tasksBtn = document.querySelector('#nav .nav-btn');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-tasks').classList.add('active');
+  tasksBtn.classList.add('active');
+  document.getElementById('nav-btn-detail').style.display = 'none';
+  loadTasks();
+}
+
+async function openTaskDetail(taskId) {
+  try {
+    const task = await apiFetch('/api/tasks/' + taskId);
+    currentTask = task;
+
+    // Populate header
+    document.getElementById('td-title').textContent = task.title;
+    document.getElementById('td-type-badge').textContent = task.task_type;
+
+    const notesEl = document.getElementById('td-notes');
+    if (task.notes) {
+      notesEl.textContent = task.notes;
+      notesEl.style.display = 'block';
+    } else {
+      notesEl.style.display = 'none';
+    }
+
+    // Pre-fill prompt from saved data
+    document.getElementById('td-prompt').value = task.prompt_used || '';
+
+    // Reset improved section
+    document.getElementById('td-improved-card').style.display = 'none';
+    document.getElementById('td-run-output-card').style.display = 'none';
+    document.getElementById('td-btn-reset').style.display = 'none';
+    document.getElementById('td-improved').value = task.prompt_result || '';
+    document.getElementById('td-run-sse').innerHTML = '';
+    document.getElementById('td-btn-improve').disabled = false;
+    document.getElementById('td-btn-improve').textContent = '✨ Improve';
+
+    // Show improved section if task has a saved result
+    if (task.prompt_result) {
+      document.getElementById('td-improved-card').style.display = 'block';
+      document.getElementById('td-btn-reset').style.display = 'inline-flex';
+    }
+
+    // Load templates
+    await loadDetailTemplates();
+
+    // Navigate to detail page
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('page-task-detail').classList.add('active');
+    const detailBtn = document.getElementById('nav-btn-detail');
+    detailBtn.style.display = 'flex';
+    detailBtn.classList.add('active');
+  } catch(e) {
+    showToast('Failed to open task: ' + e.message);
+  }
+}
+
+async function loadDetailTemplates() {
+  try {
+    const templates = await apiFetch('/api/prompt/templates');
+    detailTemplates = templates;
+    const sel = document.getElementById('td-template-select');
+    sel.innerHTML = '<option value="">— No template —</option>';
+    templates.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    // templates not critical
+  }
+}
+
+function applyDetailTemplate(templateId) {
+  if (!templateId) return;
+  const tpl = detailTemplates.find(t => t.id === templateId);
+  if (tpl) document.getElementById('td-prompt').value = tpl.content;
+}
+
+async function detailRunImprove() {
+  const prompt = document.getElementById('td-prompt').value.trim();
+  if (!prompt) { showToast('Enter a prompt first'); return; }
+  const provider = document.getElementById('td-provider').value;
+
+  const btnImprove = document.getElementById('td-btn-improve');
+  btnImprove.disabled = true;
+  btnImprove.innerHTML = '<span class="spinner"></span> Improving…';
+
+  const improvedCard = document.getElementById('td-improved-card');
+  const improvedEl = document.getElementById('td-improved');
+  improvedCard.style.display = 'block';
+  improvedEl.value = '';
+
+  let collected = '';
+  try {
+    const body = { prompt, provider };
+    if (currentTask) {
+      body.task_context = { title: currentTask.title, notes: currentTask.notes || '' };
+    }
+    const res = await fetch(API + '/api/prompt/improve', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          collected += line.slice(6) + '\n';
+          improvedEl.value = collected.trimEnd();
+        }
+      }
+    }
+    improvedEl.value = collected.trim();
+    document.getElementById('td-btn-reset').style.display = 'inline-flex';
+    showToast('Improve complete');
+  } catch(e) {
+    showToast('Improve failed: ' + e.message);
+    if (!collected) improvedCard.style.display = 'none';
+  } finally {
+    btnImprove.disabled = false;
+    btnImprove.textContent = '✨ Improve';
+  }
+}
+
+function detailReset() {
+  document.getElementById('td-improved-card').style.display = 'none';
+  document.getElementById('td-improved').value = '';
+  document.getElementById('td-btn-reset').style.display = 'none';
+}
+
+function detailCopy() {
+  navigator.clipboard.writeText(document.getElementById('td-improved').value);
+  showToast('Copied!');
+}
+
+async function detailSaveToTask() {
+  if (!currentTask) return;
+  const promptUsed = document.getElementById('td-prompt').value.trim();
+  const promptResult = document.getElementById('td-improved').value.trim();
+  try {
+    await apiFetch('/api/tasks/' + currentTask.id, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ prompt_used: promptUsed, prompt_result: promptResult })
+    });
+    currentTask = { ...currentTask, prompt_used: promptUsed, prompt_result: promptResult };
+    showToast('Saved to task');
+  } catch(e) {
+    showToast('Save failed: ' + e.message);
+  }
+}
+
+async function detailRunPrompt() {
+  const improved = document.getElementById('td-improved').value.trim();
+  const raw = document.getElementById('td-prompt').value.trim();
+  const prompt = improved || raw;
+  if (!prompt) { showToast('No prompt to run'); return; }
+  const provider = document.getElementById('td-provider').value;
+
+  const outCard = document.getElementById('td-run-output-card');
+  const sseEl = document.getElementById('td-run-sse');
+  outCard.style.display = 'block';
+  sseEl.innerHTML = '<div style="color:var(--muted);font-size:11px;">Running…</div>';
+
+  const body = { prompt, provider };
+  try {
+    const res = await fetch(API + '/api/prompt/run', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    sseEl.innerHTML = '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const div = document.createElement('div');
+          div.className = 'sse-line';
+          div.textContent = line.slice(6);
+          sseEl.appendChild(div);
+          sseEl.scrollTop = sseEl.scrollHeight;
+        }
+      }
+    }
+    showToast('Run complete');
+  } catch(e) {
+    sseEl.innerHTML += '<div style="color:var(--red);">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function detailMarkDone() {
+  if (!currentTask) return;
+  try {
+    await apiFetch('/api/tasks/' + currentTask.id + '/status', {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ status: 'done' })
+    });
+    showToast('Task marked done!');
+    currentTask = null;
+    goBackToTasks();
+  } catch(e) {
+    showToast('Failed: ' + e.message);
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

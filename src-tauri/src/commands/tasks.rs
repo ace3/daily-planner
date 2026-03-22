@@ -175,6 +175,19 @@ pub fn update_task_status(
 }
 
 #[tauri::command]
+pub fn move_task_to_session(
+    task_id: String,
+    target_session: i64,
+    db: State<'_, DbConnection>,
+) -> Result<(), String> {
+    if target_session != 1 && target_session != 2 {
+        return Err(format!("Invalid session: {}. Must be 1 or 2.", target_session));
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::move_task_to_session(&conn, &task_id, target_session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn delete_task(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::delete_task(&conn, &id).map_err(|e| e.to_string())

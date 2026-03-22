@@ -225,6 +225,33 @@ async fn patch_task_status(
 }
 
 // ---------------------------------------------------------------------------
+// Route: GET /api/tasks/:id
+// ---------------------------------------------------------------------------
+
+async fn get_task(
+    State(s): State<ServerState>,
+    Path(id): Path<String>,
+) -> Result<Json<queries::Task>, ApiError> {
+    let conn = s.db.lock().map_err(internal)?;
+    let task = queries::get_task_by_id(&*conn, &id)
+        .map_err(internal)?
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Task not found".into()))?;
+    Ok(Json(task))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/prompt/templates
+// ---------------------------------------------------------------------------
+
+async fn get_prompt_templates(
+    State(s): State<ServerState>,
+) -> Result<Json<Vec<queries::PromptTemplateItem>>, ApiError> {
+    let conn = s.db.lock().map_err(internal)?;
+    let templates = queries::list_prompt_templates(&*conn).map_err(internal)?;
+    Ok(Json(templates))
+}
+
+// ---------------------------------------------------------------------------
 // Route: PATCH /api/tasks/:id
 // ---------------------------------------------------------------------------
 
@@ -240,6 +267,9 @@ struct PatchTaskBody {
     clear_project: Option<bool>,
     // convenience: if present, just update status
     status: Option<String>,
+    // prompt data (from task detail page)
+    prompt_used: Option<String>,
+    prompt_result: Option<String>,
 }
 
 async fn patch_task(
@@ -252,6 +282,14 @@ async fn patch_task(
     let conn = s.db.lock().map_err(internal)?;
     if let Some(status) = &body.status {
         queries::update_task_status(&*conn, &id, status).map_err(internal)?;
+    } else if body.prompt_used.is_some() || body.prompt_result.is_some() {
+        queries::save_prompt_result(
+            &*conn,
+            &id,
+            body.prompt_used.as_deref().unwrap_or(""),
+            body.prompt_result.as_deref().unwrap_or(""),
+        )
+        .map_err(internal)?;
     } else {
         queries::update_task(
             &*conn,
@@ -705,13 +743,14 @@ pub async fn start(
         .route("/", get(serve_ui))
         .route("/api/health", get(health))
         .route("/api/tasks", get(get_tasks).post(create_task))
-        .route("/api/tasks/:id", patch(patch_task).delete(delete_task))
+        .route("/api/tasks/:id", get(get_task).patch(patch_task).delete(delete_task))
         .route("/api/tasks/:id/status", patch(patch_task_status))
         .route("/api/settings", get(get_settings))
         .route("/api/session", get(get_session))
         .route("/api/reports", get(get_reports))
         .route("/api/prompt/improve", post(prompt_improve))
         .route("/api/prompt/run", post(prompt_run))
+        .route("/api/prompt/templates", get(get_prompt_templates))
         .layer(cors)
         .with_state(state);
 

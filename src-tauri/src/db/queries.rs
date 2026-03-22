@@ -140,6 +140,47 @@ pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
+pub fn get_task_by_id(conn: &Connection, id: &str) -> Result<Option<Task>> {
+    let result = conn.query_row(
+        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
+                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
+                position, created_at, updated_at, completed_at, project_id,
+                worktree_path, worktree_branch, worktree_status
+         FROM tasks WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(Task {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                session_slot: row.get(2)?,
+                title: row.get(3)?,
+                notes: row.get(4)?,
+                task_type: row.get(5)?,
+                priority: row.get(6)?,
+                status: row.get(7)?,
+                estimated_min: row.get(8)?,
+                actual_min: row.get(9)?,
+                prompt_used: row.get(10)?,
+                prompt_result: row.get(11)?,
+                carried_from: row.get(12)?,
+                position: row.get(13)?,
+                created_at: row.get(14)?,
+                updated_at: row.get(15)?,
+                completed_at: row.get(16)?,
+                project_id: row.get(17)?,
+                worktree_path: row.get(18)?,
+                worktree_branch: row.get(19)?,
+                worktree_status: row.get(20)?,
+            })
+        },
+    );
+    match result {
+        Ok(task) => Ok(Some(task)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn create_task(
     conn: &Connection,
     date: &str,
@@ -176,6 +217,14 @@ pub fn update_task_status(conn: &Connection, id: &str, status: &str) -> Result<(
     conn.execute(
         "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = datetime('now') WHERE id = ?3",
         params![status, completed_at, id],
+    )?;
+    Ok(())
+}
+
+pub fn move_task_to_session(conn: &Connection, id: &str, target_session: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET session_slot = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![target_session, id],
     )?;
     Ok(())
 }
@@ -1013,5 +1062,25 @@ mod tests {
             Some("task/worktree-task-abc")
         );
         assert_eq!(task.worktree_status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn test_move_task_to_session() {
+        let conn = setup_test_db();
+        let id = create_task(&conn, "2026-03-23", 1, "Move Me", "code", 2, None, None).unwrap();
+        move_task_to_session(&conn, &id, 2).unwrap();
+        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
+        assert_eq!(task.session_slot, 2);
+        // move back to session 1
+        move_task_to_session(&conn, &id, 1).unwrap();
+        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
+        assert_eq!(task.session_slot, 1);
+    }
+
+    #[test]
+    fn test_get_task_by_id_not_found() {
+        let conn = setup_test_db();
+        let result = get_task_by_id(&conn, "nonexistent-id").unwrap();
+        assert!(result.is_none());
     }
 }

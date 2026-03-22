@@ -27,6 +27,8 @@ export const carryTaskForward = (id: string, tomorrowDate: string, sessionSlot: 
 export const reorderTasks = (taskIds: string[]) => invoke<void>('reorder_tasks', { taskIds });
 export const savePromptResult = (id: string, promptUsed: string, promptResult: string) =>
   invoke<void>('save_prompt_result', { id, promptUsed, promptResult });
+export const moveTaskToSession = (taskId: string, targetSession: 1 | 2) =>
+  invoke<void>('move_task_to_session', { taskId, targetSession });
 export const runTaskAsWorktree = (taskId: string) =>
   invoke<RunTaskWorktreeResult>('run_task_as_worktree', { taskId });
 export const cleanupTaskWorktree = (taskId: string) =>
