@@ -298,7 +298,7 @@ export const SettingsPage: React.FC = () => {
               {
                 key: 'default_model_codex' as const,
                 label: 'Codex',
-                options: ['codex-mini-latest', 'o4-mini', 'gpt-4.1', 'gpt-4o'],
+                options: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.3'],
               },
               {
                 key: 'default_model_claude' as const,
@@ -308,19 +308,35 @@ export const SettingsPage: React.FC = () => {
               {
                 key: 'default_model_opencode' as const,
                 label: 'OpenCode',
-                options: ['gpt-4.1', 'gpt-4o', 'o4-mini', 'claude-sonnet-4-6'],
+                options: null,
               },
               {
                 key: 'default_model_copilot' as const,
                 label: 'Copilot',
-                options: ['gpt-4o', 'gpt-4.1', 'claude-sonnet-4-6', 'o4-mini'],
+                options: [
+                  'claude-sonnet-4-5',
+                  'claude-haiku-4-5',
+                  'claude-opus-4-5',
+                  'claude-sonnet-4',
+                  'gemini-3-pro',
+                  'gpt-5.3-codex',
+                  'gpt-5.2-codex',
+                  'gpt-5.2',
+                  'gpt-5.1-codex-max',
+                  'gpt-5.1-codex',
+                  'gpt-5.1',
+                  'gpt-5.4-mini',
+                  'gpt-5.1-codex-mini',
+                  'gpt-5-mini',
+                  'gpt-4.1',
+                ],
               },
             ].map(({ key, label, options }) => (
               <div key={key} className="space-y-1.5">
                 <label className={labelClass}>{label}</label>
                 <div className="flex gap-2">
                   <input
-                    list={`${key}-models`}
+                    {...(options ? { list: `${key}-models` } : {})}
                     value={draft[key]}
                     onChange={(e) => setDraft((prev) => ({ ...prev, [key]: e.target.value }))}
                     onBlur={(e) => void handleSaveDefaultModel(key, e.target.value)}
@@ -334,14 +350,16 @@ export const SettingsPage: React.FC = () => {
                   >
                     Save
                   </Button>
-                  <datalist id={`${key}-models`}>
-                    {options.map((model) => (
-                      <option key={model} value={model} />
-                    ))}
-                  </datalist>
+                  {options && (
+                    <datalist id={`${key}-models`}>
+                      {options.map((model) => (
+                        <option key={model} value={model} />
+                      ))}
+                    </datalist>
+                  )}
                 </div>
                 <p className="text-xs text-gray-400 dark:text-[#484F58]">
-                  Choose from suggestions or type a custom model.
+                  {options ? 'Choose from suggestions or type a custom model.' : 'Type a custom model name.'}
                 </p>
               </div>
             ))}

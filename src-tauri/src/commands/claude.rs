@@ -1,10 +1,17 @@
 use crate::db::{queries, DbConnection};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 use tauri::State;
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+// ---------------------------------------------------------------------------
+// JobRegistry — maps job_id → child PID for cancellation
+// ---------------------------------------------------------------------------
+pub struct JobRegistry(pub Arc<Mutex<HashMap<String, u32>>>);
 
 fn strip_ansi(s: &str) -> String {
     let mut result = String::new();
@@ -28,12 +35,15 @@ fn strip_ansi(s: &str) -> String {
 enum AiProvider {
     Claude,
     OpenCode,
+    Codex,
+    Copilot,
 }
 
 fn default_model_setting_key(raw_provider: Option<&str>) -> &'static str {
     match raw_provider.unwrap_or("claude").to_ascii_lowercase().as_str() {
         "codex" => "default_model_codex",
         "opencode" => "default_model_opencode",
+        "copilot" | "copilot_cli" => "default_model_copilot",
         _ => "default_model_claude",
     }
 }
@@ -42,14 +52,17 @@ fn hardcoded_default_model(provider: AiProvider) -> &'static str {
     match provider {
         AiProvider::Claude => "claude-sonnet-4-6",
         AiProvider::OpenCode => "gpt-4.1",
+        AiProvider::Codex => "gpt-5.3-codex",
+        AiProvider::Copilot => "claude-sonnet-4-5",
     }
 }
 
 impl AiProvider {
     fn from_input(raw: Option<&str>) -> Self {
         match raw.unwrap_or("claude").to_ascii_lowercase().as_str() {
-            // Backward-compat for older frontend value.
-            "codex" | "opencode" => Self::OpenCode,
+            "opencode" => Self::OpenCode,
+            "codex" => Self::Codex,
+            "copilot" | "copilot_cli" => Self::Copilot,
             _ => Self::Claude,
         }
     }
@@ -58,6 +71,8 @@ impl AiProvider {
         match self {
             Self::Claude => "claude",
             Self::OpenCode => "opencode",
+            Self::Codex => "codex",
+            Self::Copilot => "copilot",
         }
     }
 }
@@ -112,6 +127,9 @@ pub async fn improve_prompt_with_claude(
         cmd.arg(arg);
     }
     cmd.env("NO_COLOR", "1");
+    if ai_provider == AiProvider::Codex {
+        cmd.stdin(Stdio::null());
+    }
 
     if let Some(path) = &project_path {
         cmd.current_dir(path);
@@ -185,10 +203,28 @@ fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&str>) -> Ve
             args.push(prompt.to_string());
             args
         }
-        AiProvider::Claude => {
-            let mut args = Vec::new();
+        AiProvider::Codex => {
+            let mut args = vec!["--no-interactive".to_string()];
             if let Some(model) = trimmed_model {
-                args.push("-m".to_string());
+                args.push("--model".to_string());
+                args.push(model.to_string());
+            }
+            args.push(prompt.to_string());
+            args
+        }
+        AiProvider::Copilot => {
+            let mut args = vec!["suggest".to_string()];
+            if let Some(model) = trimmed_model {
+                args.push("--model".to_string());
+                args.push(model.to_string());
+            }
+            args.push(prompt.to_string());
+            args
+        }
+        AiProvider::Claude => {
+            let mut args = vec!["--dangerously-skip-permissions".to_string()];
+            if let Some(model) = trimmed_model {
+                args.push("--model".to_string());
                 args.push(model.to_string());
             }
             args.push("-p".to_string());
@@ -208,6 +244,7 @@ pub async fn run_prompt(
     job_id: String,
     app_handle: tauri::AppHandle,
     db: State<'_, DbConnection>,
+    job_registry: State<'_, JobRegistry>,
 ) -> Result<(), String> {
     let ai_provider = AiProvider::from_input(provider.as_deref());
     let cli = ai_provider.cli_binary().to_string();
@@ -239,10 +276,15 @@ pub async fn run_prompt(
     cmd.env("NO_COLOR", "1");
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    if ai_provider == AiProvider::Codex {
+        cmd.stdin(Stdio::null());
+    }
 
     if let Some(path) = &project_path {
         cmd.current_dir(path);
     }
+
+    let registry = Arc::clone(&job_registry.0);
 
     tokio::spawn(async move {
         let mut child = match cmd.spawn() {
@@ -260,6 +302,11 @@ pub async fn run_prompt(
                 return;
             }
         };
+
+        // Register PID for cancellation
+        if let Some(pid) = child.id() {
+            registry.lock().unwrap().insert(job_id.clone(), pid);
+        }
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -308,6 +355,9 @@ pub async fn run_prompt(
 
         let _ = tokio::join!(stdout_task, stderr_task);
 
+        // Deregister PID before waiting
+        registry.lock().unwrap().remove(&job_id);
+
         let (success, exit_code) = match child.wait().await {
             Ok(status) => (status.success(), status.code().unwrap_or(-1)),
             Err(_) => (false, -1),
@@ -323,6 +373,25 @@ pub async fn run_prompt(
         );
     });
 
+    Ok(())
+}
+
+/// Cancel a running prompt job by sending SIGTERM to its child process.
+#[tauri::command]
+pub async fn cancel_prompt_run(
+    job_id: String,
+    job_registry: State<'_, JobRegistry>,
+) -> Result<(), String> {
+    let pid = {
+        let reg = job_registry.0.lock().map_err(|e| e.to_string())?;
+        reg.get(&job_id).copied()
+    };
+    if let Some(pid) = pid {
+        let _ = tokio::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status()
+            .await;
+    }
     Ok(())
 }
 
@@ -366,7 +435,7 @@ mod tests {
     #[test]
     fn test_build_run_args_claude() {
         let args = build_run_args(AiProvider::Claude, "hello world", None);
-        assert_eq!(args, vec!["-p", "hello world"]);
+        assert_eq!(args, vec!["--dangerously-skip-permissions", "-p", "hello world"]);
     }
 
     #[test]
@@ -376,19 +445,19 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_parsing_maps_legacy_codex_to_opencode() {
-        assert_eq!(AiProvider::from_input(Some("codex")), AiProvider::OpenCode);
-        assert_eq!(
-            AiProvider::from_input(Some("opencode")),
-            AiProvider::OpenCode
-        );
+    fn test_provider_parsing() {
+        assert_eq!(AiProvider::from_input(Some("codex")), AiProvider::Codex);
+        assert_eq!(AiProvider::from_input(Some("opencode")), AiProvider::OpenCode);
+        assert_eq!(AiProvider::from_input(Some("claude")), AiProvider::Claude);
+        assert_eq!(AiProvider::from_input(Some("copilot")), AiProvider::Copilot);
     }
 
     #[test]
     fn test_build_run_args_preserves_prompt_with_special_chars() {
         let prompt = "fix: handle edge case with 'quotes' and \"double quotes\"";
         let args = build_run_args(AiProvider::Claude, prompt, None);
-        assert_eq!(args[1], prompt);
+        // args: ["--dangerously-skip-permissions", "-p", prompt]
+        assert_eq!(args.last().unwrap(), prompt);
     }
 
     #[test]
@@ -402,7 +471,26 @@ mod tests {
     #[test]
     fn test_build_run_args_with_model_for_claude() {
         let args = build_run_args(AiProvider::Claude, "prompt", Some("claude-opus-4-6"));
-        assert_eq!(args, vec!["-m", "claude-opus-4-6", "-p", "prompt"]);
+        assert_eq!(
+            args,
+            vec!["--dangerously-skip-permissions", "--model", "claude-opus-4-6", "-p", "prompt"]
+        );
+    }
+
+    #[test]
+    fn test_build_run_args_codex_includes_no_interactive() {
+        let args = build_run_args(AiProvider::Codex, "do something", None);
+        assert_eq!(args[0], "--no-interactive");
+        assert_eq!(args.last().unwrap(), "do something");
+    }
+
+    #[test]
+    fn test_build_run_args_codex_with_model() {
+        let args = build_run_args(AiProvider::Codex, "do something", Some("gpt-5.3-codex"));
+        assert_eq!(
+            args,
+            vec!["--no-interactive", "--model", "gpt-5.3-codex", "do something"]
+        );
     }
 
     #[test]

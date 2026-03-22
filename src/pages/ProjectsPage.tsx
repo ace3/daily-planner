@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare } from 'lucide-react';
+import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch } from 'lucide-react';
+import { GitPanel } from '../components/projects/GitPanel';
 import { useProjectStore } from '../stores/projectStore';
 import { openFolderDialog } from '../lib/tauri';
 import { Button } from '../components/ui/Button';
@@ -19,6 +20,7 @@ export const ProjectsPage: React.FC = () => {
   const [adding, setAdding] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [promptSaving, setPromptSaving] = useState<string | null>(null);
+  const [expandedGit, setExpandedGit] = useState<string | null>(null);
   const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
 
   useEffect(() => {
@@ -141,13 +143,20 @@ export const ProjectsPage: React.FC = () => {
         {projects.map((project, i) => (
           <div key={project.id}>
             <div
-              className={`flex items-center gap-3 px-4 py-3 ${i < projects.length - 1 || expandedPrompt === project.id ? 'border-b border-gray-100 dark:border-[#21262D]' : ''}`}
+              className={`flex items-center gap-3 px-4 py-3 ${i < projects.length - 1 || expandedGit === project.id || expandedPrompt === project.id ? 'border-b border-gray-100 dark:border-[#21262D]' : ''}`}
             >
               <FolderOpen size={15} className="text-blue-400 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-gray-900 dark:text-[#E6EDF3] truncate">{project.name}</div>
                 <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
               </div>
+              <button
+                onClick={() => setExpandedGit((prev) => (prev === project.id ? null : project.id))}
+                className="text-gray-400 hover:text-blue-400 dark:text-[#484F58] dark:hover:text-blue-400 transition-colors p-1 cursor-pointer"
+                title="Git panel"
+              >
+                <GitBranch size={14} />
+              </button>
               <button
                 onClick={() =>
                   setDraft((prev) => ({
@@ -168,6 +177,11 @@ export const ProjectsPage: React.FC = () => {
                 <Trash2 size={14} />
               </button>
             </div>
+
+            {/* Git panel */}
+            {expandedGit === project.id && (
+              <GitPanel projectPath={project.path} projectId={project.id} />
+            )}
 
             {/* Project prompt editor */}
             {expandedPrompt === project.id && (

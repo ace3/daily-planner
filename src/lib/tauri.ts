@@ -88,6 +88,26 @@ export const openFolderDialog = (): Promise<string | null> =>
 export const getGlobalPrompt = () => invoke<string | null>('get_global_prompt', {});
 export const setGlobalPrompt = (prompt: string) => invoke<void>('set_global_prompt', { prompt });
 
+// Git
+export interface GitFileStatus {
+  status: string;
+  path: string;
+}
+export interface GitStatusResult {
+  branch: string;
+  files: GitFileStatus[];
+}
+export const gitStatus = (projectPath: string) =>
+  invoke<GitStatusResult>('git_status', { projectPath });
+export const gitDiff = (projectPath: string) =>
+  invoke<string>('git_diff', { projectPath });
+export const gitStageAll = (projectPath: string) =>
+  invoke<void>('git_stage_all', { projectPath });
+export const gitCommit = (projectPath: string, message: string) =>
+  invoke<void>('git_commit', { projectPath, message });
+export const gitPush = (projectPath: string) =>
+  invoke<string>('git_push', { projectPath });
+
 // Reports
 export const generateReport = (date: string) => invoke<DailyReport>('generate_report', { date });
 export const getReport = (date: string) => invoke<DailyReport | null>('get_report', { date });

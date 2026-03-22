@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Loader2, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Loader2, CheckCircle, XCircle, Clock, X } from 'lucide-react';
 import { usePromptQueueStore, PromptJob } from '../../stores/promptQueueStore';
 import { Button } from '../ui/Button';
 
@@ -67,7 +67,7 @@ const StatusPill: React.FC<{ status: PromptJob['status'] }> = ({ status }) => {
 // Single job card
 // ---------------------------------------------------------------------------
 
-const JobCard: React.FC<{ job: PromptJob }> = ({ job }) => {
+const JobCard: React.FC<{ job: PromptJob; onCancel: (id: string) => void }> = ({ job, onCancel }) => {
   const [expanded, setExpanded] = useState(job.status === 'running');
 
   // Auto-expand when job starts running
@@ -76,6 +76,7 @@ const JobCard: React.FC<{ job: PromptJob }> = ({ job }) => {
   }, [job.status]);
 
   const hasLogs = job.status === 'running' || job.status === 'done' || job.status === 'error';
+  const canCancel = job.status === 'pending' || job.status === 'running';
   const promptPreview = job.prompt.length > 120 ? job.prompt.slice(0, 120) + '…' : job.prompt;
 
   return (
@@ -88,6 +89,15 @@ const JobCard: React.FC<{ job: PromptJob }> = ({ job }) => {
         <p className="flex-1 text-xs text-[#E6EDF3] leading-relaxed break-words">{promptPreview}</p>
         <div className="shrink-0 flex items-center gap-1.5">
           <StatusPill status={job.status} />
+          {canCancel && (
+            <button
+              onClick={() => onCancel(job.id)}
+              className="text-[#484F58] hover:text-red-400 cursor-pointer transition-colors"
+              title="Cancel"
+            >
+              <X size={13} />
+            </button>
+          )}
           {hasLogs && (
             <button
               onClick={() => setExpanded((v) => !v)}
@@ -119,6 +129,7 @@ const JobCard: React.FC<{ job: PromptJob }> = ({ job }) => {
 export const PromptQueuePanel: React.FC = () => {
   const queue = usePromptQueueStore((s) => s.queue);
   const clearDone = usePromptQueueStore((s) => s.clearDone);
+  const cancelJob = usePromptQueueStore((s) => s.cancelJob);
 
   if (queue.length === 0) return null;
 
@@ -149,7 +160,7 @@ export const PromptQueuePanel: React.FC = () => {
       {/* Job list */}
       <div className="space-y-2">
         {queue.map((job) => (
-          <JobCard key={job.id} job={job} />
+          <JobCard key={job.id} job={job} onCancel={cancelJob} />
         ))}
       </div>
     </div>

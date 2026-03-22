@@ -52,6 +52,9 @@ pub fn run() {
             };
 
             app.manage(db);
+            app.manage(commands::claude::JobRegistry(std::sync::Arc::new(
+                std::sync::Mutex::new(std::collections::HashMap::new()),
+            )));
 
             // Setup tray
             tray::setup_tray(app.handle())?;
@@ -86,6 +89,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::git::git_status,
+            commands::git::git_diff,
+            commands::git::git_stage_all,
+            commands::git::git_commit,
+            commands::git::git_push,
             commands::ai_providers::detect_ai_providers,
             commands::tasks::get_tasks,
             commands::tasks::create_task,
@@ -108,6 +116,7 @@ pub fn run() {
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
             commands::claude::run_prompt,
+            commands::claude::cancel_prompt_run,
             commands::claude::is_git_worktree,
             commands::claude::check_cli_availability,
             commands::copilot::invoke_copilot_cli,

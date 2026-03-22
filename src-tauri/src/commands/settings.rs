@@ -114,7 +114,7 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
         default_model_codex: map
             .get("default_model_codex")
             .cloned()
-            .unwrap_or_else(|| "codex-mini-latest".to_string()),
+            .unwrap_or_else(|| "gpt-5.3-codex".to_string()),
         default_model_claude: map
             .get("default_model_claude")
             .cloned()

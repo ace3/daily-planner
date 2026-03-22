@@ -35,6 +35,7 @@ interface PromptQueueState {
   startJob: (id: string) => void;
   appendLog: (id: string, line: string) => void;
   finishJob: (id: string, success: boolean) => void;
+  cancelJob: (id: string) => Promise<void>;
   clearDone: () => void;
 }
 
@@ -164,6 +165,18 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       if (nextNonWorktree) {
         get().startJob(nextNonWorktree.id);
       }
+    }
+  },
+
+  cancelJob: async (id) => {
+    const job = get().queue.find((j) => j.id === id);
+    if (!job) return;
+    if (job.status === 'pending') {
+      // Remove from queue before it ever starts
+      set((state) => ({ queue: state.queue.filter((j) => j.id !== id) }));
+    } else if (job.status === 'running') {
+      // Kill the backend process; prompt_job_done event will mark it error/done
+      await invoke<void>('cancel_prompt_run', { jobId: id }).catch(() => {});
     }
   },
 

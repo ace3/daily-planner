@@ -77,22 +77,13 @@ pub async fn invoke_copilot_cli_internal(
     let mode = validate_mode(mode.as_deref())?;
     let project_path = project_path.as_deref();
 
-    let gh_version = run_command("gh", &["--version"], project_path).await?;
-    ensure_success(&gh_version, "GitHub CLI check")?;
-
-    let copilot_version = run_command("gh", &["copilot", "--version"], project_path).await?;
+    let copilot_version = run_command("copilot", &["--version"], project_path).await?;
     ensure_success(
         &copilot_version,
-        "GitHub Copilot CLI check (install/upgrade with: gh extension install github/gh-copilot)",
+        "Copilot CLI check (make sure 'copilot' is installed and in PATH)",
     )?;
 
-    let auth = run_command("gh", &["auth", "status"], project_path).await?;
-    ensure_success(
-        &auth,
-        "GitHub CLI authentication check (run: gh auth login)",
-    )?;
-
-    let mut copilot_args = vec!["copilot".to_string(), mode.to_string()];
+    let mut copilot_args = vec![mode.to_string()];
     if let Some(m) = model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         copilot_args.push("--model".to_string());
         copilot_args.push(m.to_string());
@@ -100,11 +91,11 @@ pub async fn invoke_copilot_cli_internal(
     copilot_args.push(input.clone());
     let copilot_args_refs: Vec<&str> = copilot_args.iter().map(String::as_str).collect();
 
-    let output = run_command("gh", &copilot_args_refs, project_path).await?;
+    let output = run_command("copilot", &copilot_args_refs, project_path).await?;
     if output.status.success() {
         let body = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if body.is_empty() {
-            Err("GitHub Copilot returned an empty response.".to_string())
+            Err("Copilot returned an empty response.".to_string())
         } else {
             Ok(body)
         }
@@ -113,12 +104,12 @@ pub async fn invoke_copilot_cli_internal(
         let details = output_to_text(&output);
         if details.is_empty() {
             Err(format!(
-                "gh copilot {} failed with exit code {}.",
+                "copilot {} failed with exit code {}.",
                 mode, code
             ))
         } else {
             Err(format!(
-                "gh copilot {} failed with exit code {}:\n{}",
+                "copilot {} failed with exit code {}:\n{}",
                 mode, code, details
             ))
         }
@@ -139,7 +130,7 @@ pub async fn invoke_copilot_cli(
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "gpt-4.1".to_string())
+            .unwrap_or_else(|| "claude-sonnet-4-5".to_string())
     };
     let selected_model = model
         .as_deref()
@@ -153,7 +144,7 @@ pub async fn invoke_copilot_cli(
 
 #[tauri::command]
 pub async fn check_copilot_cli_availability() -> Result<CopilotCliStatus, String> {
-    let output = run_command("gh", &["copilot", "--version"], None).await;
+    let output = run_command("copilot", &["--version"], None).await;
     Ok(CopilotCliStatus {
         available: output.map(|o| o.status.success()).unwrap_or(false),
     })

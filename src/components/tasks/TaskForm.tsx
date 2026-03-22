@@ -15,7 +15,7 @@ interface TaskFormProps {
 
 export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit, compact = true }) => {
   const draftKey = `task-form:${date}:${sessionSlot}:${compact ? 'compact' : 'full'}`;
-  const [draft, setDraft, clearDraft] = useSessionDraftState(draftKey, { title: '', projectId: '' });
+  const [draft, setDraft] = useSessionDraftState(draftKey, { title: '', projectId: '' });
   const [submitting, setSubmitting] = useState(false);
   const { projects } = useProjectStore();
 
@@ -30,7 +30,7 @@ export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit,
         title: draft.title.trim(),
         project_id: draft.projectId || undefined,
       });
-      clearDraft();
+      setDraft((prev) => ({ ...prev, title: '' }));
     } finally {
       setSubmitting(false);
     }

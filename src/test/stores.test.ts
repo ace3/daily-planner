@@ -42,10 +42,10 @@ describe('settingsStore defaults', () => {
   it('has per-provider default models', async () => {
     const { useSettingsStore } = await import('../stores/settingsStore');
     const store = useSettingsStore.getState();
-    expect(store.settings?.default_model_codex).toBe('codex-mini-latest');
+    expect(store.settings?.default_model_codex).toBe('gpt-5.3-codex');
     expect(store.settings?.default_model_claude).toBe('claude-sonnet-4-6');
     expect(store.settings?.default_model_opencode).toBe('gpt-4.1');
-    expect(store.settings?.default_model_copilot).toBe('gpt-4.1');
+    expect(store.settings?.default_model_copilot).toBe('claude-sonnet-4-5');
   });
 });
 
