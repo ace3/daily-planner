@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Wand2, RefreshCw, BookOpen, Copy, Check, FileText, Save, CheckCircle } from 'lucide-react';
+import { Wand2, RefreshCw, BookOpen, Copy, Check, FileText, Save, CheckCircle, Play } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Textarea } from '../ui/Input';
 import { PromptTemplates } from './PromptTemplates';
 import { Modal } from '../ui/Modal';
+import { usePromptQueue } from '../../hooks/usePromptQueue';
 import type { PromptTemplate } from '../../types/task';
 import type { Project } from '../../types/project';
 
@@ -28,6 +29,8 @@ interface PromptBuilderProps {
   // Full assembled meta-prompt sent to the CLI — shown as read-only preview
   builtPrompt?: string;
   onMarkDone?: () => Promise<void>;
+  projectPath?: string;
+  provider?: string;
 }
 
 export type { TaskContext };
@@ -45,12 +48,18 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   onReset,
   builtPrompt,
   onMarkDone,
+  projectPath,
+  provider,
 }) => {
   const [showTemplates, setShowTemplates] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [queued, setQueued] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
   const [marked, setMarked] = useState(false);
+  const { enqueue, pendingCount } = usePromptQueue();
+
+  const resolvedProjectPath = projectPath ?? taskContext?.project?.path;
 
   const handleTemplateSelect = (template: PromptTemplate) => {
     let filled = template.template;
@@ -64,6 +73,13 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
     }
     onPromptChange(filled);
     setShowTemplates(false);
+  };
+
+  const handleRun = () => {
+    if (!improved) return;
+    enqueue({ prompt: improved, projectPath: resolvedProjectPath, provider });
+    setQueued(true);
+    setTimeout(() => setQueued(false), 2000);
   };
 
   const handleSave = async () => {
@@ -209,7 +225,7 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
             rows={8}
             className="font-mono text-xs text-[#E6EDF3]"
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button
               variant="ghost"
               size="sm"
@@ -230,6 +246,23 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
                 {saved ? 'Saved!' : 'Save to Task'}
               </Button>
             )}
+            <div className="flex-1 flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={queued ? <Check size={13} className="text-emerald-400" /> : <Play size={13} className="text-emerald-400" />}
+                onClick={handleRun}
+                className={`flex-1 ${queued ? 'text-emerald-400' : 'text-emerald-400 hover:text-emerald-300'}`}
+              >
+                {queued ? 'Queued!' : 'Run'}
+              </Button>
+              {pendingCount > 0 && (
+                <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium
+                                 border border-amber-500/30 bg-amber-500/10 text-amber-400 whitespace-nowrap">
+                  Queue: {pendingCount} pending
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -35,6 +35,9 @@ export const setSetting = (key: string, value: string) => invoke<void>('set_sett
 export const improvePromptWithClaude = (prompt: string, projectPath?: string, provider?: string, projectId?: string) =>
   invoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId });
 
+export const runPrompt = (prompt: string, projectPath?: string, provider?: string, jobId?: string) =>
+  invoke<void>('run_prompt', { prompt, projectPath, provider, jobId });
+
 export const checkCliAvailability = () =>
   invoke<{ claude_available: boolean; codex_available: boolean }>('check_cli_availability', {});
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
+import { PromptQueuePanel } from '../components/claude/PromptQueuePanel';
 import type { TaskContext } from '../components/claude/PromptBuilder';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -177,7 +178,7 @@ export const PromptPage: React.FC = () => {
   const activeTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
 
   return (
-    <div className="flex-1 overflow-hidden flex flex-col p-4 gap-4">
+    <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-4">
       <div className="flex items-center gap-2">
         <MessageSquare size={16} className="text-gray-500 dark:text-[#8B949E]" />
         <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Prompt Builder</h1>
@@ -242,9 +243,16 @@ export const PromptPage: React.FC = () => {
             onReset={handleReset}
             builtPrompt={builtPrompt}
             onMarkDone={selectedTask ? handleMarkDone : undefined}
+            projectPath={selectedTask?.project_id
+              ? projects.find((p) => p.id === selectedTask.project_id)?.path
+              : undefined}
+            provider={activeProvider}
           />
         </div>
       </div>
+
+      {/* Run queue — renders below the builder when jobs exist */}
+      <PromptQueuePanel />
     </div>
   );
 };

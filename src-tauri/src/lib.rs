@@ -101,6 +101,7 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
+            commands::claude::run_prompt,
             commands::claude::check_cli_availability,
             commands::reports::generate_report,
             commands::reports::get_report,
