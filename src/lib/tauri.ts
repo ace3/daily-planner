@@ -7,6 +7,10 @@ import type {
   PromptTemplate,
   RunTaskWorktreeResult,
   CleanupTaskWorktreeResult,
+  CreatePromptWorktreeResult,
+  WorktreeTestResult,
+  MergeWorktreeResult,
+  CleanupWorktreeResult,
 } from '../types/task';
 import type { AppSettings, AiProvider } from '../types/settings';
 import type { DailyReport } from '../types/report';
@@ -27,12 +31,6 @@ export const runTaskAsWorktree = (taskId: string) =>
   invoke<RunTaskWorktreeResult>('run_task_as_worktree', { taskId });
 export const cleanupTaskWorktree = (taskId: string) =>
   invoke<CleanupTaskWorktreeResult>('cleanup_task_worktree', { taskId });
-
-// Focus sessions
-export const startFocusSession = (taskId: string, date: string) =>
-  invoke<string>('start_focus_session', { taskId, date });
-export const endFocusSession = (sessionId: string, notes: string) =>
-  invoke<number>('end_focus_session', { sessionId, notes });
 
 // Templates
 export const getPromptTemplates = () => invoke<PromptTemplate[]>('get_prompt_templates', {});
@@ -107,6 +105,16 @@ export const gitCommit = (projectPath: string, message: string) =>
   invoke<void>('git_commit', { projectPath, message });
 export const gitPush = (projectPath: string) =>
   invoke<string>('git_push', { projectPath });
+
+// Prompt worktree lifecycle
+export const createPromptWorktree = (promptId: string, projectPath: string, baseBranch?: string) =>
+  invoke<CreatePromptWorktreeResult>('create_prompt_worktree', { promptId, projectPath, baseBranch });
+export const runTestsInWorktree = (worktreePath: string, jobId: string) =>
+  invoke<WorktreeTestResult>('run_tests_in_worktree', { worktreePath, jobId });
+export const mergeWorktreeBranch = (projectPath: string, branchName: string, targetBranch: string) =>
+  invoke<MergeWorktreeResult>('merge_worktree_branch', { projectPath, branchName, targetBranch });
+export const cleanupPromptWorktree = (projectPath: string, worktreePath: string, branchName: string) =>
+  invoke<CleanupWorktreeResult>('cleanup_prompt_worktree', { projectPath, worktreePath, branchName });
 
 // Reports
 export const generateReport = (date: string) => invoke<DailyReport>('generate_report', { date });

@@ -7,3 +7,4 @@ pub mod projects;
 pub mod reports;
 pub mod settings;
 pub mod tasks;
+pub mod worktree;

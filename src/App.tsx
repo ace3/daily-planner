@@ -3,8 +3,8 @@ import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { Dashboard } from './pages/Dashboard';
-import { FocusMode } from './pages/FocusMode';
 import { PromptPage } from './pages/PromptPage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -62,8 +62,8 @@ const AppInner: React.FC = () => {
         <TopBar />
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/focus" element={<FocusMode />} />
           <Route path="/prompt" element={<PromptPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
@@ -75,7 +75,7 @@ const AppInner: React.FC = () => {
           onClose={() => setShowMorningPlanning(false)}
           onGoToFocus={() => {
             setShowMorningPlanning(false);
-            navigate('/focus');
+            navigate('/prompt');
           }}
         />
       )}

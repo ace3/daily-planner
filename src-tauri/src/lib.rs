@@ -135,6 +135,10 @@ pub fn run() {
             commands::projects::set_project_prompt,
             commands::settings::get_global_prompt,
             commands::settings::set_global_prompt,
+            commands::worktree::create_prompt_worktree,
+            commands::worktree::run_tests_in_worktree,
+            commands::worktree::merge_worktree_branch,
+            commands::worktree::cleanup_prompt_worktree,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

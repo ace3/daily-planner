@@ -72,3 +72,26 @@ export interface CleanupTaskWorktreeResult {
   branch_deleted: boolean;
   warning: string | null;
 }
+
+export interface CreatePromptWorktreeResult {
+  worktree_path: string;
+  branch_name: string;
+}
+
+export interface WorktreeTestResult {
+  passed: boolean;
+  frontend_passed: number;
+  frontend_failed: number;
+  rust_passed: number;
+  rust_failed: number;
+}
+
+export interface MergeWorktreeResult {
+  success: boolean;
+  message: string;
+}
+
+export interface CleanupWorktreeResult {
+  success: boolean;
+  message: string;
+}

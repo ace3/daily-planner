@@ -1,11 +1,12 @@
-import React, { useEffect, useCallback, useMemo } from 'react';
-import { MessageSquare } from 'lucide-react';
+import React, { useEffect, useCallback, useMemo, useState } from 'react';
+import { MessageSquare, ListOrdered } from 'lucide-react';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
-import { PromptQueuePanel } from '../components/claude/PromptQueuePanel';
+import { PromptQueue } from '../components/PromptQueue';
 import type { TaskContext } from '../components/claude/PromptBuilder';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useProjectStore } from '../stores/projectStore';
+import { usePromptQueueStore } from '../stores/promptQueueStore';
 import { getLocalDate } from '../lib/time';
 import { improvePromptWithClaude, invokeCopilotCli } from '../lib/tauri';
 import type { Task } from '../types/task';
@@ -75,11 +76,15 @@ function buildTaskContext(task: Task, projects: Project[]): TaskContext {
 // Standalone (no task) uses key ''
 const STANDALONE_KEY = '';
 
+type Tab = 'builder' | 'queue';
+
 export const PromptPage: React.FC = () => {
   const { tasks, fetchTasks, savePromptResult, updateTaskStatus, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
   const { projects, fetchProjects } = useProjectStore();
+  const queueLength = usePromptQueueStore((s) => s.queue.length);
   const selectedAiProvider = settings?.ai_provider ?? 'claude';
+  const [activeTab, setActiveTab] = useState<Tab>('builder');
   const runProvider = selectedAiProvider === 'copilot_cli' ? 'claude' : selectedAiProvider;
   const [selectedTaskId, setSelectedTaskId] = useSessionDraftState<string | null>('prompt-page:selected-task-id', null);
   const today = getLocalDate(settings?.timezone_offset ?? 7);
@@ -185,11 +190,52 @@ export const PromptPage: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-4">
-      <div className="flex items-center gap-2">
-        <MessageSquare size={16} className="text-gray-500 dark:text-[#8B949E]" />
-        <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Prompt Builder</h1>
+      {/* Header + tabs */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <MessageSquare size={16} className="text-gray-500 dark:text-[#8B949E]" />
+          <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Prompt</h1>
+        </div>
+        <div className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-[#30363D] p-0.5 bg-gray-50 dark:bg-[#0F1117]">
+          <button
+            onClick={() => setActiveTab('builder')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer
+              ${activeTab === 'builder'
+                ? 'bg-white dark:bg-[#21262D] text-gray-900 dark:text-[#E6EDF3] shadow-sm'
+                : 'text-gray-500 dark:text-[#8B949E] hover:text-gray-700 dark:hover:text-[#E6EDF3]'
+              }`}
+          >
+            <MessageSquare size={12} />
+            Builder
+          </button>
+          <button
+            onClick={() => setActiveTab('queue')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer
+              ${activeTab === 'queue'
+                ? 'bg-white dark:bg-[#21262D] text-gray-900 dark:text-[#E6EDF3] shadow-sm'
+                : 'text-gray-500 dark:text-[#8B949E] hover:text-gray-700 dark:hover:text-[#E6EDF3]'
+              }`}
+          >
+            <ListOrdered size={12} />
+            Queue
+            {queueLength > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/20 text-blue-400">
+                {queueLength}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
+      {/* Queue tab */}
+      {activeTab === 'queue' && (
+        <div className="flex-1">
+          <PromptQueue />
+        </div>
+      )}
+
+      {/* Builder tab */}
+      {activeTab === 'builder' && (
       <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
         {/* Task context panel */}
         <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-3 overflow-y-auto">
@@ -256,9 +302,7 @@ export const PromptPage: React.FC = () => {
           />
         </div>
       </div>
-
-      {/* Run queue — renders below the builder when jobs exist */}
-      <PromptQueuePanel />
+      )}
     </div>
   );
 };
