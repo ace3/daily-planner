@@ -1,0 +1,14 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema/acl/capability.schema.json",
+  "identifier": "default",
+  "description": "Default capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "store:default",
+    "autostart:default",
+    "shell:default",
+    "window-state:default"
+  ]
+}
