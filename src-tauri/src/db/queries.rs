@@ -47,6 +47,13 @@ pub struct PromptTemplate {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PromptTemplateItem {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DailyReport {
     pub id: String,
     pub date: String,
@@ -285,23 +292,54 @@ pub fn get_active_focus_session(conn: &Connection, task_id: &str) -> Result<Opti
 
 // ---- TEMPLATE QUERIES ----
 
-pub fn get_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
+pub fn list_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplateItem>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, category, template, variables, is_builtin, use_count, created_at FROM prompt_templates ORDER BY is_builtin DESC, use_count DESC, name"
+        "SELECT id, name, template FROM prompt_templates ORDER BY is_builtin DESC, use_count DESC, name"
     )?;
     let templates = stmt.query_map([], |row| {
-        Ok(PromptTemplate {
+        Ok(PromptTemplateItem {
             id: row.get(0)?,
             name: row.get(1)?,
-            category: row.get(2)?,
-            template: row.get(3)?,
-            variables: row.get(4)?,
-            is_builtin: row.get::<_, i64>(5)? == 1,
-            use_count: row.get(6)?,
-            created_at: row.get(7)?,
+            content: row.get(2)?,
         })
     })?.collect::<Result<Vec<_>>>()?;
     Ok(templates)
+}
+
+pub fn create_prompt_template(conn: &Connection, name: &str, content: &str) -> Result<PromptTemplateItem> {
+    let id = uuid::Uuid::new_v4().to_string().replace("-", "");
+    conn.execute(
+        "INSERT INTO prompt_templates (id, name, template, category, variables, is_builtin, use_count)
+         VALUES (?1, ?2, ?3, 'general', '[]', 0, 0)",
+        params![id, name, content],
+    )?;
+
+    Ok(PromptTemplateItem {
+        id,
+        name: name.to_string(),
+        content: content.to_string(),
+    })
+}
+
+pub fn update_prompt_template(conn: &Connection, id: &str, name: &str, content: &str) -> Result<PromptTemplateItem> {
+    let rows = conn.execute(
+        "UPDATE prompt_templates SET name = ?1, template = ?2 WHERE id = ?3",
+        params![name, content, id],
+    )?;
+    if rows == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+
+    Ok(PromptTemplateItem {
+        id: id.to_string(),
+        name: name.to_string(),
+        content: content.to_string(),
+    })
+}
+
+pub fn delete_prompt_template(conn: &Connection, id: &str) -> Result<bool> {
+    let rows = conn.execute("DELETE FROM prompt_templates WHERE id = ?1", params![id])?;
+    Ok(rows > 0)
 }
 
 #[allow(dead_code)]

@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
-import { Wand2, RefreshCw, BookOpen, Copy, Check, FileText, Save, CheckCircle, Play } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Wand2, RefreshCw, Copy, Check, FileText, Save, CheckCircle, Play, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { Textarea } from '../ui/Input';
-import { PromptTemplates } from './PromptTemplates';
-import { Modal } from '../ui/Modal';
+import { Input, Textarea } from '../ui/Input';
+import { ConfirmModal } from '../ui/ConfirmModal';
 import { usePromptQueue } from '../../hooks/usePromptQueue';
 import type { PromptTemplate } from '../../types/task';
 import type { Project } from '../../types/project';
+import { usePromptTemplateStore } from '../../stores/promptTemplateStore';
 
 interface TaskContext {
   title: string;
@@ -51,7 +51,25 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   projectPath,
   provider,
 }) => {
-  const [showTemplates, setShowTemplates] = useState(false);
+  const {
+    promptTemplates,
+    selectedTemplateId,
+    loading: templatesLoading,
+    error: templatesError,
+    fetchPromptTemplates,
+    selectTemplate,
+    createTemplate,
+    updateTemplate,
+    deleteTemplate,
+  } = usePromptTemplateStore();
+
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [templateContent, setTemplateContent] = useState('');
+  const [templateFormError, setTemplateFormError] = useState<string | null>(null);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<PromptTemplate | null>(null);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [queued, setQueued] = useState(false);
@@ -61,18 +79,79 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
 
   const resolvedProjectPath = projectPath ?? taskContext?.project?.path;
 
-  const handleTemplateSelect = (template: PromptTemplate) => {
-    let filled = template.template;
-    try {
-      const vars: string[] = JSON.parse(template.variables);
-      vars.forEach((v) => {
-        filled = filled.replace(new RegExp(`\\{\\{${v}\\}\\}`, 'g'), `[${v}]`);
-      });
-    } catch {
-      // use template as-is
+  useEffect(() => {
+    fetchPromptTemplates().catch(() => null);
+  }, [fetchPromptTemplates]);
+
+  const selectedTemplate = useMemo(
+    () => promptTemplates.find((template) => template.id === selectedTemplateId) ?? null,
+    [promptTemplates, selectedTemplateId],
+  );
+
+  const resetTemplateForm = () => {
+    setEditingTemplateId(null);
+    setTemplateName('');
+    setTemplateContent('');
+    setTemplateFormError(null);
+  };
+
+  const handleTemplateSelect = (id: string) => {
+    const template = promptTemplates.find((item) => item.id === id);
+    selectTemplate(id || null);
+    if (!template) return;
+    // Apply mode: replace existing raw prompt text with template content.
+    onPromptChange(template.content);
+  };
+
+  const startEditingTemplate = (template: PromptTemplate) => {
+    setEditingTemplateId(template.id);
+    setTemplateName(template.name);
+    setTemplateContent(template.content);
+    setTemplateFormError(null);
+    setShowTemplateManager(true);
+  };
+
+  const handleTemplateSave = async () => {
+    const name = templateName.trim();
+    const content = templateContent.trim();
+
+    if (!name) {
+      setTemplateFormError('Template name is required.');
+      return;
     }
-    onPromptChange(filled);
-    setShowTemplates(false);
+    if (!content) {
+      setTemplateFormError('Template content is required.');
+      return;
+    }
+
+    setTemplateSaving(true);
+    setTemplateFormError(null);
+    try {
+      if (editingTemplateId) {
+        await updateTemplate(editingTemplateId, name, content);
+      } else {
+        await createTemplate(name, content);
+      }
+      resetTemplateForm();
+    } catch (e) {
+      setTemplateFormError(String(e));
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteTemplate(deleteTarget.id);
+      if (editingTemplateId === deleteTarget.id) {
+        resetTemplateForm();
+      }
+      setDeleteTarget(null);
+    } catch (e) {
+      setTemplateFormError(String(e));
+      setDeleteTarget(null);
+    }
   };
 
   const handleRun = () => {
@@ -114,14 +193,6 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
     <div className="flex flex-col gap-3 h-full">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-[#E6EDF3]">Prompt Builder</h3>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<BookOpen size={13} />}
-          onClick={() => setShowTemplates(true)}
-        >
-          Templates
-        </Button>
       </div>
 
       {/* Task context info panel */}
@@ -154,6 +225,137 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         >
           {marked ? 'Done!' : 'Mark as Done'}
         </Button>
+      )}
+
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 dark:border-[#30363D] dark:bg-[#0F1117]">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">
+            Use Template
+          </label>
+          <select
+            value={selectedTemplateId ?? ''}
+            onChange={(e) => handleTemplateSelect(e.target.value)}
+            className="min-w-[220px] bg-white border border-gray-200 rounded-lg text-gray-900 text-xs outline-none px-2.5 py-1.5
+                       focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30
+                       dark:bg-[#161B22] dark:border-[#30363D] dark:text-[#E6EDF3]"
+          >
+            <option value="">Choose a template...</option>
+            {promptTemplates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Pencil size={12} />}
+            onClick={() => setShowTemplateManager((prev) => !prev)}
+          >
+            {showTemplateManager ? 'Close manager' : 'Manage templates'}
+          </Button>
+        </div>
+        <div className="text-xs text-gray-500 dark:text-[#8B949E]">
+          Apply mode: <span className="font-medium">Replace raw prompt</span>
+          {selectedTemplate ? ` (${selectedTemplate.name})` : ''}
+        </div>
+        {templatesLoading && <div className="text-xs text-gray-500 dark:text-[#8B949E]">Loading templates...</div>}
+        {templatesError && (
+          <div className="text-xs text-red-500 dark:text-red-400 whitespace-pre-wrap">Failed to load templates: {templatesError}</div>
+        )}
+      </div>
+
+      {showTemplateManager && (
+        <div className="rounded-lg border border-gray-200 bg-white p-3 grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-3 dark:border-[#30363D] dark:bg-[#161B22]">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E]">
+                Templates
+              </h4>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Plus size={12} />}
+                onClick={resetTemplateForm}
+              >
+                New
+              </Button>
+            </div>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+              {promptTemplates.length === 0 && (
+                <div className="text-xs text-gray-500 dark:text-[#8B949E]">No templates yet.</div>
+              )}
+              {promptTemplates.map((template) => (
+                <div
+                  key={template.id}
+                  className={`rounded-lg border p-2 ${editingTemplateId === template.id
+                    ? 'border-blue-500/40 bg-blue-500/10'
+                    : 'border-gray-200 bg-gray-50 dark:border-[#30363D] dark:bg-[#0F1117]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startEditingTemplate(template)}
+                      className="text-left flex-1 cursor-pointer"
+                    >
+                      <div className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3]">{template.name}</div>
+                      <div className="text-xs text-gray-500 dark:text-[#8B949E] line-clamp-2">{template.content}</div>
+                    </button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={<Trash2 size={11} />}
+                      onClick={() => setDeleteTarget(template)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E]">
+              {editingTemplateId ? 'Edit template' : 'Create template'}
+            </h4>
+            <Input
+              label="Name"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="Template name"
+            />
+            <Textarea
+              label="Content"
+              value={templateContent}
+              onChange={(e) => setTemplateContent(e.target.value)}
+              rows={7}
+              placeholder="Template content"
+            />
+            {(templateFormError || templatesError) && (
+              <div className="text-xs text-red-500 dark:text-red-400 whitespace-pre-wrap">
+                {templateFormError ?? templatesError}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Save size={12} />}
+                onClick={handleTemplateSave}
+                loading={templateSaving}
+              >
+                {editingTemplateId ? 'Save changes' : 'Create template'}
+              </Button>
+              {editingTemplateId && (
+                <Button variant="ghost" size="sm" onClick={resetTemplateForm}>
+                  Cancel edit
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Rough prompt input */}
@@ -267,14 +469,17 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         </div>
       )}
 
-      <Modal
-        open={showTemplates}
-        onClose={() => setShowTemplates(false)}
-        title="Prompt Templates"
-        size="lg"
-      >
-        <PromptTemplates onSelect={handleTemplateSelect} />
-      </Modal>
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title="Delete Template"
+        description={deleteTarget
+          ? `Delete "${deleteTarget.name}"? This cannot be undone.`
+          : 'Delete this template?'}
+        confirmLabel="Delete template"
+        variant="danger"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteTemplate}
+      />
     </div>
   );
 };

@@ -25,6 +25,12 @@ export const endFocusSession = (sessionId: string, notes: string) =>
 
 // Templates
 export const getPromptTemplates = () => invoke<PromptTemplate[]>('get_prompt_templates', {});
+export const createPromptTemplate = (name: string, content: string) =>
+  invoke<PromptTemplate>('create_prompt_template', { name, content });
+export const updatePromptTemplate = (id: string, name: string, content: string) =>
+  invoke<PromptTemplate>('update_prompt_template', { id, name, content });
+export const deletePromptTemplate = (id: string) =>
+  invoke<boolean>('delete_prompt_template', { id });
 
 // Settings
 export const getSettings = () => invoke<AppSettings>('get_settings', {});
