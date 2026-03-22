@@ -53,7 +53,16 @@ pub(crate) fn hardcoded_default_model(provider: AiProvider) -> &'static str {
         AiProvider::Claude => "claude-sonnet-4-6",
         AiProvider::OpenCode => "gpt-4.1",
         AiProvider::Codex => "gpt-5.3-codex",
-        AiProvider::Copilot => "claude-sonnet-4-5",
+        AiProvider::Copilot => "claude-sonnet-4.5",
+    }
+}
+
+fn normalize_copilot_model_identifier(model: &str) -> String {
+    match model.trim() {
+        "claude-sonnet-4-5" => "claude-sonnet-4.5".to_string(),
+        "claude-opus-4-5" => "claude-opus-4.5".to_string(),
+        "claude-haiku-4-5" => "claude-haiku-4.5".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -220,7 +229,7 @@ pub(crate) fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&
             let mut args = vec!["suggest".to_string()];
             if let Some(model) = trimmed_model {
                 args.push("--model".to_string());
-                args.push(model.to_string());
+                args.push(normalize_copilot_model_identifier(model));
             }
             args.push(prompt.to_string());
             args
@@ -501,6 +510,12 @@ mod tests {
     fn test_build_run_args_with_model_for_opencode() {
         let args = build_run_args(AiProvider::OpenCode, "prompt", Some("gpt-4.1"));
         assert_eq!(args, vec!["run", "--model", "gpt-4.1", "prompt"]);
+    }
+
+    #[test]
+    fn test_build_run_args_copilot_normalizes_legacy_claude_model() {
+        let args = build_run_args(AiProvider::Copilot, "prompt", Some("claude-sonnet-4-5"));
+        assert_eq!(args, vec!["suggest", "--model", "claude-sonnet-4.5", "prompt"]);
     }
 
     #[tokio::test]

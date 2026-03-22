@@ -350,6 +350,88 @@ pub fn carry_task_forward(
     Ok(new_id)
 }
 
+pub fn rollover_incomplete_tasks(conn: &Connection, target_date: &str) -> Result<i64> {
+    #[derive(Debug)]
+    struct SourceTask {
+        id: String,
+        session_slot: i64,
+        title: String,
+        notes: String,
+        task_type: String,
+        priority: i64,
+        estimated_min: Option<i64>,
+        project_id: Option<String>,
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, session_slot, title, notes, task_type, priority, estimated_min, project_id
+         FROM tasks
+         WHERE date < ?1 AND status IN ('pending', 'in_progress')
+         ORDER BY date, session_slot, position, created_at",
+    )?;
+
+    let candidates = stmt
+        .query_map(params![target_date], |row| {
+            Ok(SourceTask {
+                id: row.get(0)?,
+                session_slot: row.get(1)?,
+                title: row.get(2)?,
+                notes: row.get(3)?,
+                task_type: row.get(4)?,
+                priority: row.get(5)?,
+                estimated_min: row.get(6)?,
+                project_id: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut carried_count = 0_i64;
+
+    for source in candidates {
+        let already_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND carried_from = ?2",
+            params![target_date, source.id],
+            |row| row.get(0),
+        )?;
+        if already_exists > 0 {
+            continue;
+        }
+
+        let max_pos: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE date = ?1 AND session_slot = ?2",
+            params![target_date, source.session_slot],
+            |row| row.get(0),
+        )?;
+
+        let new_id = uuid::Uuid::new_v4().to_string().replace("-", "");
+        conn.execute(
+            "INSERT INTO tasks (id, date, session_slot, title, notes, task_type, priority, estimated_min, carried_from, position, project_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                new_id,
+                target_date,
+                source.session_slot,
+                source.title,
+                source.notes,
+                source.task_type,
+                source.priority,
+                source.estimated_min,
+                source.id,
+                max_pos + 1,
+                source.project_id
+            ],
+        )?;
+
+        conn.execute(
+            "UPDATE tasks SET status = 'carried_over', updated_at = datetime('now') WHERE id = ?1",
+            params![source.id],
+        )?;
+        carried_count += 1;
+    }
+
+    Ok(carried_count)
+}
+
 pub fn save_prompt_result(
     conn: &Connection,
     id: &str,
@@ -979,6 +1061,67 @@ mod tests {
         assert_eq!(tomorrow_tasks[0].carried_from, Some(id.clone()));
         let today_tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
         assert_eq!(today_tasks[0].status, "carried_over");
+    }
+
+    #[test]
+    fn test_rollover_incomplete_tasks_carries_only_incomplete_items() {
+        let conn = setup_test_db();
+        let pending = create_task(
+            &conn,
+            "2026-03-20",
+            1,
+            "Pending carry",
+            "code",
+            2,
+            Some(25),
+            None,
+        )
+        .unwrap();
+        let in_progress = create_task(
+            &conn,
+            "2026-03-21",
+            2,
+            "In progress carry",
+            "code",
+            2,
+            None,
+            None,
+        )
+        .unwrap();
+        let done = create_task(&conn, "2026-03-21", 1, "Done keep", "code", 2, None, None).unwrap();
+        update_task_status(&conn, &in_progress, "in_progress").unwrap();
+        update_task_status(&conn, &done, "done").unwrap();
+
+        let carried = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
+        assert_eq!(carried, 2);
+
+        let today = get_tasks_by_date(&conn, "2026-03-23").unwrap();
+        assert_eq!(today.len(), 2);
+        assert!(today.iter().any(|t| t.carried_from.as_deref() == Some(pending.as_str())));
+        assert!(today
+            .iter()
+            .any(|t| t.carried_from.as_deref() == Some(in_progress.as_str())));
+
+        let historical = get_tasks_by_date(&conn, "2026-03-21").unwrap();
+        let done_task = historical.iter().find(|t| t.id == done).unwrap();
+        let in_progress_task = historical.iter().find(|t| t.id == in_progress).unwrap();
+        assert_eq!(done_task.status, "done");
+        assert_eq!(in_progress_task.status, "carried_over");
+    }
+
+    #[test]
+    fn test_rollover_incomplete_tasks_is_idempotent() {
+        let conn = setup_test_db();
+        let pending = create_task(&conn, "2026-03-22", 1, "Carry once", "code", 2, None, None).unwrap();
+
+        let first = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
+        let second = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 0);
+
+        let today = get_tasks_by_date(&conn, "2026-03-23").unwrap();
+        assert_eq!(today.len(), 1);
+        assert_eq!(today[0].carried_from.as_deref(), Some(pending.as_str()));
     }
 
     #[test]

@@ -17,6 +17,7 @@ describe('taskStore worktree actions', () => {
         launch_command: "cd '/tmp/daily-planner-worktrees/task-1' && claude --worktree -p 'prompt'",
         prompt_to_run: 'prompt',
       })
+      .mockResolvedValueOnce(1)
       .mockResolvedValueOnce([]);
 
     const { useTaskStore } = await import('../stores/taskStore');
@@ -26,7 +27,8 @@ describe('taskStore worktree actions', () => {
 
     expect(result.branch_name).toBe('task/test-task-12345678');
     expect(mockInvoke).toHaveBeenNthCalledWith(1, 'run_task_as_worktree', { taskId: 'task-1' });
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'get_tasks', { date: '2026-03-22' });
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'rollover_incomplete_tasks', { date: '2026-03-22' });
+    expect(mockInvoke).toHaveBeenNthCalledWith(3, 'get_tasks', { date: '2026-03-22' });
   });
 
   it('cleanupTaskWorktree calls backend and refreshes tasks', async () => {
@@ -40,6 +42,7 @@ describe('taskStore worktree actions', () => {
         branch_deleted: false,
         warning: "Worktree removed. Branch 'task/test-task-12345678' has unmerged changes and was kept.",
       })
+      .mockResolvedValueOnce(1)
       .mockResolvedValueOnce([]);
 
     const { useTaskStore } = await import('../stores/taskStore');
@@ -49,6 +52,7 @@ describe('taskStore worktree actions', () => {
 
     expect(result.status).toBe('abandoned');
     expect(mockInvoke).toHaveBeenNthCalledWith(1, 'cleanup_task_worktree', { taskId: 'task-1' });
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'get_tasks', { date: '2026-03-22' });
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'rollover_incomplete_tasks', { date: '2026-03-22' });
+    expect(mockInvoke).toHaveBeenNthCalledWith(3, 'get_tasks', { date: '2026-03-22' });
   });
 });

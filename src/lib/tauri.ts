@@ -18,6 +18,8 @@ import type { Project, CreateProjectInput } from '../types/project';
 
 // Tasks
 export const getTasks = (date: string) => invoke<Task[]>('get_tasks', { date });
+export const rolloverIncompleteTasks = (date: string) =>
+  invoke<number>('rollover_incomplete_tasks', { date });
 export const createTask = (input: CreateTaskInput) => invoke<string>('create_task', { input });
 export const updateTask = (input: UpdateTaskInput) => invoke<void>('update_task', { input });
 export const updateTaskStatus = (id: string, status: string) => invoke<void>('update_task_status', { id, status });

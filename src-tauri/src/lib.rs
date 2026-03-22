@@ -117,6 +117,7 @@ pub fn run() {
             commands::git::git_push,
             commands::ai_providers::detect_ai_providers,
             commands::tasks::get_tasks,
+            commands::tasks::rollover_incomplete_tasks,
             commands::tasks::create_task,
             commands::tasks::update_task,
             commands::tasks::update_task_status,

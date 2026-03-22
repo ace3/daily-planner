@@ -39,6 +39,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   fetchTasks: async (date) => {
     set({ loading: true, error: null });
     try {
+      await api.rolloverIncompleteTasks(date);
       const tasks = await api.getTasks(date);
       set({ tasks, loading: false, activeDate: date });
     } catch (e) {

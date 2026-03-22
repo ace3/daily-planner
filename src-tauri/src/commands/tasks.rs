@@ -131,6 +131,12 @@ pub fn get_tasks(date: String, db: State<'_, DbConnection>) -> Result<Vec<querie
 }
 
 #[tauri::command]
+pub fn rollover_incomplete_tasks(date: String, db: State<'_, DbConnection>) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::rollover_incomplete_tasks(&conn, &date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::create_task(

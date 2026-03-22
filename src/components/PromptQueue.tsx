@@ -7,7 +7,7 @@ import { Button } from './ui/Button';
 // Step badge
 // ---------------------------------------------------------------------------
 
-const StepBadge: React.FC<{ step: QueueStep; label: string }> = ({ step, label }) => {
+const StepBadge: React.FC<{ step: QueueStep }> = ({ step }) => {
   const cfg: Record<QueueStep, { icon: React.ReactNode; cls: string; text: string }> = {
     waiting: {
       icon: <Clock size={10} />,
@@ -259,11 +259,11 @@ const QueueRow: React.FC<{ job: PromptJob; onCancel: (id: string) => void }> = (
         </td>
         {/* Step 1: Improve */}
         <td className="px-3 py-2.5">
-          <StepBadge step={job.improveStep} label="Improve" />
+          <StepBadge step={job.improveStep} />
         </td>
         {/* Step 2: Run */}
         <td className="px-3 py-2.5">
-          <StepBadge step={job.runStep} label="Run" />
+          <StepBadge step={job.runStep} />
         </td>
         {/* Status */}
         <td className="px-3 py-2.5">

@@ -45,7 +45,7 @@ describe('settingsStore defaults', () => {
     expect(store.settings?.default_model_codex).toBe('gpt-5.3-codex');
     expect(store.settings?.default_model_claude).toBe('claude-sonnet-4-6');
     expect(store.settings?.default_model_opencode).toBe('gpt-4.1');
-    expect(store.settings?.default_model_copilot).toBe('claude-sonnet-4-5');
+    expect(store.settings?.default_model_copilot).toBe('claude-sonnet-4.5');
   });
 });
 
@@ -187,9 +187,10 @@ describe('taskStore operations', () => {
 
   it('fetchTasks calls invoke with correct params', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockResolvedValueOnce(0).mockResolvedValueOnce([]);
     const { useTaskStore } = await import('../stores/taskStore');
     await useTaskStore.getState().fetchTasks('2026-03-22');
+    expect(mockInvoke).toHaveBeenCalledWith('rollover_incomplete_tasks', { date: '2026-03-22' });
     expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
   });
 

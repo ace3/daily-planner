@@ -40,6 +40,15 @@ fn normalize_active_ai_provider(value: Option<&String>) -> Option<String> {
     }
 }
 
+fn normalize_copilot_model_identifier(value: &str) -> String {
+    match value.trim() {
+        "claude-sonnet-4-5" => "claude-sonnet-4.5".to_string(),
+        "claude-opus-4-5" => "claude-opus-4.5".to_string(),
+        "claude-haiku-4-5" => "claude-haiku-4.5".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn resolve_default_active_ai_provider(
     configured: Option<String>,
     detected: &[crate::commands::ai_providers::AiProvider],
@@ -130,6 +139,7 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
         default_model_copilot: map
             .get("default_model_copilot")
             .cloned()
+            .map(|v| normalize_copilot_model_identifier(&v))
             .unwrap_or_else(|| "gpt-4.1".to_string()),
         active_ai_provider,
         ai_provider: normalize_ai_provider(map.get("ai_provider")),
@@ -178,8 +188,14 @@ pub fn set_setting(key: String, value: String, db: State<'_, DbConnection>) -> R
     if key.starts_with("default_model_") && value.trim().is_empty() {
         return Err("Default model value cannot be empty.".to_string());
     }
+    let persisted_value = if key == "default_model_copilot" {
+        normalize_copilot_model_identifier(&value)
+    } else {
+        value
+    };
+
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_setting(&conn, &key, &value).map_err(|e| e.to_string())
+    queries::set_setting(&conn, &key, &persisted_value).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

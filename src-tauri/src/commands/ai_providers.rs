@@ -70,13 +70,11 @@ fn command_succeeds(binary: &str, args: &[&str]) -> bool {
 }
 
 fn detect_provider_availability() -> ProviderAvailability {
-    let gh_available = command_exists("gh");
-
     ProviderAvailability {
         claude: command_exists("claude"),
         codex: command_exists("codex"),
         opencode: command_exists("opencode"),
-        copilot: gh_available && command_succeeds("gh", &["copilot", "--version"]),
+        copilot: command_exists("copilot") && command_succeeds("copilot", &["--version"]),
     }
 }
 
@@ -144,5 +142,19 @@ mod tests {
         assert_eq!(providers[0].id, "claude");
         assert_eq!(providers[1].id, "opencode");
         assert!(providers.iter().all(|provider| provider.available));
+    }
+
+    #[test]
+    fn providers_from_availability_includes_copilot_when_available() {
+        let providers = providers_from_availability(ProviderAvailability {
+            claude: false,
+            codex: false,
+            opencode: false,
+            copilot: true,
+        });
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "copilot");
+        assert_eq!(providers[0].name, "GitHub Copilot CLI");
     }
 }

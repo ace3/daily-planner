@@ -42,7 +42,7 @@ const defaultSettings: AppSettings = {
   default_model_codex: 'gpt-5.3-codex',
   default_model_claude: 'claude-sonnet-4-6',
   default_model_opencode: 'gpt-4.1',
-  default_model_copilot: 'claude-sonnet-4-5',
+  default_model_copilot: 'claude-sonnet-4.5',
   active_ai_provider: 'claude',
   ai_provider: 'claude',
   theme: 'dark',
