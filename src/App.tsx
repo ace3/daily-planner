@@ -16,6 +16,7 @@ import { useSettingsStore } from './stores/settingsStore';
 import { useTaskStore } from './stores/taskStore';
 import { useProjectStore } from './stores/projectStore';
 import { useProviderStore } from './stores/providerStore';
+import { useSyncStore } from './stores/syncStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useMobileStore } from './stores/mobileStore';
 import { getLocalDate, getLocalTime, timeToMinutes } from './lib/time';
@@ -23,10 +24,11 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 
 const AppInner: React.FC = () => {
   const { fetchSettings, settings } = useSettingsStore();
-  const { fetchTasks } = useTaskStore();
+  const { fetchTasks, activeDate } = useTaskStore();
   const { fetchProjects, initSelectedProject } = useProjectStore();
   const { checkAvailability } = useProviderStore();
   const { mobileMode } = useMobileStore();
+  const { syncAll } = useSyncStore();
   const [showMorningPlanning, setShowMorningPlanning] = useState(false);
   const navigate = useNavigate();
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -50,6 +52,23 @@ const AppInner: React.FC = () => {
     fetchProjects().then(() => initSelectedProject());
     checkAvailability();
   }, []);
+
+  // Auto-poll every 30s to pick up changes made from the web interface
+  useEffect(() => {
+    if (!activeDate) return;
+    const interval = setInterval(() => {
+      syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [activeDate]);
+
+  // Sync immediately when the window regains focus
+  useEffect(() => {
+    if (!activeDate) return;
+    const onFocus = () => syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [activeDate]);
 
   useEffect(() => {
     if (!settings) return;

@@ -1,16 +1,26 @@
 import React from 'react';
-import { format } from 'date-fns';
-import { Sun, Moon, Smartphone, Monitor } from 'lucide-react';
+import { format, formatDistanceToNow } from 'date-fns';
+import { Sun, Moon, Smartphone, Monitor, RefreshCw } from 'lucide-react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMobileStore } from '../../stores/mobileStore';
+import { useTaskStore } from '../../stores/taskStore';
+import { useProjectStore } from '../../stores/projectStore';
+import { useSyncStore } from '../../stores/syncStore';
 import { formatCountdown } from '../../lib/time';
 import { AiProviderSelector } from '../AiProviderSelector';
 
 export const TopBar: React.FC = () => {
   const { sessionInfo, currentDate } = useSessionStore();
-  const { settings, setTheme } = useSettingsStore();
+  const { settings, setTheme, fetchSettings } = useSettingsStore();
   const { mobileMode, toggleMobileMode } = useMobileStore();
+  const { fetchTasks, activeDate } = useTaskStore();
+  const { fetchProjects } = useProjectStore();
+  const { syncing, lastSyncedAt, syncAll } = useSyncStore();
+
+  const handleForceSync = () => {
+    if (activeDate) syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+  };
 
   const isDark = settings?.theme === 'dark';
 
@@ -54,6 +64,29 @@ export const TopBar: React.FC = () => {
         )}
 
         {!mobileMode && <span className="text-[#CBD5E1] dark:text-[#334155] select-none">|</span>}
+
+        {/* Sync button */}
+        <button
+          onClick={handleForceSync}
+          disabled={syncing}
+          className={`rounded-[10px] transition-colors cursor-pointer flex items-center gap-1.5
+            ${mobileMode
+              ? 'p-2.5 min-h-[44px] min-w-[44px] justify-center'
+              : 'p-1.5'
+            }
+            ${syncing
+              ? 'text-[#2563EB] dark:text-[#7DD3FC] opacity-70 cursor-wait'
+              : 'text-[#64748B] hover:text-[#111827] hover:bg-[#F1F5F9] dark:text-[#94A3B8] dark:hover:text-[#E5E7EB] dark:hover:bg-[#1E293B]'
+            }`}
+          title={lastSyncedAt ? `Last synced ${formatDistanceToNow(lastSyncedAt, { addSuffix: true })}` : 'Sync now'}
+        >
+          <RefreshCw size={mobileMode ? 18 : 14} className={syncing ? 'animate-spin' : ''} />
+          {!mobileMode && lastSyncedAt && (
+            <span className="text-[10px] text-[#94A3B8] dark:text-[#475569]">
+              {formatDistanceToNow(lastSyncedAt, { addSuffix: true })}
+            </span>
+          )}
+        </button>
 
         {/* Mobile mode toggle */}
         <button
