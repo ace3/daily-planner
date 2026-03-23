@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
@@ -17,15 +17,31 @@ import { useTaskStore } from './stores/taskStore';
 import { useProjectStore } from './stores/projectStore';
 import { useProviderStore } from './stores/providerStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useMobileStore } from './stores/mobileStore';
 import { getLocalDate, getLocalTime, timeToMinutes } from './lib/time';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 
 const AppInner: React.FC = () => {
   const { fetchSettings, settings } = useSettingsStore();
   const { fetchTasks } = useTaskStore();
   const { fetchProjects, initSelectedProject } = useProjectStore();
   const { checkAvailability } = useProviderStore();
+  const { mobileMode } = useMobileStore();
   const [showMorningPlanning, setShowMorningPlanning] = useState(false);
   const navigate = useNavigate();
+  const mainContentRef = useRef<HTMLDivElement>(null);
+
+  const scrollBy = useCallback((amount: number) => {
+    const container = mainContentRef.current;
+    if (!container) return;
+    // Find the deepest scrollable child, or fall back to the container itself
+    const scrollable = container.querySelector('[data-scrollable]') as HTMLElement
+      ?? Array.from(container.querySelectorAll('*')).find(
+        (el) => el instanceof HTMLElement && el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY !== 'visible' && getComputedStyle(el).overflowY !== 'hidden'
+      ) as HTMLElement
+      ?? container;
+    scrollable.scrollBy({ top: amount, behavior: 'smooth' });
+  }, []);
 
   useKeyboardShortcuts();
 
@@ -58,9 +74,13 @@ const AppInner: React.FC = () => {
   }, [settings]);
 
   return (
-    <div className="flex h-screen bg-white text-gray-900 dark:bg-[#0F1117] dark:text-[#E6EDF3] overflow-hidden" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
+    <div
+      className={`flex h-screen bg-white text-gray-900 dark:bg-[#0F1117] dark:text-[#E6EDF3] overflow-hidden
+        ${mobileMode ? 'flex-col mobile-mode' : ''}`}
+      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+    >
+      {!mobileMode && <Sidebar />}
+      <div ref={mainContentRef} className={`flex flex-col flex-1 min-w-0 ${mobileMode ? 'min-h-0 pb-[72px]' : ''}`}>
         <TopBar />
         <Routes>
           <Route path="/" element={<Dashboard />} />
@@ -73,6 +93,7 @@ const AppInner: React.FC = () => {
           <Route path="/remote-access" element={<RemoteAccessPage />} />
         </Routes>
       </div>
+      {mobileMode && <Sidebar />}
 
       {showMorningPlanning && (
         <MorningPlanning
@@ -85,6 +106,26 @@ const AppInner: React.FC = () => {
       )}
 
       <ToastContainer />
+
+      {/* Floating scroll buttons for mobile (RustDesk scrolling is problematic) */}
+      {mobileMode && (
+        <div className="fixed right-3 bottom-[88px] flex flex-col gap-2 z-50">
+          <button
+            onClick={() => scrollBy(-300)}
+            className="w-11 h-11 rounded-full bg-gray-800/80 dark:bg-gray-700/80 text-white shadow-lg backdrop-blur-sm flex items-center justify-center active:scale-90 transition-transform"
+            aria-label="Scroll up"
+          >
+            <ChevronUp size={22} />
+          </button>
+          <button
+            onClick={() => scrollBy(300)}
+            className="w-11 h-11 rounded-full bg-gray-800/80 dark:bg-gray-700/80 text-white shadow-lg backdrop-blur-sm flex items-center justify-center active:scale-90 transition-transform"
+            aria-label="Scroll down"
+          >
+            <ChevronDown size={22} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

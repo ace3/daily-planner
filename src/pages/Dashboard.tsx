@@ -1,20 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useMobileStore } from '../stores/mobileStore';
 import { SessionTimer } from '../components/session/SessionTimer';
 import { SessionWarning } from '../components/session/SessionWarning';
 import { TaskList } from '../components/tasks/TaskList';
 import { useSessionTimer } from '../hooks/useSessionTimer';
 import { usePhaseListener } from '../hooks/useNotifications';
+import { useSessionStore } from '../stores/sessionStore';
 import { getLocalDate } from '../lib/time';
+import { formatCountdown } from '../lib/time';
 import { format } from 'date-fns';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const Dashboard: React.FC = () => {
   const { fetchTasks, tasks, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
+  const { mobileMode } = useMobileStore();
+  const { sessionInfo } = useSessionStore();
   const [loading, setLoading] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   useSessionTimer();
   usePhaseListener();
@@ -32,21 +38,133 @@ export const Dashboard: React.FC = () => {
   const totalToday = tasks.filter((t) => t.status !== 'carried_over').length;
   const completionPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
 
+  // Mobile: ultra-compact layout — tasks first, timer collapsed
+  if (mobileMode) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Compact header: date + progress + refresh in one row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <h1 className="text-lg font-semibold text-gray-900 dark:text-[#E6EDF3] truncate">
+              {format(new Date(), 'EEE, MMM d')}
+            </h1>
+            {/* Inline progress pill */}
+            {totalToday > 0 && (
+              <span className="text-sm font-medium text-emerald-400 whitespace-nowrap">
+                {completedToday}/{totalToday} ({completionPct}%)
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={16} className={loading ? 'animate-spin' : ''} />}
+            onClick={() => fetchTasks(today)}
+          />
+        </div>
+
+        {/* Slim progress bar */}
+        {totalToday > 0 && (
+          <div className="h-2 bg-gray-100 dark:bg-[#21262D] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+              style={{ width: `${completionPct}%` }}
+            />
+          </div>
+        )}
+
+        {/* Session warning banner */}
+        <SessionWarning />
+
+        {/* Collapsible session status — tap to expand full timer */}
+        <button
+          onClick={() => setShowDetails(!showDetails)}
+          className="w-full flex items-center justify-between rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] px-4 py-3 cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            {sessionInfo && (
+              <>
+                <div
+                  className="w-3 h-3 rounded-full animate-pulse"
+                  style={{ backgroundColor: sessionInfo.phaseColor }}
+                />
+                <span className="text-sm font-medium" style={{ color: sessionInfo.phaseColor }}>
+                  {sessionInfo.phaseLabel}
+                </span>
+                {sessionInfo.phase !== 'off' && sessionInfo.phase !== 'end_of_day' && (
+                  <span className="text-sm font-mono font-semibold text-gray-900 dark:text-[#E6EDF3]">
+                    {formatCountdown(sessionInfo.timeUntilNext)}
+                  </span>
+                )}
+              </>
+            )}
+            {!sessionInfo && (
+              <span className="text-sm text-gray-400">Session info loading...</span>
+            )}
+          </div>
+          {showDetails
+            ? <ChevronUp size={18} className="text-gray-400" />
+            : <ChevronDown size={18} className="text-gray-400" />
+          }
+        </button>
+
+        {/* Expanded: full timer + strategy */}
+        {showDetails && (
+          <div className="space-y-4">
+            <SessionTimer />
+
+            {/* Compact daily stats */}
+            {totalToday > 0 && (
+              <div className="grid grid-cols-3 text-center text-sm text-gray-500 dark:text-[#484F58] rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] py-3">
+                <div>
+                  <div className="text-lg font-semibold text-emerald-400">
+                    {tasks.filter((t) => t.status === 'done').length}
+                  </div>
+                  Done
+                </div>
+                <div>
+                  <div className="text-lg font-semibold text-amber-400">
+                    {tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length}
+                  </div>
+                  Active
+                </div>
+                <div>
+                  <div className="text-lg font-semibold text-gray-400 dark:text-[#8B949E]">
+                    {tasks.filter((t) => t.status === 'skipped').length}
+                  </div>
+                  Skipped
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tasks — immediately visible, no scrolling past big cards */}
+        <div className="space-y-6">
+          <TaskList slot={1} />
+          <div className="border-t border-gray-100 dark:border-[#21262D]" />
+          <TaskList slot={2} />
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop: original layout
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-base font-semibold text-[#E6EDF3]">
+          <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">
             {format(new Date(), 'EEEE, MMMM d')}
           </h1>
-          <p className="text-xs text-[#484F58] mt-0.5">
+          <p className="text-xs text-gray-500 dark:text-[#484F58] mt-0.5">
             {completedToday}/{totalToday} tasks done
             {totalToday > 0 && ` · ${completionPct}%`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="text-right text-xs text-[#484F58]">
+          <div className="text-right text-xs text-gray-500 dark:text-[#484F58]">
             <div className="font-mono">{today}</div>
           </div>
           <Button
@@ -69,20 +187,20 @@ export const Dashboard: React.FC = () => {
 
           {/* Daily progress */}
           {totalToday > 0 && (
-            <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-4">
+            <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-[#8B949E] uppercase tracking-wide">
+                <span className="text-xs font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">
                   Today's Progress
                 </span>
-                <span className="text-sm font-bold text-[#E6EDF3]">{completionPct}%</span>
+                <span className="text-sm font-bold text-gray-900 dark:text-[#E6EDF3]">{completionPct}%</span>
               </div>
-              <div className="h-2 bg-[#21262D] rounded-full overflow-hidden">
+              <div className="h-2 bg-gray-100 dark:bg-[#21262D] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-emerald-500 rounded-full transition-all duration-500"
                   style={{ width: `${completionPct}%` }}
                 />
               </div>
-              <div className="mt-2 grid grid-cols-3 text-center text-xs text-[#484F58]">
+              <div className="mt-2 grid grid-cols-3 text-center text-xs text-gray-500 dark:text-[#484F58]">
                 <div>
                   <div className="text-emerald-400 font-semibold">
                     {tasks.filter((t) => t.status === 'done').length}
@@ -96,7 +214,7 @@ export const Dashboard: React.FC = () => {
                   Active
                 </div>
                 <div>
-                  <div className="text-[#8B949E] font-semibold">
+                  <div className="text-gray-400 dark:text-[#8B949E] font-semibold">
                     {tasks.filter((t) => t.status === 'skipped').length}
                   </div>
                   Skipped
@@ -106,8 +224,8 @@ export const Dashboard: React.FC = () => {
           )}
 
           {/* Phase guide */}
-          <div className="rounded-xl border border-[#30363D] bg-[#161B22] p-4 space-y-2">
-            <span className="text-xs font-semibold text-[#8B949E] uppercase tracking-wide">
+          <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4 space-y-2">
+            <span className="text-xs font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">
               Daily Strategy
             </span>
             {[
@@ -121,8 +239,8 @@ export const Dashboard: React.FC = () => {
                   {time}
                 </span>
                 <div>
-                  <div className="text-xs font-medium text-[#E6EDF3]">{label}</div>
-                  <div className="text-xs text-[#484F58]">{desc}</div>
+                  <div className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3]">{label}</div>
+                  <div className="text-xs text-gray-500 dark:text-[#484F58]">{desc}</div>
                 </div>
               </div>
             ))}
@@ -132,7 +250,7 @@ export const Dashboard: React.FC = () => {
         {/* Right: Task lists */}
         <div className="space-y-6 min-w-0">
           <TaskList slot={1} />
-          <div className="border-t border-[#21262D]" />
+          <div className="border-t border-gray-100 dark:border-[#21262D]" />
           <TaskList slot={2} />
         </div>
       </div>

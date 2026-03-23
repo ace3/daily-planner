@@ -4,6 +4,7 @@ import { TaskForm } from './TaskForm';
 import { SessionBadge } from '../session/SessionBadge';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useMobileStore } from '../../stores/mobileStore';
 import { usePromptQueue } from '../../hooks/usePromptQueue';
 import type { Task } from '../../types/task';
 import { getLocalDate } from '../../lib/time';
@@ -19,6 +20,7 @@ interface TaskListProps {
 
 export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
   const [completedOpen, setCompletedOpen] = useState(false);
+  const { mobileMode: m } = useMobileStore();
   const {
     tasks,
     createTask,
@@ -146,31 +148,31 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
   );
 
   return (
-    <div className="space-y-3">
+    <div className={m ? 'space-y-4' : 'space-y-3'}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide">
+          <span className={`font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide ${m ? 'text-sm' : 'text-xs'}`}>
             {slotNames[slot] ?? `Session ${slot}`}
           </span>
           <SessionBadge slot={slot} />
         </div>
-        <span className="text-xs text-gray-400 dark:text-[#484F58]">
+        <span className={`text-gray-400 dark:text-[#484F58] ${m ? 'text-sm' : 'text-xs'}`}>
           {doneTasks.length}/{slotTasks.filter((t) => t.status !== 'carried_over').length}
         </span>
       </div>
 
       <TaskForm date={activeDate} sessionSlot={slot} onSubmit={handleCreate} compact />
 
-      <div className="space-y-3">
+      <div className={m ? 'space-y-3' : 'space-y-1.5'}>
         {/* Project groups */}
         {projectGroups.map(({ projectId, name, tasks: groupTasks }) => (
-          <div key={projectId} className="space-y-1.5">
+          <div key={projectId} className={m ? 'space-y-3' : 'space-y-1.5'}>
             <div className="flex items-center gap-1.5 px-1">
-              <FolderOpen size={11} className="text-blue-400 shrink-0" />
-              <span className="text-xs font-medium text-gray-500 dark:text-[#8B949E] truncate">{name}</span>
+              <FolderOpen size={m ? 14 : 11} className="text-blue-400 shrink-0" />
+              <span className={`font-medium text-gray-500 dark:text-[#8B949E] truncate ${m ? 'text-sm' : 'text-xs'}`}>{name}</span>
               <div className="flex-1 h-px bg-gray-100 dark:bg-[#21262D]" />
             </div>
-            <div className="space-y-1.5">
+            <div className={m ? 'space-y-3' : 'space-y-1.5'}>
               {groupTasks.map(renderTaskItem)}
             </div>
           </div>
@@ -178,37 +180,39 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
 
         {/* No Project tasks */}
         {noProjectTasks.length > 0 && (
-          <div className="space-y-1.5">
+          <div className={m ? 'space-y-3' : 'space-y-1.5'}>
             {showProjectHeaders && (
               <div className="flex items-center gap-1.5 px-1">
-                <span className="text-xs font-medium text-gray-400 dark:text-[#484F58]">No Project</span>
+                <span className={`font-medium text-gray-400 dark:text-[#484F58] ${m ? 'text-sm' : 'text-xs'}`}>No Project</span>
                 <div className="flex-1 h-px bg-gray-100 dark:bg-[#21262D]" />
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className={m ? 'space-y-3' : 'space-y-1.5'}>
               {noProjectTasks.map(renderTaskItem)}
             </div>
           </div>
         )}
 
         {pendingTasks.length === 0 && (
-          <div className="text-xs text-gray-400 dark:text-[#484F58] text-center py-3 border border-dashed border-gray-200 dark:border-[#21262D] rounded-lg">
+          <div className={`text-center border border-dashed border-gray-200 dark:border-[#21262D] rounded-lg text-gray-400 dark:text-[#484F58]
+            ${m ? 'text-sm py-5' : 'text-xs py-3'}`}>
             No tasks yet. Add one above.
           </div>
         )}
       </div>
 
       {doneTasks.length > 0 && (
-        <div className="space-y-1.5">
+        <div className={m ? 'space-y-3' : 'space-y-1.5'}>
           <button
             onClick={() => setCompletedOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-[#484F58] hover:text-gray-600 dark:hover:text-[#8B949E] transition-colors cursor-pointer w-full text-left"
+            className={`flex items-center gap-2 text-gray-400 dark:text-[#484F58] hover:text-gray-600 dark:hover:text-[#8B949E] transition-colors cursor-pointer w-full text-left
+              ${m ? 'text-sm min-h-[44px]' : 'text-xs'}`}
           >
-            {completedOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {completedOpen ? <ChevronDown size={m ? 16 : 12} /> : <ChevronRight size={m ? 16 : 12} />}
             Completed ({doneTasks.length})
           </button>
           {completedOpen && (
-            <div className="space-y-1.5">
+            <div className={m ? 'space-y-3' : 'space-y-1.5'}>
               {doneTasks.map((task) => (
                 <TaskItem
                   key={task.id}

@@ -11,9 +11,11 @@ import {
   GitBranchPlus,
   FolderX,
   ArrowLeftRight,
+  MoreHorizontal,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { TaskNotes } from './TaskNotes';
+import { useMobileStore } from '../../stores/mobileStore';
 import type { Task } from '../../types/task';
 import { formatDuration } from '../../lib/time';
 
@@ -55,10 +57,145 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onMoveToSession,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const { mobileMode: m } = useMobileStore();
   const isDone = task.status === 'done';
   const isSkipped = task.status === 'skipped';
   const isCarried = task.status === 'carried_over';
 
+  // --- MOBILE LAYOUT ---
+  if (m) {
+    return (
+      <div
+        className={`
+          rounded-xl border transition-colors duration-150
+          ${isDone
+            ? 'border-emerald-500/20 bg-emerald-500/5'
+            : isSkipped || isCarried
+            ? 'border-gray-100 bg-gray-50 opacity-60 dark:border-[#21262D] dark:bg-[#0F1117]'
+            : 'border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22]'}
+        `}
+      >
+        {/* Main row: checkbox + title + expand toggle */}
+        <div className="flex items-center gap-3 p-3">
+          {/* Status toggle — big tap target */}
+          <button
+            onClick={() => onStatusChange(task.id, isDone ? 'pending' : 'done')}
+            className="shrink-0 cursor-pointer text-gray-400 dark:text-[#484F58] hover:text-emerald-400 transition-colors p-1 min-w-[44px] min-h-[44px] flex items-center justify-center"
+          >
+            {isDone ? (
+              <CheckCircle2 size={24} className="text-emerald-400" />
+            ) : (
+              <Circle size={24} />
+            )}
+          </button>
+
+          {/* Title + badges — tap to select */}
+          <div className="flex-1 min-w-0" onClick={() => onSelect?.(task)}>
+            <span
+              className={`text-base block ${
+                isDone || isSkipped ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
+              }`}
+            >
+              {task.title}
+            </span>
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <Badge variant={typeColors[task.task_type] || 'gray'}>{task.task_type}</Badge>
+              {task.priority > 0 && (
+                <span className={`text-sm ${priorityColors[task.priority]}`}>
+                  {priorityDots[task.priority]}
+                </span>
+              )}
+              {task.worktree_status === 'active' && <Badge variant="blue">worktree</Badge>}
+              {task.estimated_min && (
+                <span className="text-xs text-gray-400 dark:text-[#484F58]">{formatDuration(task.estimated_min)}</span>
+              )}
+              {task.carried_from && <Badge variant="amber">carried</Badge>}
+            </div>
+          </div>
+
+          {/* Expand toggle */}
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="shrink-0 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 dark:text-[#484F58] cursor-pointer rounded-lg"
+          >
+            {expanded ? <ChevronUp size={20} /> : <MoreHorizontal size={20} />}
+          </button>
+        </div>
+
+        {/* Expanded: action buttons row + notes */}
+        {expanded && (
+          <div className="border-t border-gray-100 dark:border-[#21262D]">
+            {/* Action buttons — horizontal scrollable row */}
+            <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto">
+              {!isDone && !isSkipped && !isCarried && (
+                <button
+                  onClick={() => onStatusChange(task.id, 'skipped')}
+                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 whitespace-nowrap cursor-pointer"
+                >
+                  <SkipForward size={16} />
+                  Skip
+                </button>
+              )}
+              {!isDone && !isCarried && (
+                <button
+                  onClick={() => onCarryForward(task.id)}
+                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-blue-400 bg-blue-500/10 border border-blue-500/20 whitespace-nowrap cursor-pointer"
+                >
+                  <ArrowRight size={16} />
+                  Tomorrow
+                </button>
+              )}
+              {!isCarried && onMoveToSession && (
+                <button
+                  onClick={() => onMoveToSession(task, task.session_slot === 1 ? 2 : 1)}
+                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-teal-400 bg-teal-500/10 border border-teal-500/20 whitespace-nowrap cursor-pointer"
+                >
+                  <ArrowLeftRight size={16} />
+                  S{task.session_slot === 1 ? '2' : '1'}
+                </button>
+              )}
+              {!isCarried && task.project_id && (
+                <button
+                  onClick={() => onRunAsWorktree?.(task)}
+                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-purple-400 bg-purple-500/10 border border-purple-500/20 whitespace-nowrap cursor-pointer"
+                >
+                  <GitBranchPlus size={16} />
+                  Worktree
+                </button>
+              )}
+              {task.worktree_status === 'active' && (
+                <button
+                  onClick={() => onCleanupWorktree?.(task)}
+                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 whitespace-nowrap cursor-pointer"
+                >
+                  <FolderX size={16} />
+                  Cleanup
+                </button>
+              )}
+              <button
+                onClick={() => onDelete(task.id)}
+                className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-red-400 bg-red-500/10 border border-red-500/20 whitespace-nowrap cursor-pointer"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
+            </div>
+
+            {/* Notes */}
+            <div className="px-4 pb-4 pt-2">
+              <TaskNotes
+                task={task}
+                onSave={(notes) => onNotesUpdate(task.id, notes)}
+                onProjectChange={onProjectChange ? (pid) => onProjectChange(task.id, pid) : undefined}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- DESKTOP LAYOUT (unchanged) ---
   return (
     <div
       className={`

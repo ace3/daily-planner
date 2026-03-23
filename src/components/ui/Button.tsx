@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMobileStore } from '../../stores/mobileStore';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
 type Size = 'sm' | 'md' | 'lg';
@@ -24,6 +25,12 @@ const sizeClasses: Record<Size, string> = {
   lg: 'px-5 py-2.5 text-base gap-2.5',
 };
 
+const mobileSizeClasses: Record<Size, string> = {
+  sm: 'px-3.5 py-2 text-sm gap-2 min-h-[44px]',
+  md: 'px-4 py-2.5 text-base gap-2.5 min-h-[44px]',
+  lg: 'px-5 py-3 text-lg gap-3 min-h-[48px]',
+};
+
 export const Button: React.FC<ButtonProps> = ({
   variant = 'secondary',
   size = 'md',
@@ -34,6 +41,9 @@ export const Button: React.FC<ButtonProps> = ({
   className = '',
   ...props
 }) => {
+  const { mobileMode } = useMobileStore();
+  const sizes = mobileMode ? mobileSizeClasses : sizeClasses;
+
   return (
     <button
       {...props}
@@ -42,11 +52,11 @@ export const Button: React.FC<ButtonProps> = ({
         inline-flex items-center justify-center font-medium rounded-lg border
         transition-colors duration-150 cursor-pointer
         disabled:opacity-50 disabled:cursor-not-allowed
-        ${variantClasses[variant]} ${sizeClasses[size]} ${className}
+        ${variantClasses[variant]} ${sizes[size]} ${className}
       `}
     >
       {loading ? (
-        <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+        <svg className={`animate-spin ${mobileMode ? 'w-4 h-4' : 'w-3.5 h-3.5'}`} viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>

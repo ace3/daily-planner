@@ -39,7 +39,12 @@ function pickProvider(providers: AiProvider[], configured: AiProviderId | null):
   return providers[0]?.id ?? null;
 }
 
-export const AiProviderSelector: React.FC = () => {
+interface AiProviderSelectorProps {
+  className?: string;
+  mobileOptimized?: boolean;
+}
+
+export const AiProviderSelector: React.FC<AiProviderSelectorProps> = ({ className = '', mobileOptimized = false }) => {
   const activeProvider = useSettingsStore((state) => state.activeProvider);
   const availableProviders = useSettingsStore((state) => state.availableProviders);
   const setAvailableProviders = useSettingsStore((state) => state.setAvailableProviders);
@@ -102,7 +107,9 @@ export const AiProviderSelector: React.FC = () => {
 
   if (availableProviders.length === 1 && selectedProvider) {
     return (
-      <div className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 dark:border-[#30363D] dark:text-[#C9D1D9]">
+      <div
+        className={`inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 dark:border-[#30363D] dark:text-[#C9D1D9] ${mobileOptimized ? 'min-h-[44px] min-w-[44px] px-3' : ''} ${className}`}
+      >
         <Bot size={12} className="text-gray-500 dark:text-[#8B949E]" />
         <span>{providerLabel[selectedProvider.id]}</span>
       </div>
@@ -110,7 +117,9 @@ export const AiProviderSelector: React.FC = () => {
   }
 
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 dark:border-[#30363D]">
+    <div
+      className={`inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 dark:border-[#30363D] ${mobileOptimized ? 'min-h-[44px] min-w-[44px] px-3' : ''} ${className}`}
+    >
       <Bot size={12} className="text-gray-500 dark:text-[#8B949E]" />
       <select
         aria-label="Active AI provider"
@@ -122,7 +131,7 @@ export const AiProviderSelector: React.FC = () => {
           }
           await setActiveProvider(selected);
         }}
-        className="bg-transparent text-xs text-gray-700 outline-none dark:text-[#C9D1D9]"
+        className={`bg-transparent text-xs text-gray-700 outline-none dark:text-[#C9D1D9] ${mobileOptimized ? 'min-h-[44px] min-w-[44px] pr-5' : ''}`}
       >
         {availableProviders.map((provider) => (
           <option key={provider.id} value={provider.id}>

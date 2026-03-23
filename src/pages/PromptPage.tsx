@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react';
-import { MessageSquare, ListOrdered, Layers, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, X, Terminal } from 'lucide-react';
+import { MessageSquare, ListOrdered, Layers, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, X, Terminal, Wand2 } from 'lucide-react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
 import { PromptQueue } from '../components/PromptQueue';
@@ -124,6 +124,7 @@ export const PromptPage: React.FC = () => {
 
   // Ref to hold the unlisten function for log streaming
   const improveUnlistenRef = useRef<UnlistenFn | null>(null);
+  const activeImproveRef = useRef<{ requestId: string; key: string } | null>(null);
 
   const handleImprove = useCallback(() => {
     const currentPrompt = (promptStates[taskKey] ?? defaultPromptState()).prompt;
@@ -137,19 +138,35 @@ export const PromptPage: React.FC = () => {
 
     // Generate a unique job_id for log streaming
     const jobId = `improve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = `${capturedKey}-${jobId}`;
 
     patchState(capturedKey, { loading: true, error: null, improved: '', log: [] });
 
+    // Stop any previous stream listener before starting a new improve request.
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+    activeImproveRef.current = { requestId, key: capturedKey };
+
     // Subscribe to log events for this job
     listen<{ job_id: string; line: string }>('prompt_job_log', (event) => {
-      if (event.payload.job_id === jobId) {
+      if (
+        event.payload.job_id === jobId &&
+        activeImproveRef.current?.requestId === requestId &&
+        activeImproveRef.current?.key === capturedKey
+      ) {
         setPromptStates((prev) => {
           const current = prev[capturedKey] ?? defaultPromptState();
           return { ...prev, [capturedKey]: { ...current, log: [...current.log, event.payload.line] } };
         });
       }
     }).then((unlisten) => {
-      improveUnlistenRef.current = unlisten;
+      if (activeImproveRef.current?.requestId === requestId) {
+        improveUnlistenRef.current = unlisten;
+        return;
+      }
+      unlisten();
     });
 
     const metaPrompt = buildImprovementPrompt(capturedPrompt, capturedContext);
@@ -160,19 +177,44 @@ export const PromptPage: React.FC = () => {
 
     request
       .then((result) => {
+        if (activeImproveRef.current?.requestId !== requestId) return;
         patchState(capturedKey, { improved: result, loading: false });
       })
       .catch((e: unknown) => {
+        if (activeImproveRef.current?.requestId !== requestId) return;
         patchState(capturedKey, { error: String(e), loading: false });
       })
       .finally(() => {
+        if (activeImproveRef.current?.requestId !== requestId) return;
         // Unsubscribe from log events to prevent leaks
         if (improveUnlistenRef.current) {
           improveUnlistenRef.current();
           improveUnlistenRef.current = null;
         }
+        activeImproveRef.current = null;
       });
   }, [taskKey, selectedTask, projects, promptStates, patchState, selectedAiProvider]);
+
+  const handleCancelImprove = useCallback(() => {
+    const activeImprove = activeImproveRef.current;
+    if (!activeImprove) return;
+
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+    activeImproveRef.current = null;
+    patchState(activeImprove.key, { loading: false, error: 'Improve canceled by user.', log: [] });
+  }, [patchState]);
+
+  useEffect(() => {
+    return () => {
+      if (improveUnlistenRef.current) {
+        improveUnlistenRef.current();
+      }
+      activeImproveRef.current = null;
+    };
+  }, []);
 
   const handleReset = useCallback(() => {
     patchState(taskKey, { improved: '', error: null });
@@ -326,6 +368,7 @@ export const PromptPage: React.FC = () => {
             loading={state.loading}
             error={state.error}
             onImprove={handleImprove}
+            onCancelImprove={handleCancelImprove}
             onReset={handleReset}
             builtPrompt={builtPrompt}
             onMarkDone={selectedTask ? handleMarkDone : undefined}
@@ -517,16 +560,27 @@ interface MasterPromptPanelProps {
 const NO_PROJECT_KEY = '__no_project__';
 
 const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }) => {
+  const settings = useSettingsStore((state) => state.settings);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [output, setOutput] = useState('');
+  const [improvedOutput, setImprovedOutput] = useState('');
   const [warnings, setWarnings] = useState<MergeWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [improveError, setImproveError] = useState<string | null>(null);
+  const [improveLog, setImproveLog] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [improving, setImproving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyImproved, setCopyImproved] = useState(false);
+  const improveUnlistenRef = useRef<UnlistenFn | null>(null);
+  const activeImproveRequestRef = useRef<string | null>(null);
 
   const eligibleTasks = useMemo(
-    () => tasks.filter((t) => typeof t.prompt_result === 'string' && t.prompt_result.trim().length > 0),
+    () =>
+      tasks.filter(
+        (t) => t.status !== 'done' && typeof t.prompt_result === 'string' && t.prompt_result.trim().length > 0,
+      ),
     [tasks],
   );
 
@@ -567,9 +621,18 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
   }, [selectedProjectKey, projects]);
 
   const handleProjectChange = (key: string) => {
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+    activeImproveRequestRef.current = null;
+    setImproving(false);
     setSelectedProjectKey(key);
     setSelectedIds(new Set());
     setOutput('');
+    setImprovedOutput('');
+    setImproveError(null);
+    setImproveLog([]);
     setWarnings([]);
     setError(null);
   };
@@ -584,6 +647,16 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
   };
 
   const handleGenerate = () => {
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+    activeImproveRequestRef.current = null;
+    setImproving(false);
+    setImprovedOutput('');
+    setImproveError(null);
+    setImproveLog([]);
+    setCopyImproved(false);
     setGenerating(true);
     setError(null);
     setWarnings([]);
@@ -611,9 +684,88 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleImproveWithAi = () => {
+    if (!output.trim() || improving) return;
+
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+
+    const jobId = `improve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeImproveRequestRef.current = jobId;
+    setImproving(true);
+    setImproveError(null);
+    setImproveLog([]);
+    setImprovedOutput('');
+    setCopyImproved(false);
+
+    listen<{ job_id: string; line: string }>('prompt_job_log', (event) => {
+      if (event.payload.job_id === jobId && activeImproveRequestRef.current === jobId) {
+        setImproveLog((prev) => [...prev, event.payload.line]);
+      }
+    }).then((unlisten) => {
+      if (activeImproveRequestRef.current === jobId) {
+        improveUnlistenRef.current = unlisten;
+        return;
+      }
+      unlisten();
+    });
+
+    const metaPrompt = buildImprovementPrompt(output);
+    const provider = settings?.ai_provider ?? 'claude';
+    const projectId = selectedProjectKey && selectedProjectKey !== NO_PROJECT_KEY ? selectedProjectKey : undefined;
+
+    improvePromptWithClaude(metaPrompt, selectedProjectPath, provider, projectId, jobId)
+      .then((result) => {
+        if (activeImproveRequestRef.current !== jobId) return;
+        setImprovedOutput(result);
+        setImproving(false);
+      })
+      .catch((e: unknown) => {
+        if (activeImproveRequestRef.current !== jobId) return;
+        setImproveError(String(e));
+        setImproving(false);
+      })
+      .finally(() => {
+        if (activeImproveRequestRef.current !== jobId) return;
+        if (improveUnlistenRef.current) {
+          improveUnlistenRef.current();
+          improveUnlistenRef.current = null;
+        }
+        activeImproveRequestRef.current = null;
+      });
+  };
+
+  const handleCancelImprove = () => {
+    if (!activeImproveRequestRef.current) return;
+    if (improveUnlistenRef.current) {
+      improveUnlistenRef.current();
+      improveUnlistenRef.current = null;
+    }
+    activeImproveRequestRef.current = null;
+    setImproving(false);
+    setImproveError('Improve canceled by user.');
+  };
+
+  const handleCopyImproved = async () => {
+    if (!improvedOutput) return;
+    await navigator.clipboard.writeText(improvedOutput);
+    setCopyImproved(true);
+    setTimeout(() => setCopyImproved(false), 2000);
+  };
+
   const dismissWarning = (index: number) => {
     setWarnings((prev) => prev.filter((_, i) => i !== index));
   };
+
+  useEffect(() => {
+    return () => {
+      if (improveUnlistenRef.current) {
+        improveUnlistenRef.current();
+      }
+    };
+  }, []);
 
   if (eligibleTasks.length === 0) {
     return (
@@ -734,15 +886,35 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">
               Master Prompt
             </h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-              onClick={handleCopy}
-              className={copied ? 'text-green-400' : ''}
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Wand2 size={12} />}
+                onClick={handleImproveWithAi}
+                disabled={!output || improving}
+              >
+                {improving ? 'Improving...' : 'Improve with AI'}
+              </Button>
+              {improving && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleCancelImprove}
+                >
+                  Cancel Improve
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                onClick={handleCopy}
+                className={copied ? 'text-green-400' : ''}
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </Button>
+            </div>
           </div>
           <textarea
             readOnly
@@ -750,6 +922,41 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
             rows={16}
             className="w-full rounded-lg border border-gray-200 bg-gray-50 dark:border-[#30363D] dark:bg-[#0F1117] p-3 text-xs font-mono text-gray-900 dark:text-[#E6EDF3] resize-y outline-none"
           />
+
+          {(improving || (improveLog.length > 0 && !improvedOutput && !improveError)) && (
+            <ImproveLogPanel log={improveLog} loading={improving} />
+          )}
+
+          {improveError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300" role="alert">
+              {improveError}
+            </div>
+          )}
+
+          {improvedOutput && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">
+                  Improved Master Prompt
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={copyImproved ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                  onClick={handleCopyImproved}
+                  className={copyImproved ? 'text-green-400' : ''}
+                >
+                  {copyImproved ? 'Copied!' : 'Copy improved'}
+                </Button>
+              </div>
+              <textarea
+                value={improvedOutput}
+                onChange={(event) => setImprovedOutput(event.target.value)}
+                rows={16}
+                className="w-full rounded-lg border border-gray-200 bg-gray-50 dark:border-[#30363D] dark:bg-[#0F1117] p-3 text-xs font-mono text-gray-900 dark:text-[#E6EDF3] resize-y outline-none"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

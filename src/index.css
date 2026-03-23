@@ -49,6 +49,93 @@ body {
   background: #475569;
 }
 
+/* ===== Mobile Mode ===== */
+/* When .mobile-mode is on the root container, scale up everything for touch use via RustDesk */
+
+/* Base font size bump: makes all rem/em units larger */
+.mobile-mode {
+  font-size: 15px;
+}
+
+/* All text-xs (12px) → 14px, text-sm (14px) → 16px inside mobile mode */
+.mobile-mode .text-xs {
+  font-size: 14px !important;
+  line-height: 20px !important;
+}
+.mobile-mode .text-sm {
+  font-size: 16px !important;
+  line-height: 24px !important;
+}
+.mobile-mode .text-base {
+  font-size: 17px !important;
+  line-height: 26px !important;
+}
+.mobile-mode .text-\[10px\],
+.mobile-mode .text-\[11px\] {
+  font-size: 13px !important;
+  line-height: 18px !important;
+}
+
+/* Inputs, selects, textareas — bigger touch targets */
+.mobile-mode input,
+.mobile-mode select,
+.mobile-mode textarea {
+  min-height: 44px;
+  font-size: 16px !important;
+  padding: 10px 12px !important;
+}
+.mobile-mode textarea {
+  min-height: 80px;
+}
+
+/* All clickable items get larger touch area */
+.mobile-mode a,
+.mobile-mode button {
+  min-height: 40px;
+}
+
+/* Wider scrollbar for touch scrolling */
+.mobile-mode ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.mobile-mode ::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+}
+
+/* Cards and panels get more padding */
+.mobile-mode .p-3 {
+  padding: 16px !important;
+}
+.mobile-mode .p-4 {
+  padding: 20px !important;
+}
+
+/* Gap increases for better touch separation */
+.mobile-mode .gap-1 {
+  gap: 8px !important;
+}
+.mobile-mode .gap-1\.5 {
+  gap: 10px !important;
+}
+.mobile-mode .gap-2 {
+  gap: 12px !important;
+}
+
+/* Icon-only buttons need minimum size */
+.mobile-mode button:has(> svg:only-child) {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Safe area for bottom nav on notched devices */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Prose overrides for AI responses */
 .prose-invert pre {
   background: #1E293B;

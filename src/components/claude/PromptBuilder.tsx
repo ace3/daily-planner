@@ -25,6 +25,7 @@ interface PromptBuilderProps {
   loading: boolean;
   error: string | null;
   onImprove: () => void;
+  onCancelImprove?: () => void;
   onReset: () => void;
   // Full assembled meta-prompt sent to the CLI — shown as read-only preview
   builtPrompt?: string;
@@ -48,6 +49,7 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
   loading,
   error,
   onImprove,
+  onCancelImprove,
   onReset,
   builtPrompt,
   onMarkDone,
@@ -430,6 +432,16 @@ export const PromptBuilder: React.FC<PromptBuilderProps> = ({
         >
           {loading ? 'Improving...' : 'Improve Prompt'}
         </Button>
+        {loading && onCancelImprove && (
+          <Button
+            variant="danger"
+            size="md"
+            onClick={onCancelImprove}
+            className="shrink-0"
+          >
+            Cancel Improve
+          </Button>
+        )}
         {onRunAsWorktree && (
           <Button
             variant="ghost"

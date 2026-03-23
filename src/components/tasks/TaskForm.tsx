@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { useMobileStore } from '../../stores/mobileStore';
 import type { CreateTaskInput } from '../../types/task';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSessionDraftState } from '../../hooks/useSessionDraftState';
@@ -18,6 +19,7 @@ export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit,
   const [draft, setDraft] = useSessionDraftState(draftKey, { title: '', projectId: '' });
   const [submitting, setSubmitting] = useState(false);
   const { projects } = useProjectStore();
+  const { mobileMode: m } = useMobileStore();
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -47,7 +49,8 @@ export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit,
     <select
       value={draft.projectId}
       onChange={(e) => setDraft((prev) => ({ ...prev, projectId: e.target.value }))}
-      className="bg-gray-50 border border-gray-200 rounded-lg text-gray-500 text-xs outline-none focus:border-blue-500 transition-colors px-2 py-1.5 cursor-pointer dark:bg-[#161B22] dark:border-[#30363D] dark:text-[#8B949E]"
+      className={`bg-gray-50 border border-gray-200 rounded-lg text-gray-500 outline-none focus:border-blue-500 transition-colors cursor-pointer dark:bg-[#161B22] dark:border-[#30363D] dark:text-[#8B949E]
+        ${m ? 'text-base px-3 py-2.5 min-h-[44px]' : 'text-xs px-2 py-1.5'}`}
     >
       <option value="">No project</option>
       {projects.map((p) => (
@@ -58,16 +61,17 @@ export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit,
 
   if (compact) {
     return (
-      <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
-        <div className="flex gap-2">
+      <form onSubmit={handleSubmit} className={`flex flex-col ${m ? 'gap-3' : 'gap-1.5'}`}>
+        <div className={`flex ${m ? 'gap-3' : 'gap-2'}`}>
           <input
             value={draft.title}
             onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
             onKeyDown={handleKeyDown}
             placeholder="Add task... (Enter to add)"
-            className="flex-1 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 text-sm placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors px-3 py-1.5 dark:bg-[#161B22] dark:border-[#30363D] dark:text-[#E6EDF3] dark:placeholder-[#484F58]"
+            className={`flex-1 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors dark:bg-[#161B22] dark:border-[#30363D] dark:text-[#E6EDF3] dark:placeholder-[#484F58]
+              ${m ? 'text-base px-4 py-3 min-h-[48px]' : 'text-sm px-3 py-1.5'}`}
           />
-          <Button type="submit" variant="primary" size="sm" loading={submitting} icon={<Plus size={14} />}>
+          <Button type="submit" variant="primary" size="sm" loading={submitting} icon={<Plus size={m ? 18 : 14} />}>
             Add
           </Button>
         </div>
@@ -88,11 +92,11 @@ export const TaskForm: React.FC<TaskFormProps> = ({ date, sessionSlot, onSubmit,
       />
       {projects.length > 0 && (
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-500 dark:text-[#8B949E]">Project (optional)</label>
+          <label className={`text-gray-500 dark:text-[#8B949E] ${m ? 'text-sm' : 'text-xs'}`}>Project (optional)</label>
           {projectSelect}
         </div>
       )}
-      <Button type="submit" variant="primary" loading={submitting} icon={<Plus size={14} />}>
+      <Button type="submit" variant="primary" loading={submitting} icon={<Plus size={m ? 18 : 14} />}>
         Add Task
       </Button>
     </form>
