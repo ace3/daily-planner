@@ -131,6 +131,12 @@ pub fn get_tasks(date: String, db: State<'_, DbConnection>) -> Result<Vec<querie
 }
 
 #[tauri::command]
+pub fn get_tasks_range(from: String, to: String, db: State<'_, DbConnection>) -> Result<Vec<queries::Task>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::get_tasks_by_date_range(&conn, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn rollover_incomplete_tasks(date: String, db: State<'_, DbConnection>) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::rollover_incomplete_tasks(&conn, &date).map_err(|e| e.to_string())
@@ -144,7 +150,7 @@ pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Resul
         &input.date,
         input.session_slot,
         &input.title,
-        &input.task_type.unwrap_or_else(|| "code".to_string()),
+        &input.task_type.unwrap_or_else(|| "other".to_string()),
         input.priority.unwrap_or(2),
         input.estimated_min,
         input.project_id.as_deref(),

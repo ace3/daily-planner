@@ -96,6 +96,8 @@ pub async fn improve_prompt_with_claude(
     project_path: Option<String>,
     provider: Option<String>,
     project_id: Option<String>,
+    job_id: Option<String>,
+    app_handle: tauri::AppHandle,
     db: State<'_, DbConnection>,
 ) -> Result<String, String> {
     // Fetch global and project prompts synchronously before the async CLI call
@@ -140,28 +142,106 @@ pub async fn improve_prompt_with_claude(
         cmd.arg(arg);
     }
     cmd.env("NO_COLOR", "1");
-    if ai_provider == AiProvider::Codex {
-        cmd.stdin(Stdio::null());
-    }
+    // Close stdin so CLIs don't block waiting for interactive input
+    cmd.stdin(Stdio::null());
 
     if let Some(path) = &project_path {
         cmd.current_dir(path);
     }
 
-    let output = cmd.output().await.map_err(|e| {
-        format!(
-            "Failed to run '{}': {}. Make sure the CLI is installed and you're logged in.",
-            cli, e
-        )
-    })?;
+    // If a job_id is provided, stream stdout/stderr as log events for UI feedback
+    if let Some(ref jid) = job_id {
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
 
-    if output.status.success() {
-        let raw = String::from_utf8_lossy(&output.stdout);
-        Ok(strip_ansi(&raw).trim().to_string())
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to run '{}': {}. Make sure the CLI is installed and you're logged in.",
+                cli, e
+            )
+        })?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        // Stream stdout lines as log events and collect for result
+        let app_out = app_handle.clone();
+        let jid_out = jid.clone();
+        let stdout_task = tokio::spawn(async move {
+            let mut collected = String::new();
+            if let Some(out) = stdout {
+                let mut lines = BufReader::new(out).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let clean = strip_ansi(&line);
+                    if !clean.trim().is_empty() {
+                        let _ = app_out.emit(
+                            "prompt_job_log",
+                            PromptJobLogPayload {
+                                job_id: jid_out.clone(),
+                                line: clean.clone(),
+                            },
+                        );
+                    }
+                    collected.push_str(&line);
+                    collected.push('\n');
+                }
+            }
+            collected
+        });
+
+        // Stream stderr lines as log events
+        let app_err = app_handle.clone();
+        let jid_err = jid.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut collected = String::new();
+            if let Some(err) = stderr {
+                let mut lines = BufReader::new(err).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let clean = strip_ansi(&line);
+                    if !clean.trim().is_empty() {
+                        let _ = app_err.emit(
+                            "prompt_job_log",
+                            PromptJobLogPayload {
+                                job_id: jid_err.clone(),
+                                line: clean,
+                            },
+                        );
+                    }
+                    collected.push_str(&line);
+                    collected.push('\n');
+                }
+            }
+            collected
+        });
+
+        let (stdout_result, stderr_result) = tokio::join!(stdout_task, stderr_task);
+        let all_stdout = stdout_result.unwrap_or_default();
+        let all_stderr = stderr_result.unwrap_or_default();
+
+        let status = child.wait().await.map_err(|e| format!("Failed to wait for '{}': {}", cli, e))?;
+
+        if status.success() {
+            Ok(strip_ansi(&all_stdout).trim().to_string())
+        } else {
+            Err(format!("{} exited with error:\n{}{}", cli, all_stderr, all_stdout))
+        }
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(format!("{} exited with error:\n{}{}", cli, stderr, stdout))
+        // Legacy path: no streaming, just await output
+        let output = cmd.output().await.map_err(|e| {
+            format!(
+                "Failed to run '{}': {}. Make sure the CLI is installed and you're logged in.",
+                cli, e
+            )
+        })?;
+
+        if output.status.success() {
+            let raw = String::from_utf8_lossy(&output.stdout);
+            Ok(strip_ansi(&raw).trim().to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Err(format!("{} exited with error:\n{}{}", cli, stderr, stdout))
+        }
     }
 }
 

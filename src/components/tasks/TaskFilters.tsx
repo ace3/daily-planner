@@ -24,7 +24,6 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
 
   const types: Array<{ value: TaskType | 'all'; label: string }> = [
     { value: 'all', label: 'All types' },
-    { value: 'code', label: 'Code' },
     { value: 'research', label: 'Research' },
     { value: 'prompt', label: 'Prompt' },
     { value: 'meeting', label: 'Meeting' },

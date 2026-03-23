@@ -1,14 +1,15 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Zap, MessageSquare, BarChart2, FolderOpen, Settings, FileText, Wifi } from 'lucide-react';
+import { LayoutDashboard, Zap, MessageSquare, BarChart2, FolderOpen, Settings, FileText, Wifi, History } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', shortcut: '⌘1' },
   { to: '/prompt', icon: MessageSquare, label: 'Prompt', shortcut: '⌘2' },
   { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘3' },
-  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘4' },
-  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘5' },
-  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘6' },
+  { to: '/history', icon: History, label: 'History', shortcut: '⌘4' },
+  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘5' },
+  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘6' },
+  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘7' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
 

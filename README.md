@@ -21,6 +21,12 @@ The interface is calm, focused, minimal, and Nordic — designed to feel like a 
 - **Prompt queue** — Queue and run multiple AI prompts with job management and cancellation
 - **Prompt templates** — Save and reuse AI prompt templates
 - **Multiple AI providers** — Supports Anthropic Claude, OpenAI Codex, and GitHub Copilot
+- **Master prompt composer** — Dedicated tab for building structured prompts with intent detection and built-in templates (Fix Issue, Implement Feature)
+- **Git worktree pipeline** — Runs prompt jobs in isolated git worktrees; each job gets a clean branch, executes, and reports back
+- **Job cancellation** — Cancel running prompt jobs with SIGTERM; queue drains gracefully
+- **Project organization** — Group and filter tasks by project
+- **Versioned database migrations** — Schema upgrades apply automatically on startup
+- **Auto backup** — Local SQLite database backup on each app launch
 
 ## Brand
 
@@ -162,6 +168,6 @@ Output locations:
 | Backend | Rust |
 | Database | SQLite (rusqlite, bundled) |
 | Scheduling | tokio-cron-scheduler |
-| HTTP/AI streaming | reqwest + Anthropic Claude API |
+| HTTP/AI streaming | reqwest + Anthropic / OpenAI / GitHub Copilot APIs |
 | Encryption | AES-256-GCM (aes-gcm crate) |
 | Testing | Vitest + Testing Library (frontend), cargo test (Rust) |

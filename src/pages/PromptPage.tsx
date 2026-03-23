@@ -1,5 +1,6 @@
-import React, { useEffect, useCallback, useMemo, useState } from 'react';
-import { MessageSquare, ListOrdered, Layers, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, X } from 'lucide-react';
+import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react';
+import { MessageSquare, ListOrdered, Layers, GitBranch, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, X, Terminal } from 'lucide-react';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { PromptBuilder } from '../components/claude/PromptBuilder';
 import { PromptQueue } from '../components/PromptQueue';
 import type { TaskContext } from '../components/claude/PromptBuilder';
@@ -23,6 +24,7 @@ interface PromptState {
   improved: string;
   loading: boolean;
   error: string | null;
+  log: string[];
 }
 
 const defaultPromptState = (): PromptState => ({
@@ -30,6 +32,7 @@ const defaultPromptState = (): PromptState => ({
   improved: '',
   loading: false,
   error: null,
+  log: [],
 });
 
 // buildImprovementPrompt is now imported from src/lib/promptImprover.ts
@@ -87,6 +90,7 @@ export const PromptPage: React.FC = () => {
           improved: selectedTask.prompt_result ?? '',
           loading: false,
           error: null,
+          log: [],
         },
       };
     });
@@ -118,6 +122,9 @@ export const PromptPage: React.FC = () => {
     [taskKey, patchState],
   );
 
+  // Ref to hold the unlisten function for log streaming
+  const improveUnlistenRef = useRef<UnlistenFn | null>(null);
+
   const handleImprove = useCallback(() => {
     const currentPrompt = (promptStates[taskKey] ?? defaultPromptState()).prompt;
     if (!currentPrompt.trim()) return;
@@ -128,13 +135,28 @@ export const PromptPage: React.FC = () => {
     const capturedPrompt = currentPrompt.trim();
     const capturedProvider = selectedAiProvider;
 
-    patchState(capturedKey, { loading: true, error: null, improved: '' });
+    // Generate a unique job_id for log streaming
+    const jobId = `improve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    patchState(capturedKey, { loading: true, error: null, improved: '', log: [] });
+
+    // Subscribe to log events for this job
+    listen<{ job_id: string; line: string }>('prompt_job_log', (event) => {
+      if (event.payload.job_id === jobId) {
+        setPromptStates((prev) => {
+          const current = prev[capturedKey] ?? defaultPromptState();
+          return { ...prev, [capturedKey]: { ...current, log: [...current.log, event.payload.line] } };
+        });
+      }
+    }).then((unlisten) => {
+      improveUnlistenRef.current = unlisten;
+    });
 
     const metaPrompt = buildImprovementPrompt(capturedPrompt, capturedContext);
 
     const request = capturedProvider === 'copilot_cli'
       ? invokeCopilotCli(metaPrompt, 'suggest', capturedContext?.project?.path)
-      : improvePromptWithClaude(metaPrompt, capturedContext?.project?.path, capturedProvider, capturedContext?.project?.id);
+      : improvePromptWithClaude(metaPrompt, capturedContext?.project?.path, capturedProvider, capturedContext?.project?.id, jobId);
 
     request
       .then((result) => {
@@ -142,6 +164,13 @@ export const PromptPage: React.FC = () => {
       })
       .catch((e: unknown) => {
         patchState(capturedKey, { error: String(e), loading: false });
+      })
+      .finally(() => {
+        // Unsubscribe from log events to prevent leaks
+        if (improveUnlistenRef.current) {
+          improveUnlistenRef.current();
+          improveUnlistenRef.current = null;
+        }
       });
   }, [taskKey, selectedTask, projects, promptStates, patchState, selectedAiProvider]);
 
@@ -317,6 +346,11 @@ export const PromptPage: React.FC = () => {
             }
           />
 
+          {/* Improve prompt log panel — visible while loading or when log has content and no result yet */}
+          {(state.loading || (state.log.length > 0 && !state.improved && !state.error)) && (
+            <ImproveLogPanel log={state.log} loading={state.loading} />
+          )}
+
           {/* Worktree pipeline status panel */}
           {worktreePipelineJob && (
             <div className={`rounded-lg border p-3 text-xs ${
@@ -423,6 +457,55 @@ export const PromptPage: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
+// Improve Log Panel — collapsible panel showing CLI output during improve
+// ---------------------------------------------------------------------------
+interface ImproveLogPanelProps {
+  log: string[];
+  loading: boolean;
+}
+
+const ImproveLogPanel: React.FC<ImproveLogPanelProps> = ({ log, loading }) => {
+  const [expanded, setExpanded] = useState(false);
+  const logEndRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (expanded && logEndRef.current) {
+      logEndRef.current.scrollTop = logEndRef.current.scrollHeight;
+    }
+  }, [log.length, expanded]);
+
+  return (
+    <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 w-full text-left cursor-pointer"
+      >
+        <Terminal size={12} className="text-blue-400 shrink-0" />
+        <span className="font-semibold text-blue-300 uppercase tracking-wide">
+          {loading ? 'Improve in progress…' : 'Improve log'}
+        </span>
+        {loading && <Loader2 size={12} className="text-blue-400 animate-spin" />}
+        <span className="ml-auto text-[11px] text-gray-500">
+          {log.length} line{log.length !== 1 ? 's' : ''}
+        </span>
+        {expanded ? <ChevronUp size={11} className="text-gray-500" /> : <ChevronDown size={11} className="text-gray-500" />}
+      </button>
+      {expanded && log.length > 0 && (
+        <pre
+          ref={logEndRef}
+          className="mt-2 rounded bg-black/40 border border-gray-700 p-2 text-[10px] text-gray-400 font-mono overflow-y-auto max-h-48 whitespace-pre-wrap"
+        >
+          {log.join('\n')}
+        </pre>
+      )}
+      {expanded && log.length === 0 && loading && (
+        <div className="mt-2 text-[11px] text-gray-500">Waiting for output from the CLI…</div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Master Prompt Panel — shown in the "Master Prompt" tab
 // ---------------------------------------------------------------------------
 interface MasterPromptPanelProps {
@@ -430,7 +513,11 @@ interface MasterPromptPanelProps {
   projects: Project[];
 }
 
+// Sentinel key for tasks without a project
+const NO_PROJECT_KEY = '__no_project__';
+
 const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }) => {
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [output, setOutput] = useState('');
   const [warnings, setWarnings] = useState<MergeWarning[]>([]);
@@ -442,6 +529,50 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
     () => tasks.filter((t) => typeof t.prompt_result === 'string' && t.prompt_result.trim().length > 0),
     [tasks],
   );
+
+  // Compute which project groups have eligible tasks
+  const projectGroups = useMemo(() => {
+    const groups: Array<{ key: string; label: string; count: number }> = [];
+    const seen = new Set<string>();
+    for (const t of eligibleTasks) {
+      const key = t.project_id ?? NO_PROJECT_KEY;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const count = eligibleTasks.filter((x) => (x.project_id ?? NO_PROJECT_KEY) === key).length;
+      if (key === NO_PROJECT_KEY) {
+        groups.push({ key, label: 'No Project', count });
+      } else {
+        const p = projects.find((pr) => pr.id === key);
+        groups.push({ key, label: p?.name ?? 'Unknown project', count });
+      }
+    }
+    return groups;
+  }, [eligibleTasks, projects]);
+
+  // Tasks visible under the current project filter
+  const filteredTasks = useMemo(
+    () =>
+      selectedProjectKey === null
+        ? []
+        : eligibleTasks.filter(
+            (t) => (t.project_id ?? NO_PROJECT_KEY) === selectedProjectKey,
+          ),
+    [eligibleTasks, selectedProjectKey],
+  );
+
+  // Derive projectPath from the selected project for the generated prompt
+  const selectedProjectPath = useMemo(() => {
+    if (!selectedProjectKey || selectedProjectKey === NO_PROJECT_KEY) return undefined;
+    return projects.find((p) => p.id === selectedProjectKey)?.path;
+  }, [selectedProjectKey, projects]);
+
+  const handleProjectChange = (key: string) => {
+    setSelectedProjectKey(key);
+    setSelectedIds(new Set());
+    setOutput('');
+    setWarnings([]);
+    setError(null);
+  };
 
   const toggleTask = (id: string) => {
     setSelectedIds((prev) => {
@@ -459,7 +590,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
     setOutput('');
 
     try {
-      const sources = eligibleTasks
+      const sources = filteredTasks
         .filter((t) => selectedIds.has(t.id))
         .map((t) => ({ id: t.id, label: t.title, content: t.prompt_result!, selected: true }));
 
@@ -494,6 +625,33 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col gap-4">
+      {/* Project selector */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Select Project</h3>
+          <p className="text-xs text-gray-500 dark:text-[#8B949E]">
+            Choose a project to combine prompts from its tasks.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {projectGroups.map((g) => (
+            <button
+              key={g.key}
+              onClick={() => handleProjectChange(g.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer
+                ${selectedProjectKey === g.key
+                  ? 'border-blue-500/40 bg-blue-500/10 text-blue-400'
+                  : 'border-gray-200 dark:border-[#30363D] text-gray-500 dark:text-[#8B949E] hover:bg-gray-50 dark:hover:bg-[#1C2128]'
+                }`}
+            >
+              {g.label} ({g.count})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Task selector — only tasks from selected project */}
+      {selectedProjectKey !== null && (
       <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Select Tasks</h3>
@@ -503,9 +661,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
         </div>
 
         <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
-          {eligibleTasks.map((task) => {
-            const project = task.project_id ? projects.find((p) => p.id === task.project_id) : undefined;
-            return (
+          {filteredTasks.map((task) => (
               <label
                 key={task.id}
                 className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors
@@ -523,11 +679,15 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
                 <span className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3] truncate flex-1">
                   {task.title}
                 </span>
-                {project && <Badge variant="blue">{project.name}</Badge>}
               </label>
-            );
-          })}
+          ))}
         </div>
+
+        {selectedProjectPath && (
+          <p className="text-[11px] text-gray-500 dark:text-[#484F58]">
+            Project path: <code className="text-gray-400">{selectedProjectPath}</code>
+          </p>
+        )}
 
         <Button
           variant="primary"
@@ -540,6 +700,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
           {generating ? 'Generating...' : 'Generate Master Prompt'}
         </Button>
       </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300" role="alert">

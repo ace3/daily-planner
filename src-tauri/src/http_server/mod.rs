@@ -194,7 +194,7 @@ async fn create_task(
         &body.date,
         body.session_slot,
         &body.title,
-        &body.task_type.unwrap_or_else(|| "code".into()),
+        &body.task_type.unwrap_or_else(|| "other".into()),
         body.priority.unwrap_or(2),
         body.estimated_min,
         body.project_id.as_deref(),

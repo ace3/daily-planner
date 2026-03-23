@@ -1,4 +1,4 @@
-export type TaskType = 'code' | 'research' | 'prompt' | 'meeting' | 'review' | 'other';
+export type TaskType = 'research' | 'prompt' | 'meeting' | 'review' | 'other';
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'skipped' | 'carried_over';
 export type TaskPriority = 1 | 2 | 3; // 1=high, 2=medium, 3=low
 export type WorktreeStatus = 'active' | 'merged' | 'abandoned';

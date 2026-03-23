@@ -1,6 +1,6 @@
 use crate::db::{queries, DbConnection};
 use serde::Serialize;
-use std::process::Output;
+use std::process::{Output, Stdio};
 use tauri::State;
 use tokio::process::Command;
 
@@ -37,6 +37,8 @@ async fn run_command(
     let mut cmd = Command::new(binary);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
+    // Close stdin so the CLI does not block waiting for interactive input
+    cmd.stdin(Stdio::null());
     if let Some(path) = project_path {
         cmd.current_dir(path);
     }

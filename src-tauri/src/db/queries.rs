@@ -140,6 +140,44 @@ pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
+pub fn get_tasks_by_date_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
+                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
+                position, created_at, updated_at, completed_at, project_id,
+                worktree_path, worktree_branch, worktree_status
+         FROM tasks WHERE date >= ?1 AND date <= ?2 ORDER BY date DESC, session_slot, position, created_at",
+    )?;
+    let tasks = stmt
+        .query_map(params![from, to], |row| {
+            Ok(Task {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                session_slot: row.get(2)?,
+                title: row.get(3)?,
+                notes: row.get(4)?,
+                task_type: row.get(5)?,
+                priority: row.get(6)?,
+                status: row.get(7)?,
+                estimated_min: row.get(8)?,
+                actual_min: row.get(9)?,
+                prompt_used: row.get(10)?,
+                prompt_result: row.get(11)?,
+                carried_from: row.get(12)?,
+                position: row.get(13)?,
+                created_at: row.get(14)?,
+                updated_at: row.get(15)?,
+                completed_at: row.get(16)?,
+                project_id: row.get(17)?,
+                worktree_path: row.get(18)?,
+                worktree_branch: row.get(19)?,
+                worktree_status: row.get(20)?,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(tasks)
+}
+
 pub fn get_task_by_id(conn: &Connection, id: &str) -> Result<Option<Task>> {
     let result = conn.query_row(
         "SELECT id, date, session_slot, title, notes, task_type, priority, status,

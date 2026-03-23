@@ -18,6 +18,7 @@ import type { Project, CreateProjectInput } from '../types/project';
 
 // Tasks
 export const getTasks = (date: string) => invoke<Task[]>('get_tasks', { date });
+export const getTasksRange = (from: string, to: string) => invoke<Task[]>('get_tasks_range', { from, to });
 export const rolloverIncompleteTasks = (date: string) =>
   invoke<number>('rollover_incomplete_tasks', { date });
 export const createTask = (input: CreateTaskInput) => invoke<string>('create_task', { input });
@@ -51,8 +52,8 @@ export const getSetting = (key: string) => invoke<string | null>('get_setting', 
 export const setSetting = (key: string, value: string) => invoke<void>('set_setting', { key, value });
 
 // CLI / AI providers
-export const improvePromptWithClaude = (prompt: string, projectPath?: string, provider?: string, projectId?: string) =>
-  invoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId });
+export const improvePromptWithClaude = (prompt: string, projectPath?: string, provider?: string, projectId?: string, jobId?: string) =>
+  invoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId, jobId });
 export const invokeCopilotCli = (
   input: string,
   mode: 'suggest' | 'explain' = 'suggest',

@@ -23,7 +23,7 @@ describe('taskStore.moveTaskToSession', () => {
       session_slot: 1,
       title: 'Test',
       status: 'pending',
-      task_type: 'code',
+      task_type: 'other',
       priority: 2,
       date: '2026-03-23',
       notes: '',

@@ -8,7 +8,7 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
   session_slot: 1,
   title: 'Test task',
   notes: '',
-  task_type: 'code',
+  task_type: 'other',
   priority: 2,
   status: 'pending',
   estimated_min: null,

@@ -9,6 +9,7 @@ import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { RemoteAccessPage } from './pages/RemoteAccessPage';
+import { HistoryPage } from './pages/HistoryPage';
 import { MorningPlanning } from './pages/MorningPlanning';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
@@ -65,6 +66,7 @@ const AppInner: React.FC = () => {
           <Route path="/" element={<Dashboard />} />
           <Route path="/prompt" element={<PromptPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
+          <Route path="/history" element={<HistoryPage />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
