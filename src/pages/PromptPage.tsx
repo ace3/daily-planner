@@ -670,6 +670,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
       const result = generateMasterPrompt(sources);
       setOutput(result.masterPrompt);
       setWarnings(result.warnings);
+      handleImproveWithAi(result.masterPrompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -684,8 +685,9 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleImproveWithAi = () => {
-    if (!output.trim() || improving) return;
+  const handleImproveWithAi = (promptText?: string) => {
+    const targetPrompt = promptText ?? output;
+    if (!targetPrompt.trim() || improving) return;
 
     if (improveUnlistenRef.current) {
       improveUnlistenRef.current();
@@ -712,7 +714,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
       unlisten();
     });
 
-    const metaPrompt = buildImprovementPrompt(output);
+    const metaPrompt = buildImprovementPrompt(targetPrompt);
     const provider = settings?.ai_provider ?? 'claude';
     const projectId = selectedProjectKey && selectedProjectKey !== NO_PROJECT_KEY ? selectedProjectKey : undefined;
 

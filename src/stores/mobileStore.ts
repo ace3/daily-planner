@@ -12,6 +12,20 @@ interface MobileState {
 const STORAGE_KEY = 'vegr-mobile-mode';
 const DESKTOP_SIZE_KEY = 'vegr-desktop-size';
 
+function isWebBrowser(): boolean {
+  return typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ === 'undefined';
+}
+
+function getInitialMobileMode(): boolean {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved !== null) return saved === '1';
+  if (isWebBrowser()) {
+    localStorage.setItem(STORAGE_KEY, '1');
+    return true;
+  }
+  return false;
+}
+
 const MOBILE_WIDTH = 480;
 const MOBILE_HEIGHT = 860;
 
@@ -59,7 +73,7 @@ async function restoreDesktopSize(saved: { width: number; height: number } | nul
 }
 
 export const useMobileStore = create<MobileState>((set, get) => ({
-  mobileMode: localStorage.getItem(STORAGE_KEY) === '1',
+  mobileMode: getInitialMobileMode(),
   moreMenuOpen: false,
   desktopSize: getSavedDesktopSize(),
 
@@ -68,12 +82,14 @@ export const useMobileStore = create<MobileState>((set, get) => ({
     const next = !current;
     localStorage.setItem(STORAGE_KEY, next ? '1' : '0');
 
-    if (next) {
-      saveCurrentSizeAndGoMobile().then((saved) => {
-        if (saved) set({ desktopSize: saved });
-      });
-    } else {
-      restoreDesktopSize(get().desktopSize);
+    if (!isWebBrowser()) {
+      if (next) {
+        saveCurrentSizeAndGoMobile().then((saved) => {
+          if (saved) set({ desktopSize: saved });
+        });
+      } else {
+        restoreDesktopSize(get().desktopSize);
+      }
     }
 
     set({ mobileMode: next, moreMenuOpen: false });
@@ -81,12 +97,14 @@ export const useMobileStore = create<MobileState>((set, get) => ({
 
   setMobileMode: (on) => {
     localStorage.setItem(STORAGE_KEY, on ? '1' : '0');
-    if (on) {
-      saveCurrentSizeAndGoMobile().then((saved) => {
-        if (saved) set({ desktopSize: saved });
-      });
-    } else {
-      restoreDesktopSize(get().desktopSize);
+    if (!isWebBrowser()) {
+      if (on) {
+        saveCurrentSizeAndGoMobile().then((saved) => {
+          if (saved) set({ desktopSize: saved });
+        });
+      } else {
+        restoreDesktopSize(get().desktopSize);
+      }
     }
     set({ mobileMode: on, moreMenuOpen: false });
   },
