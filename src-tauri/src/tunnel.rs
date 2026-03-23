@@ -234,12 +234,21 @@ async fn notify_telegram_if_configured(db_path: &std::path::Path, url: &str) -> 
 
 async fn send_telegram_message(bot_token: &str, chat_id: &str, text: &str) -> anyhow::Result<()> {
     let api_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-    reqwest::Client::new()
+    let resp = reqwest::Client::new()
         .post(&api_url)
         .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // Extract Telegram's "description" field if present
+        let description = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["description"].as_str().map(|s| s.to_string()))
+            .unwrap_or(body);
+        anyhow::bail!("Telegram error {}: {}", status.as_u16(), description);
+    }
     Ok(())
 }
 
