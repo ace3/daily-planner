@@ -206,6 +206,7 @@ pub fn run() {
             tunnel::start_tunnel_cmd,
             tunnel::stop_tunnel_cmd,
             tunnel::get_tunnel_status,
+            tunnel::test_telegram_notification,
             // Auto backup
             commands::auto_backup::trigger_backup_now,
             commands::auto_backup::list_backup_sessions,

@@ -6,7 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
 import {
-  backupData, restoreData, resetAppData,
+  backupData, restoreData, resetAppData, testTelegramNotification,
   triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
   restoreFromBackupSession, deleteBackupSession, getBackupSettings, setBackupSettings,
   type BackupSessionInfo, type BackupSettings,
@@ -39,6 +39,7 @@ export const SettingsPage: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
+  const [telegramTesting, setTelegramTesting] = useState(false);
 
   // Auto Backup state
   const [backupSessions, setBackupSessions] = useState<BackupSessionInfo[]>([]);
@@ -149,6 +150,18 @@ export const SettingsPage: React.FC = () => {
     }
     setDraft((prev) => ({ ...prev, [key]: trimmed }));
     await handleSave(key, trimmed);
+  };
+
+  const handleTestTelegram = async () => {
+    setTelegramTesting(true);
+    try {
+      await testTelegramNotification();
+      toast.success('Test message sent to Telegram');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTelegramTesting(false);
+    }
   };
 
   const handleSaveGlobalPrompt = async () => {
@@ -514,6 +527,17 @@ export const SettingsPage: React.FC = () => {
                 className={`w-full ${inputClass}`}
                 autoComplete="off"
               />
+            </div>
+            <div className="flex justify-end pt-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Bell size={12} />}
+                onClick={handleTestTelegram}
+                loading={telegramTesting}
+              >
+                Send Test Message
+              </Button>
             </div>
           </div>
         </section>

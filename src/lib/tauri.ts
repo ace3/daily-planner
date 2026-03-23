@@ -506,3 +506,8 @@ export const getTunnelStatus = (): Promise<TunnelStatus> =>
   isWebBrowser()
     ? Promise.resolve({ running: false, url: null, error: null })
     : tauriInvoke<TunnelStatus>('get_tunnel_status');
+
+export const testTelegramNotification = (): Promise<void> =>
+  isWebBrowser()
+    ? Promise.reject(new Error('Not available in browser mode'))
+    : tauriInvoke<void>('test_telegram_notification');

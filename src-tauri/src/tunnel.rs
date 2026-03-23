@@ -227,14 +227,19 @@ async fn notify_telegram_if_configured(db_path: &std::path::Path, url: &str) -> 
         return Ok(());
     };
     let text = format!("Daily Planner tunnel is live:\n{}", url);
-    let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+    send_telegram_message(&token, &chat_id, &text).await?;
+    eprintln!("[tunnel] Telegram notification sent");
+    Ok(())
+}
+
+async fn send_telegram_message(bot_token: &str, chat_id: &str, text: &str) -> anyhow::Result<()> {
+    let api_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
     reqwest::Client::new()
         .post(&api_url)
         .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
         .send()
         .await?
         .error_for_status()?;
-    eprintln!("[tunnel] Telegram notification sent");
     Ok(())
 }
 
@@ -292,4 +297,22 @@ pub async fn get_tunnel_status(
     state: tauri::State<'_, TunnelManager>,
 ) -> Result<TunnelStatus, String> {
     Ok(state.status().await)
+}
+
+#[tauri::command]
+pub async fn test_telegram_notification(
+    db: tauri::State<'_, crate::db::DbConnection>,
+) -> Result<(), String> {
+    let (bot_token, channel_id) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let token = read_setting(&conn, "telegram_bot_token").map_err(|e| e.to_string())?;
+        let chat = read_setting(&conn, "telegram_channel_id").map_err(|e| e.to_string())?;
+        (token, chat)
+    };
+    let (Some(token), Some(chat_id)) = (bot_token, channel_id) else {
+        return Err("Telegram Bot Token and Channel ID must be set first.".to_string());
+    };
+    send_telegram_message(&token, &chat_id, "Daily Planner: Telegram notification is working!")
+        .await
+        .map_err(|e| e.to_string())
 }
