@@ -17,6 +17,8 @@ export interface AppSettings {
   theme: string;
   work_days: number[];
   show_in_tray: boolean;
+  telegram_bot_token: string | null;
+  telegram_channel_id: string | null;
 }
 
 export interface AiProvider {

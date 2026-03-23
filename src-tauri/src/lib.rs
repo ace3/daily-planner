@@ -79,7 +79,7 @@ pub fn run() {
                 std::sync::Mutex::new(std::collections::HashMap::<String, u32>::new()),
             );
             app.manage(commands::claude::JobRegistry(job_registry_arc.clone()));
-            app.manage(tunnel::TunnelManager::new());
+            app.manage(tunnel::TunnelManager::new(db_path.clone()));
 
             // Start embedded HTTP server
             {

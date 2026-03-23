@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight } from 'lucide-react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
 import {
-  backupData, restoreData, resetAppData, checkCopilotCliAvailability,
+  backupData, restoreData, resetAppData,
   triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
   restoreFromBackupSession, deleteBackupSession, getBackupSettings, setBackupSettings,
   type BackupSessionInfo, type BackupSettings,
@@ -25,6 +25,8 @@ interface SettingsDraft {
   default_model_opencode: string;
   default_model_copilot: string;
   promptDraft: string;
+  telegram_bot_token: string;
+  telegram_channel_id: string;
   initializedFromSettings: boolean;
   initializedPrompt: boolean;
 }
@@ -37,7 +39,6 @@ export const SettingsPage: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
-  const [copilotCliAvailable, setCopilotCliAvailable] = useState<boolean | null>(null);
 
   // Auto Backup state
   const [backupSessions, setBackupSessions] = useState<BackupSessionInfo[]>([]);
@@ -59,6 +60,8 @@ export const SettingsPage: React.FC = () => {
     default_model_opencode: '',
     default_model_copilot: '',
     promptDraft: '',
+    telegram_bot_token: '',
+    telegram_channel_id: '',
     initializedFromSettings: false,
     initializedPrompt: false,
   });
@@ -79,9 +82,6 @@ export const SettingsPage: React.FC = () => {
   useEffect(() => {
     fetchSettings();
     fetchGlobalPrompt();
-    checkCopilotCliAvailability()
-      .then((status) => setCopilotCliAvailable(status.available))
-      .catch(() => setCopilotCliAvailable(false));
     loadBackupData();
   }, []);
 
@@ -104,6 +104,8 @@ export const SettingsPage: React.FC = () => {
       default_model_claude: settings.default_model_claude,
       default_model_opencode: settings.default_model_opencode,
       default_model_copilot: settings.default_model_copilot,
+      telegram_bot_token: settings.telegram_bot_token ?? '',
+      telegram_channel_id: settings.telegram_channel_id ?? '',
       initializedFromSettings: true,
     }));
   }, [
@@ -367,35 +369,6 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Model */}
-        <section className={sectionClass}>
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">AI Provider</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            <select
-              value={settings.ai_provider}
-              onChange={(e) => handleSave('ai_provider', e.target.value)}
-              className={`w-full ${inputClass} cursor-pointer`}
-            >
-              <option value="claude">Claude CLI</option>
-              <option value="opencode">OpenCode CLI</option>
-              <option value="copilot_cli">GitHub Copilot CLI (gh copilot)</option>
-            </select>
-            <p className="text-xs text-gray-400 dark:text-[#484F58]">
-              Used for prompt improvements, queued runs, and AI report reflections.
-            </p>
-            {settings.ai_provider === 'copilot_cli' && copilotCliAvailable === false && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400 flex items-start gap-2">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  <strong>Copilot CLI unavailable.</strong> Install/authenticate with <code>gh</code> and <code>gh copilot</code> before using this provider.
-                </span>
-              </div>
-            )}
-          </div>
-        </section>
-
         {/* Default models */}
         <section className={sectionClass}>
           <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
@@ -504,6 +477,43 @@ export const SettingsPage: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </section>
+
+        {/* Notifications */}
+        <section className={sectionClass}>
+          <div className={sectionHeaderClass}>
+            <Bell size={14} className="text-gray-500 dark:text-[#8B949E]" />
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Notifications</h2>
+          </div>
+          <div className="p-4 space-y-4">
+            <p className="text-xs text-gray-400 dark:text-[#484F58]">
+              When a Cloudflare tunnel is active, the public URL will be sent to this Telegram channel. A new message is sent only when the URL changes.
+            </p>
+            <div className="space-y-1.5">
+              <label className={labelClass}>Telegram Bot Token</label>
+              <input
+                type="password"
+                value={draft.telegram_bot_token}
+                onChange={(e) => setDraft((prev) => ({ ...prev, telegram_bot_token: e.target.value }))}
+                onBlur={(e) => handleSave('telegram_bot_token', e.target.value)}
+                placeholder="1234567890:ABCdef..."
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass}>Telegram Channel ID</label>
+              <input
+                type="text"
+                value={draft.telegram_channel_id}
+                onChange={(e) => setDraft((prev) => ({ ...prev, telegram_channel_id: e.target.value }))}
+                onBlur={(e) => handleSave('telegram_channel_id', e.target.value)}
+                placeholder="-1001234567890 or @channelname"
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
             </div>
           </div>
         </section>

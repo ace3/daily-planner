@@ -7,6 +7,7 @@
 //! A background watchdog task auto-respawns the process if it dies unexpectedly.
 
 use anyhow::{bail, Context};
+use rusqlite::Connection;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -39,15 +40,19 @@ struct TunnelInner {
     status: TunnelStatus,
     enabled: bool,
     port: u16,
+    last_notified_url: Option<String>,
+    db_path: std::path::PathBuf,
 }
 
 impl TunnelInner {
-    fn new() -> Self {
+    fn new(db_path: std::path::PathBuf) -> Self {
         TunnelInner {
             child: None,
             status: TunnelStatus::default(),
             enabled: false,
             port: 7734,
+            last_notified_url: None,
+            db_path,
         }
     }
 }
@@ -61,9 +66,9 @@ pub struct TunnelManager {
 }
 
 impl TunnelManager {
-    pub fn new() -> Self {
+    pub fn new(db_path: std::path::PathBuf) -> Self {
         TunnelManager {
-            inner: Arc::new(Mutex::new(TunnelInner::new())),
+            inner: Arc::new(Mutex::new(TunnelInner::new(db_path))),
         }
     }
 
@@ -138,9 +143,20 @@ impl TunnelManager {
                         eprintln!("[tunnel] {}", line);
                         if let Some(url) = extract_tunnel_url(&line) {
                             let mut s = inner2.lock().await;
-                            s.status.url = Some(url);
+                            let changed = s.last_notified_url.as_deref() != Some(url.as_str());
+                            s.status.url = Some(url.clone());
                             s.status.running = true;
                             s.status.error = None;
+                            if changed {
+                                s.last_notified_url = Some(url.clone());
+                                let db_path = s.db_path.clone();
+                                drop(s);
+                                tokio::spawn(async move {
+                                    if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
+                                        eprintln!("[tunnel] Telegram notify error: {}", e);
+                                    }
+                                });
+                            }
                             url_found2.notify_waiters();
                         }
                     }
@@ -196,6 +212,41 @@ impl TunnelManager {
         inner.status.running = true;
         inner.status.error = None;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Telegram notification
+// ---------------------------------------------------------------------------
+
+async fn notify_telegram_if_configured(db_path: &std::path::Path, url: &str) -> anyhow::Result<()> {
+    let conn = Connection::open(db_path)?;
+    let bot_token = read_setting(&conn, "telegram_bot_token")?;
+    let channel_id = read_setting(&conn, "telegram_channel_id")?;
+    let (Some(token), Some(chat_id)) = (bot_token, channel_id) else {
+        return Ok(());
+    };
+    let text = format!("Daily Planner tunnel is live:\n{}", url);
+    let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+    reqwest::Client::new()
+        .post(&api_url)
+        .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
+        .send()
+        .await?
+        .error_for_status()?;
+    eprintln!("[tunnel] Telegram notification sent");
+    Ok(())
+}
+
+fn read_setting(conn: &Connection, key: &str) -> anyhow::Result<Option<String>> {
+    match conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        rusqlite::params![key],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(v) if !v.trim().is_empty() => Ok(Some(v)),
+        Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
