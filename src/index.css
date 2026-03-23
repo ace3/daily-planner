@@ -50,48 +50,52 @@ body {
 }
 
 /* ===== Mobile Mode ===== */
-/* When .mobile-mode is on the root container, scale up everything for touch use via RustDesk */
+/* When .mobile-mode is on the root container, keep fonts compact for RustDesk use */
 
-/* Base font size bump: makes all rem/em units larger */
+/* Base font size: slightly smaller than browser default */
 .mobile-mode {
-  font-size: 15px;
+  font-size: 13px;
 }
 
-/* All text-xs (12px) → 14px, text-sm (14px) → 16px inside mobile mode */
+/* Keep text utility classes compact */
 .mobile-mode .text-xs {
-  font-size: 14px !important;
-  line-height: 20px !important;
+  font-size: 11px !important;
+  line-height: 16px !important;
 }
 .mobile-mode .text-sm {
+  font-size: 13px !important;
+  line-height: 19px !important;
+}
+.mobile-mode .text-base {
+  font-size: 14px !important;
+  line-height: 21px !important;
+}
+.mobile-mode .text-lg {
   font-size: 16px !important;
   line-height: 24px !important;
 }
-.mobile-mode .text-base {
-  font-size: 17px !important;
-  line-height: 26px !important;
-}
 .mobile-mode .text-\[10px\],
 .mobile-mode .text-\[11px\] {
-  font-size: 13px !important;
-  line-height: 18px !important;
+  font-size: 10px !important;
+  line-height: 15px !important;
 }
 
-/* Inputs, selects, textareas — bigger touch targets */
+/* Inputs, selects, textareas — keep touch-friendly height but smaller text */
 .mobile-mode input,
 .mobile-mode select,
 .mobile-mode textarea {
-  min-height: 44px;
-  font-size: 16px !important;
-  padding: 10px 12px !important;
+  min-height: 40px;
+  font-size: 13px !important;
+  padding: 8px 10px !important;
 }
 .mobile-mode textarea {
-  min-height: 80px;
+  min-height: 72px;
 }
 
-/* All clickable items get larger touch area */
+/* Clickable items keep reasonable touch area */
 .mobile-mode a,
 .mobile-mode button {
-  min-height: 40px;
+  min-height: 36px;
 }
 
 /* Wider scrollbar for touch scrolling */
@@ -103,29 +107,10 @@ body {
   border-radius: 4px;
 }
 
-/* Cards and panels get more padding */
-.mobile-mode .p-3 {
-  padding: 16px !important;
-}
-.mobile-mode .p-4 {
-  padding: 20px !important;
-}
-
-/* Gap increases for better touch separation */
-.mobile-mode .gap-1 {
-  gap: 8px !important;
-}
-.mobile-mode .gap-1\.5 {
-  gap: 10px !important;
-}
-.mobile-mode .gap-2 {
-  gap: 12px !important;
-}
-
 /* Icon-only buttons need minimum size */
 .mobile-mode button:has(> svg:only-child) {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 40px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
