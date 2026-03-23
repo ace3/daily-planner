@@ -226,7 +226,12 @@ async fn notify_telegram_if_configured(db_path: &std::path::Path, url: &str) -> 
     let (Some(token), Some(chat_id)) = (bot_token, channel_id) else {
         return Ok(());
     };
-    let text = format!("Daily Planner tunnel is live:\n{}", url);
+    let auth_token = read_setting(&conn, "http_auth_token")?;
+    let link = match auth_token {
+        Some(t) => format!("{}?token={}", url, t),
+        None => url.to_string(),
+    };
+    let text = format!("Daily Planner tunnel is live:\n{}", link);
     send_telegram_message(&token, &chat_id, &text).await?;
     eprintln!("[tunnel] Telegram notification sent");
     Ok(())
@@ -264,18 +269,19 @@ fn read_setting(conn: &Connection, key: &str) -> anyhow::Result<Option<String>> 
     }
 }
 
-/// Extract `https://...trycloudflare.com` or any `https://` URL from a log line.
+/// Extract the tunnel URL from a cloudflared log line.
+/// Only matches `trycloudflare.com` hostnames to avoid picking up incidental URLs
+/// (e.g. terms-of-service links) that cloudflared prints during startup.
 fn extract_tunnel_url(line: &str) -> Option<String> {
     // cloudflared prints lines like:
     //   INF |  https://example.trycloudflare.com  |
-    // or just the URL on its own line
     if let Some(start) = line.find("https://") {
         let rest = &line[start..];
         let end = rest
             .find(|c: char| c.is_whitespace() || c == '|' || c == '"' || c == '\'')
             .unwrap_or(rest.len());
         let url = &rest[..end];
-        if !url.is_empty() && url.contains('.') {
+        if url.contains(".trycloudflare.com") {
             return Some(url.to_string());
         }
     }
