@@ -3,6 +3,7 @@ mod db;
 mod http_server;
 mod scheduler;
 mod tray;
+mod tunnel;
 
 use db::{init_db, run_migrations};
 use tauri::Manager;
@@ -78,6 +79,7 @@ pub fn run() {
                 std::sync::Mutex::new(std::collections::HashMap::<String, u32>::new()),
             );
             app.manage(commands::claude::JobRegistry(job_registry_arc.clone()));
+            app.manage(tunnel::TunnelManager::new());
 
             // Start embedded HTTP server
             {
@@ -200,6 +202,10 @@ pub fn run() {
             // HTTP server / remote access
             http_server::get_local_ip,
             http_server::get_http_server_port,
+            // Tunnel
+            tunnel::start_tunnel_cmd,
+            tunnel::stop_tunnel_cmd,
+            tunnel::get_tunnel_status,
             // Auto backup
             commands::auto_backup::trigger_backup_now,
             commands::auto_backup::list_backup_sessions,

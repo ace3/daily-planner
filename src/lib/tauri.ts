@@ -455,3 +455,54 @@ export const saveAiReflection = (date: string, reflection: string): Promise<void
   isWebBrowser()
     ? httpPost<void>(`/api/reports/${date}/reflection`, { reflection })
     : tauriInvoke<void>('save_ai_reflection', { date, reflection });
+
+// ---------------------------------------------------------------------------
+// Devices (Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface Device {
+  id: string;
+  name: string;
+  last_seen: string | null;
+  created_at: string;
+}
+
+export const listDevices = (): Promise<Device[]> =>
+  isWebBrowser()
+    ? httpGet<Device[]>('/api/devices')
+    : tauriInvoke<Device[]>('list_devices');
+
+export const registerDevice = (id: string, name: string): Promise<Device> =>
+  isWebBrowser()
+    ? httpPost<Device>('/api/devices/register', { id, name })
+    : tauriInvoke<Device>('register_device', { id, name });
+
+export const deleteDevice = (id: string): Promise<void> =>
+  isWebBrowser()
+    ? httpDelete<void>(`/api/devices/${id}`)
+    : tauriInvoke<void>('delete_device', { id });
+
+// ---------------------------------------------------------------------------
+// Cloudflare Tunnel (Phase 5)
+// ---------------------------------------------------------------------------
+
+export interface TunnelStatus {
+  running: boolean;
+  url: string | null;
+  error: string | null;
+}
+
+export const startTunnel = (port: number): Promise<TunnelStatus> =>
+  isWebBrowser()
+    ? Promise.resolve({ running: false, url: null, error: 'Not available in browser mode' })
+    : tauriInvoke<TunnelStatus>('start_tunnel_cmd', { port });
+
+export const stopTunnel = (): Promise<TunnelStatus> =>
+  isWebBrowser()
+    ? Promise.resolve({ running: false, url: null, error: null })
+    : tauriInvoke<TunnelStatus>('stop_tunnel_cmd');
+
+export const getTunnelStatus = (): Promise<TunnelStatus> =>
+  isWebBrowser()
+    ? Promise.resolve({ running: false, url: null, error: null })
+    : tauriInvoke<TunnelStatus>('get_tunnel_status');

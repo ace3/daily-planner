@@ -100,6 +100,14 @@ pub struct Project {
     pub created_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    pub last_seen: Option<String>,
+    pub created_at: String,
+}
+
 // ---- TASK QUERIES ----
 
 pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
@@ -1041,6 +1049,58 @@ pub fn delete_project(conn: &Connection, id: &str) -> Result<()> {
         params![id],
     )?;
     conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+// ---- DEVICE QUERIES ----
+
+pub fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, last_seen, created_at FROM devices ORDER BY created_at DESC",
+    )?;
+    let devices = stmt
+        .query_map([], |row| {
+            Ok(Device {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                last_seen: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(devices)
+}
+
+pub fn register_device(conn: &Connection, id: &str, name: &str) -> Result<Device> {
+    conn.execute(
+        "INSERT INTO devices (id, name, last_seen) VALUES (?1, ?2, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, last_seen = datetime('now')",
+        params![id, name],
+    )?;
+    conn.query_row(
+        "SELECT id, name, last_seen, created_at FROM devices WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(Device {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                last_seen: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        },
+    )
+}
+
+pub fn update_device_last_seen(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE devices SET last_seen = datetime('now') WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
+pub fn delete_device(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM devices WHERE id = ?1", params![id])?;
     Ok(())
 }
 

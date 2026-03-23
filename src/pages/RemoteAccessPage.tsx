@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Wifi, Copy, Check, QrCode, RefreshCw, ExternalLink } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Wifi, Copy, Check, QrCode, RefreshCw, ExternalLink, Trash2, Globe, CircleDot, Smartphone } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { getLocalIp, getHttpServerPort, getSetting, setSetting } from '../lib/tauri';
+import { getLocalIp, getHttpServerPort, getSetting, setSetting, listDevices, deleteDevice, startTunnel, stopTunnel, getTunnelStatus } from '../lib/tauri';
+import type { Device, TunnelStatus } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
+import { isWebBrowser } from '../lib/http';
 
 // Minimal QR code generator using canvas — no external dependency required.
-// Uses the `qrcode` package if available, else shows the URL as text.
 let QRCodeLib: { toCanvas: (el: HTMLCanvasElement, text: string, opts: object) => Promise<void> } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -45,6 +46,20 @@ const QRCodeCanvas: React.FC<{ value: string; size?: number }> = ({ value, size 
   return <canvas ref={canvasRef} className="rounded-lg" />;
 };
 
+function formatLastSeen(ts: string | null): string {
+  if (!ts) return 'Never';
+  try {
+    const d = new Date(ts + 'Z'); // SQLite datetime is UTC, no Z suffix
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000) return 'Just now';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return `${Math.floor(diff / 86_400_000)}d ago`;
+  } catch {
+    return ts;
+  }
+}
+
 export const RemoteAccessPage: React.FC = () => {
   const [localIp, setLocalIp] = useState<string>('loading...');
   const [port, setPort] = useState<number>(7734);
@@ -52,6 +67,16 @@ export const RemoteAccessPage: React.FC = () => {
   const [copied, setCopied] = useState<string | null>(null);
   const [token, setToken] = useState<string>('');
   const [regenerating, setRegenerating] = useState(false);
+
+  // Devices state
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  // Tunnel state
+  const [tunnel, setTunnel] = useState<TunnelStatus>({ running: false, url: null, error: null });
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const tunnelPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const localUrl = token
     ? `http://${localIp}:${port}/?token=${token}`
@@ -71,16 +96,55 @@ export const RemoteAccessPage: React.FC = () => {
     }
   }, []);
 
+  const loadDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    try {
+      const list = await listDevices();
+      setDevices(list);
+    } catch {
+      // silently ignore — devices table may not exist on older schema
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
+  const loadTunnelStatus = useCallback(async () => {
+    try {
+      const status = await getTunnelStatus();
+      setTunnel(status);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    loadDevices();
+    if (!isWebBrowser()) {
+      loadTunnelStatus();
+    }
+  }, [load, loadDevices, loadTunnelStatus]);
+
+  // Poll tunnel status every 3s while running
+  useEffect(() => {
+    if (isWebBrowser()) return;
+    if (tunnel.running) {
+      tunnelPollRef.current = setInterval(loadTunnelStatus, 3000);
+    } else {
+      if (tunnelPollRef.current) clearInterval(tunnelPollRef.current);
+    }
+    return () => { if (tunnelPollRef.current) clearInterval(tunnelPollRef.current); };
+  }, [tunnel.running, loadTunnelStatus]);
+
   const handleRegenerateToken = useCallback(async () => {
     setRegenerating(true);
     try {
-      // Generate a random 32-char hex token
       const array = new Uint8Array(16);
       crypto.getRandomValues(array);
       const newToken = Array.from(array).map((b) => b.toString(16).padStart(2, '0')).join('');
       await setSetting('http_auth_token', newToken);
       setToken(newToken);
-      toast.success('Auth token regenerated');
+      toast.success('Auth token regenerated — all existing sessions will need to re-scan the QR code.');
     } catch (e) {
       toast.error(`Failed to regenerate token: ${String(e)}`);
     } finally {
@@ -88,7 +152,42 @@ export const RemoteAccessPage: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const handleRevokeDevice = useCallback(async (id: string) => {
+    setRevokingId(id);
+    try {
+      await deleteDevice(id);
+      setDevices((prev) => prev.filter((d) => d.id !== id));
+      toast.success('Device revoked');
+    } catch (e) {
+      toast.error(`Failed to revoke device: ${String(e)}`);
+    } finally {
+      setRevokingId(null);
+    }
+  }, []);
+
+  const handleTunnelToggle = useCallback(async () => {
+    setTunnelLoading(true);
+    try {
+      if (tunnel.running) {
+        const status = await stopTunnel();
+        setTunnel(status);
+        toast.success('Cloudflare tunnel stopped');
+      } else {
+        toast.info('Starting Cloudflare tunnel…');
+        const status = await startTunnel(port);
+        setTunnel(status);
+        if (status.error) {
+          toast.error(status.error);
+        } else {
+          toast.success('Cloudflare tunnel started');
+        }
+      }
+    } catch (e) {
+      toast.error(`Tunnel error: ${String(e)}`);
+    } finally {
+      setTunnelLoading(false);
+    }
+  }, [tunnel.running, port]);
 
   const handleCopy = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text);
@@ -106,7 +205,7 @@ export const RemoteAccessPage: React.FC = () => {
           variant="ghost"
           size="sm"
           icon={<RefreshCw size={13} className={loading ? 'animate-spin' : ''} />}
-          onClick={load}
+          onClick={() => { load(); loadDevices(); loadTunnelStatus(); }}
         >
           Refresh
         </Button>
@@ -205,6 +304,137 @@ export const RemoteAccessPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Connected Devices card */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Smartphone size={14} className="text-gray-500 dark:text-[#8B949E]" />
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E]">
+              Connected Devices
+            </div>
+            {devices.length > 0 && (
+              <span className="rounded-full bg-blue-500/20 text-blue-400 text-[10px] px-1.5 py-0.5 font-mono">
+                {devices.length}
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={13} className={devicesLoading ? 'animate-spin' : ''} />}
+            onClick={loadDevices}
+            disabled={devicesLoading}
+          >
+            Refresh
+          </Button>
+        </div>
+        {devices.length === 0 ? (
+          <div className="text-xs text-gray-500 dark:text-[#484F58] text-center py-3">
+            No devices registered yet. Scan the QR code on your phone to connect.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {devices.map((device) => (
+              <div
+                key={device.id}
+                className="flex items-center justify-between rounded-lg border border-[#30363D] bg-[#0F1117] px-3 py-2"
+              >
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-xs font-medium text-[#E6EDF3] truncate">{device.name}</span>
+                  <span className="text-[10px] text-[#484F58]">
+                    Last seen: {formatLastSeen(device.last_seen)} · ID: {device.id.slice(0, 8)}…
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={revokingId === device.id
+                    ? <RefreshCw size={12} className="animate-spin" />
+                    : <Trash2 size={12} className="text-red-400" />}
+                  onClick={() => handleRevokeDevice(device.id)}
+                  disabled={revokingId === device.id}
+                  className="shrink-0 text-red-400 hover:text-red-300"
+                >
+                  Revoke
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Cloudflare Tunnel card — desktop only */}
+      {!isWebBrowser() && (
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Globe size={14} className="text-gray-500 dark:text-[#8B949E]" />
+              <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E]">
+                Cloudflare Tunnel
+              </div>
+              <div className="flex items-center gap-1">
+                <CircleDot
+                  size={10}
+                  className={tunnel.running ? 'text-green-400' : 'text-gray-600'}
+                />
+                <span className={`text-[10px] ${tunnel.running ? 'text-green-400' : 'text-gray-500'}`}>
+                  {tunnel.running ? 'Active' : 'Inactive'}
+                </span>
+              </div>
+            </div>
+            <Button
+              variant={tunnel.running ? 'ghost' : 'primary'}
+              size="sm"
+              icon={tunnelLoading ? <RefreshCw size={13} className="animate-spin" /> : undefined}
+              onClick={handleTunnelToggle}
+              disabled={tunnelLoading}
+              className={tunnel.running ? 'text-red-400 hover:text-red-300' : ''}
+            >
+              {tunnel.running ? 'Stop Tunnel' : 'Start Tunnel'}
+            </Button>
+          </div>
+
+          {tunnel.error && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+              {tunnel.error}
+            </div>
+          )}
+
+          {tunnel.running && tunnel.url && (
+            <div className="flex flex-col gap-2">
+              <div className="text-[10px] text-gray-500 dark:text-[#8B949E]">Public URL (accessible from any network):</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-lg border border-[#30363D] bg-[#0F1117] px-3 py-2 text-xs text-green-400 font-mono break-all">
+                  {tunnel.url}/?token={token}
+                </code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={copied === 'tunnel' ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+                  onClick={() => handleCopy(`${tunnel.url}/?token=${token}`, 'tunnel')}
+                  className={copied === 'tunnel' ? 'text-green-400' : ''}
+                >
+                  {copied === 'tunnel' ? 'Copied!' : 'Copy'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {tunnel.running && !tunnel.url && (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <RefreshCw size={12} className="animate-spin" />
+              Waiting for tunnel URL…
+            </div>
+          )}
+
+          <div className="text-[11px] text-gray-600 dark:text-[#484F58] leading-relaxed">
+            Uses <code className="text-gray-500">cloudflared tunnel --url</code> (quick tunnel, no config needed).
+            Install with: <code className="text-gray-500">brew install cloudflared</code>.
+            Auto-reconnects if the connection drops.
+          </div>
+        </div>
+      )}
+
       {/* Setup guide */}
       <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E] mb-3">
@@ -213,75 +443,11 @@ export const RemoteAccessPage: React.FC = () => {
         <ol className="text-xs text-gray-600 dark:text-[#8B949E] space-y-2 list-decimal list-inside leading-relaxed">
           <li>Make sure your Mac and phone are on the same WiFi network.</li>
           <li>Scan the QR code above <em>or</em> type the URL into your phone's browser.</li>
-          <li>
-            For access outside your home network, use a tunnel:
-            <div className="mt-1.5 ml-4 space-y-1">
-              <div className="flex items-center gap-2">
-                <code className="rounded bg-[#0F1117] border border-[#30363D] px-2 py-0.5 text-[11px] text-gray-400">
-                  cloudflared tunnel --url http://localhost:{port}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={copied === 'cloudflared' ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
-                  onClick={() => handleCopy(`cloudflared tunnel --url http://localhost:${port}`, 'cloudflared')}
-                  className="shrink-0 text-[10px]"
-                >
-                  Copy
-                </Button>
-              </div>
-              <div className="text-[11px] text-gray-600 dark:text-[#484F58]">or</div>
-              <div className="flex items-center gap-2">
-                <code className="rounded bg-[#0F1117] border border-[#30363D] px-2 py-0.5 text-[11px] text-gray-400">
-                  bore local {port} --to bore.pub
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={copied === 'bore' ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
-                  onClick={() => handleCopy(`bore local ${port} --to bore.pub`, 'bore')}
-                  className="shrink-0 text-[10px]"
-                >
-                  Copy
-                </Button>
-              </div>
-            </div>
-          </li>
+          <li>For access outside your home network, use the Cloudflare Tunnel toggle above.</li>
           <li>
             The HTTP server port can be changed in <strong>Settings → Remote Access</strong>.
           </li>
         </ol>
-      </div>
-
-      {/* API reference */}
-      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E] mb-2">
-          API Endpoints
-        </div>
-        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs font-mono">
-          {[
-            ['GET', '/api/health'],
-            ['GET', '/api/tasks?date=YYYY-MM-DD'],
-            ['POST', '/api/tasks'],
-            ['PATCH', '/api/tasks/:id'],
-            ['DELETE', '/api/tasks/:id'],
-            ['GET', '/api/session'],
-            ['GET', '/api/settings'],
-            ['GET', '/api/reports'],
-            ['POST', '/api/prompt/improve (SSE)'],
-            ['POST', '/api/prompt/run (SSE)'],
-          ].map(([method, path]) => (
-            <React.Fragment key={path}>
-              <span className={`font-semibold ${
-                method === 'GET' ? 'text-green-400' :
-                method === 'POST' ? 'text-blue-400' :
-                method === 'PATCH' ? 'text-yellow-400' :
-                'text-red-400'
-              }`}>{method}</span>
-              <span className="text-gray-400">{path}</span>
-            </React.Fragment>
-          ))}
-        </div>
       </div>
     </div>
   );

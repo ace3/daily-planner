@@ -59,6 +59,7 @@ pub enum ServerEvent {
     ReportChanged { date: String },
     ProjectsChanged,
     TemplatesChanged,
+    DevicesChanged,
 }
 
 // ---------------------------------------------------------------------------
@@ -953,6 +954,62 @@ async fn delete_prompt_template_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Route: GET /api/devices
+// ---------------------------------------------------------------------------
+
+async fn list_devices_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<Vec<queries::Device>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let devices = queries::list_devices(&*conn).map_err(internal)?;
+    Ok(Json(devices))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/devices/register
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RegisterDeviceBody {
+    id: String,
+    name: String,
+}
+
+async fn register_device_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Json(body): Json<RegisterDeviceBody>,
+) -> Result<Json<queries::Device>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let device = queries::register_device(&*conn, &body.id, &body.name).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::DevicesChanged);
+    Ok(Json(device))
+}
+
+// ---------------------------------------------------------------------------
+// Route: DELETE /api/devices/:id
+// ---------------------------------------------------------------------------
+
+async fn delete_device_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::delete_device(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::DevicesChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
 // SSE helpers
 // ---------------------------------------------------------------------------
 
@@ -993,6 +1050,7 @@ async fn events_stream(
                         ServerEvent::ReportChanged { .. } => "report_changed",
                         ServerEvent::ProjectsChanged => "projects_changed",
                         ServerEvent::TemplatesChanged => "templates_changed",
+                        ServerEvent::DevicesChanged => "devices_changed",
                     };
                     if tx
                         .send(Ok(Event::default().event(event_type).data(data)))
@@ -1329,6 +1387,9 @@ pub async fn start(
         .route("/api/projects", get(get_projects).post(create_project))
         .route("/api/projects/:id", delete(delete_project))
         .route("/api/projects/:id/prompt", get(get_project_prompt).put(set_project_prompt))
+        // Devices
+        .route("/api/devices", get(list_devices_handler).post(register_device_handler))
+        .route("/api/devices/:id", delete(delete_device_handler))
         // Prompt
         .route("/api/prompt/global", get(get_global_prompt).put(set_global_prompt))
         .route("/api/prompt/templates", get(get_prompt_templates).post(create_prompt_template))

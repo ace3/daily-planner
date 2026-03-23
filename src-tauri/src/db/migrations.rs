@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 11;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -60,6 +60,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 10 {
         apply_v10(conn)?;
+    }
+    if current < 11 {
+        apply_v11(conn)?;
     }
 
     eprintln!(
@@ -605,6 +608,21 @@ fn apply_v10(conn: &mut Connection) -> anyhow::Result<()> {
              'Implement this feature.\n\nGoal: [what to build]\nAcceptance criteria: [list requirements]\nContext: [relevant existing code, patterns to follow]\n\nImplement end-to-end with validation, error handling, and tests. Follow existing codebase patterns.',
              '[]', 1);
         ").context("v10 DDL failed")
+    })
+}
+
+fn apply_v11(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 11, "Add devices table for device linking", |tx| {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS devices (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL DEFAULT 'Unknown Device',
+                last_seen  TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_devices_created ON devices(created_at);",
+        )
+        .context("v11 DDL failed")
     })
 }
 

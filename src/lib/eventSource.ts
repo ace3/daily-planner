@@ -9,6 +9,7 @@ interface SseHandlers {
   onProjectsChanged?: () => void;
   onReportChanged?: (date: string) => void;
   onTemplatesChanged?: () => void;
+  onDevicesChanged?: () => void;
 }
 
 let es: EventSource | null = null;
@@ -47,6 +48,10 @@ function connect() {
 
   es.addEventListener('templates_changed', () => {
     handlers.onTemplatesChanged?.();
+  });
+
+  es.addEventListener('devices_changed', () => {
+    handlers.onDevicesChanged?.();
   });
 
   es.onerror = () => {
