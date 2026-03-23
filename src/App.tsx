@@ -20,6 +20,8 @@ import { useSyncStore } from './stores/syncStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useMobileStore } from './stores/mobileStore';
 import { getLocalDate, getLocalTime, timeToMinutes } from './lib/time';
+import { extractAndStoreToken, isWebBrowser } from './lib/http';
+import { startSseClient, stopSseClient } from './lib/eventSource';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 
 const AppInner: React.FC = () => {
@@ -46,6 +48,28 @@ const AppInner: React.FC = () => {
   }, []);
 
   useKeyboardShortcuts();
+
+  // Extract ?token= from URL on first load (browser mode only)
+  useEffect(() => {
+    extractAndStoreToken();
+  }, []);
+
+  // Start SSE client in browser mode for real-time updates
+  useEffect(() => {
+    if (!isWebBrowser()) return;
+    startSseClient({
+      onTaskChanged: (date) => {
+        useTaskStore.getState().fetchTasks(date || useTaskStore.getState().activeDate);
+      },
+      onSettingsChanged: () => {
+        useSettingsStore.getState().fetchSettings();
+      },
+      onProjectsChanged: () => {
+        useProjectStore.getState().fetchProjects();
+      },
+    });
+    return () => stopSseClient();
+  }, []);
 
   useEffect(() => {
     fetchSettings().then(() => {});

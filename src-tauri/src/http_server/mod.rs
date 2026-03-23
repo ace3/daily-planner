@@ -3,31 +3,19 @@
 // =============================================================================
 //
 // This server runs on 0.0.0.0:<port> (default 7734) as a tokio task inside
-// the Tauri process.  It is reachable from any device on the same WiFi network:
-//
-//   http://<mac-local-ip>:7734          e.g.  http://192.168.1.42:7734
-//
-// For access over mobile data, pair it with a tunnel (cloudflared / bore):
-//
-//   cloudflared tunnel --url http://localhost:7734
-//   bore local 7734 --to bore.pub
-//
-// The tunnel URL is managed by the RemoteAccessPage in the desktop UI.
+// the Tauri process.  It is reachable from any device on the same WiFi network.
 //
 // Authentication
 // --------------
-// Optional single static Bearer token stored in the `settings` table as
-// `http_auth_token`.  If the value is non-empty every mutating request
-// (POST / PATCH / DELETE) requires:
+// Bearer token stored in the `settings` table as `http_auth_token`.
+// ALL /api/* routes (except /api/health) require:
 //     Authorization: Bearer <token>
-// GET requests are unauthenticated so the page itself loads freely.
+// OR query param:  ?token=<token>  (needed for EventSource which can't set headers)
 //
-// SQLite concurrency
-// ------------------
-// The HTTP server opens its **own** SQLite connection (WAL mode allows
-// concurrent readers alongside the Tauri IPC connection).  All DB access
-// in this module uses that private connection; it never touches the Tauri
-// `DbConnection` managed state.
+// Static serving
+// --------------
+// GET / serves the built React app (dist/ embedded at compile time).
+// Fallback to index.html for SPA routing.
 // =============================================================================
 
 use chrono::Timelike;
@@ -44,18 +32,34 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Json, Response,
     },
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::commands::claude::{build_run_args, strip_ansi, AiProvider};
 use crate::db::queries;
+
+// ---------------------------------------------------------------------------
+// SSE broadcast event
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ServerEvent {
+    TaskChanged { date: String },
+    SettingsChanged,
+    SessionChanged,
+    ReportChanged { date: String },
+    ProjectsChanged,
+    TemplatesChanged,
+}
 
 // ---------------------------------------------------------------------------
 // Shared server state
@@ -67,6 +71,8 @@ pub struct ServerState {
     db: Arc<Mutex<Connection>>,
     /// Shared job registry for cancellation (same Arc as Tauri commands).
     job_registry: Arc<Mutex<HashMap<String, u32>>>,
+    /// Broadcast channel for real-time SSE events.
+    event_tx: broadcast::Sender<ServerEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,41 +104,54 @@ fn unauthorized() -> ApiError {
 }
 
 // ---------------------------------------------------------------------------
-// Auth helper
+// Auth check — supports both header and query param
 // ---------------------------------------------------------------------------
 
-fn check_auth(db: &Arc<Mutex<Connection>>, headers: &HeaderMap) -> Result<(), ApiError> {
+#[derive(Deserialize)]
+struct TokenQuery {
+    token: Option<String>,
+}
+
+fn check_auth_inner(
+    db: &Arc<Mutex<Connection>>,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Result<(), ApiError> {
     let conn = db.lock().map_err(internal)?;
     let token_setting = queries::get_setting(&*conn, "http_auth_token")
         .unwrap_or_default();
-    let token = token_setting.trim();
+    let token = token_setting.trim().to_string();
+    drop(conn);
     if token.is_empty() {
         return Ok(());
     }
-    let provided = headers
+    // Check Authorization header
+    let header_token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let expected = format!("Bearer {}", token);
-    if provided == expected {
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+    // Check query param
+    let provided = header_token.as_deref().or(query_token);
+    if provided == Some(token.as_str()) {
         Ok(())
     } else {
         Err(unauthorized())
     }
 }
 
-// ---------------------------------------------------------------------------
-// Route: GET /
-// ---------------------------------------------------------------------------
-
-const MOBILE_HTML: &str = include_str!("../../assets/web/index.html");
-
-async fn serve_ui() -> impl IntoResponse {
-    (
-        [("content-type", "text/html; charset=utf-8")],
-        MOBILE_HTML,
-    )
+fn check_auth(db: &Arc<Mutex<Connection>>, headers: &HeaderMap) -> Result<(), ApiError> {
+    check_auth_inner(db, headers, None)
 }
+
+fn check_auth_with_query(
+    db: &Arc<Mutex<Connection>>,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Result<(), ApiError> {
+    check_auth_inner(db, headers, query_token)
+}
+
 
 // ---------------------------------------------------------------------------
 // Route: GET /api/health
@@ -149,18 +168,46 @@ async fn health() -> Json<serde_json::Value> {
 #[derive(Deserialize)]
 struct DateQuery {
     date: Option<String>,
+    token: Option<String>,
 }
 
 async fn get_tasks(
     State(s): State<ServerState>,
+    headers: HeaderMap,
     Query(q): Query<DateQuery>,
 ) -> Result<Json<Vec<queries::Task>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let date = q
         .date
         .filter(|d| !d.is_empty())
         .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
     let conn = s.db.lock().map_err(internal)?;
     let tasks = queries::get_tasks_by_date(&*conn, &date).map_err(internal)?;
+    Ok(Json(tasks))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/tasks/range?from=&to=
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RangeQuery {
+    from: Option<String>,
+    to: Option<String>,
+    token: Option<String>,
+}
+
+async fn get_tasks_range(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<RangeQuery>,
+) -> Result<Json<Vec<queries::Task>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let from = q.from.as_deref().unwrap_or(&today).to_string();
+    let to = q.to.as_deref().unwrap_or(&today).to_string();
+    let conn = s.db.lock().map_err(internal)?;
+    let tasks = queries::get_tasks_by_date_range(&*conn, &from, &to).map_err(internal)?;
     Ok(Json(tasks))
 }
 
@@ -200,7 +247,76 @@ async fn create_task(
         body.project_id.as_deref(),
     )
     .map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.date });
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/tasks/rollover
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RolloverBody {
+    date: String,
+}
+
+async fn rollover_tasks(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<RolloverBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let count = queries::rollover_incomplete_tasks(&*conn, &body.date).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.date });
+    Ok(Json(serde_json::json!({ "rolled_over": count })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/tasks/:id/carry-forward
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CarryForwardBody {
+    tomorrow_date: String,
+    session_slot: i64,
+}
+
+async fn carry_task_forward(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<CarryForwardBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let new_id = queries::carry_task_forward(&*conn, &id, &body.tomorrow_date, body.session_slot)
+        .map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.tomorrow_date.clone() });
+    Ok(Json(serde_json::json!({ "id": new_id })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PATCH /api/tasks/reorder
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ReorderBody {
+    task_ids: Vec<String>,
+}
+
+async fn reorder_tasks(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ReorderBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::reorder_tasks(&*conn, &body.task_ids).map_err(internal)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +336,47 @@ async fn patch_task_status(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
+    // Get task date for event
+    let date = queries::get_task_by_id(&*conn, &id)
+        .ok()
+        .flatten()
+        .map(|t| t.date)
+        .unwrap_or_default();
     queries::update_task_status(&*conn, &id, &body.status).map_err(internal)?;
+    drop(conn);
+    if !date.is_empty() {
+        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PATCH /api/tasks/:id/move-session
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct MoveSessionBody {
+    target_session: i64,
+}
+
+async fn move_task_session(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<MoveSessionBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let date = queries::get_task_by_id(&*conn, &id)
+        .ok()
+        .flatten()
+        .map(|t| t.date)
+        .unwrap_or_default();
+    queries::move_task_to_session(&*conn, &id, body.target_session).map_err(internal)?;
+    drop(conn);
+    if !date.is_empty() {
+        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -230,25 +386,16 @@ async fn patch_task_status(
 
 async fn get_task(
     State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
     Path(id): Path<String>,
 ) -> Result<Json<queries::Task>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let conn = s.db.lock().map_err(internal)?;
     let task = queries::get_task_by_id(&*conn, &id)
         .map_err(internal)?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Task not found".into()))?;
     Ok(Json(task))
-}
-
-// ---------------------------------------------------------------------------
-// Route: GET /api/prompt/templates
-// ---------------------------------------------------------------------------
-
-async fn get_prompt_templates(
-    State(s): State<ServerState>,
-) -> Result<Json<Vec<queries::PromptTemplateItem>>, ApiError> {
-    let conn = s.db.lock().map_err(internal)?;
-    let templates = queries::list_prompt_templates(&*conn).map_err(internal)?;
-    Ok(Json(templates))
 }
 
 // ---------------------------------------------------------------------------
@@ -265,9 +412,7 @@ struct PatchTaskBody {
     session_slot: Option<i64>,
     project_id: Option<String>,
     clear_project: Option<bool>,
-    // convenience: if present, just update status
     status: Option<String>,
-    // prompt data (from task detail page)
     prompt_used: Option<String>,
     prompt_result: Option<String>,
 }
@@ -280,6 +425,11 @@ async fn patch_task(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
+    let date = queries::get_task_by_id(&*conn, &id)
+        .ok()
+        .flatten()
+        .map(|t| t.date)
+        .unwrap_or_default();
     if let Some(status) = &body.status {
         queries::update_task_status(&*conn, &id, status).map_err(internal)?;
     } else if body.prompt_used.is_some() || body.prompt_result.is_some() {
@@ -305,6 +455,33 @@ async fn patch_task(
         )
         .map_err(internal)?;
     }
+    drop(conn);
+    if !date.is_empty() {
+        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/tasks/:id/prompt-result
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PromptResultBody {
+    prompt_used: String,
+    prompt_result: String,
+}
+
+async fn save_task_prompt_result(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<PromptResultBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::save_prompt_result(&*conn, &id, &body.prompt_used, &body.prompt_result)
+        .map_err(internal)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -319,7 +496,16 @@ async fn delete_task(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
+    let date = queries::get_task_by_id(&*conn, &id)
+        .ok()
+        .flatten()
+        .map(|t| t.date)
+        .unwrap_or_default();
     queries::delete_task(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    if !date.is_empty() {
+        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -329,10 +515,12 @@ async fn delete_task(
 
 async fn get_settings(
     State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let conn = s.db.lock().map_err(internal)?;
     let map = queries::get_all_settings(&*conn).map_err(internal)?;
-    // Return safe subset (omit sensitive keys like auth token)
     let safe: HashMap<_, _> = map
         .iter()
         .filter(|(k, _)| *k != "http_auth_token")
@@ -342,7 +530,53 @@ async fn get_settings(
 }
 
 // ---------------------------------------------------------------------------
-// Route: GET /api/session  — current phase based on settings + local time
+// Route: GET /api/settings/:key
+// ---------------------------------------------------------------------------
+
+async fn get_setting_by_key(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    // Never expose auth token
+    if key == "http_auth_token" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Forbidden".into()));
+    }
+    let conn = s.db.lock().map_err(internal)?;
+    let value = queries::get_setting(&*conn, &key).ok();
+    Ok(Json(serde_json::json!({ "key": key, "value": value })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PUT /api/settings/:key
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetSettingBody {
+    value: String,
+}
+
+async fn set_setting_by_key(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<SetSettingBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    if key == "http_auth_token" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Forbidden".into()));
+    }
+    let conn = s.db.lock().map_err(internal)?;
+    queries::set_setting(&*conn, &key, &body.value).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::SettingsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/session
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -364,7 +598,10 @@ fn minutes_from_hhmm(s: &str) -> i64 {
 
 async fn get_session(
     State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
 ) -> Result<Json<SessionInfo>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let conn = s.db.lock().map_err(internal)?;
     let map = queries::get_all_settings(&*conn).map_err(internal)?;
     drop(conn);
@@ -386,7 +623,6 @@ async fn get_session(
         .cloned()
         .unwrap_or_else(|| "14:00".into());
 
-    // Current local time in configured timezone (offset in hours)
     let utc_now = chrono::Utc::now();
     let offset = chrono::FixedOffset::east_opt(tz as i32 * 3600).unwrap_or_else(|| {
         chrono::FixedOffset::east_opt(0).unwrap()
@@ -426,18 +662,294 @@ async fn get_session(
 struct ReportsQuery {
     from: Option<String>,
     to: Option<String>,
+    token: Option<String>,
 }
 
 async fn get_reports(
     State(s): State<ServerState>,
+    headers: HeaderMap,
     Query(q): Query<ReportsQuery>,
 ) -> Result<Json<Vec<queries::DailyReport>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let from = q.from.as_deref().unwrap_or(&today).to_string();
     let to = q.to.as_deref().unwrap_or(&today).to_string();
     let conn = s.db.lock().map_err(internal)?;
     let reports = queries::get_reports_range(&*conn, &from, &to).map_err(internal)?;
     Ok(Json(reports))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/reports/:date
+// ---------------------------------------------------------------------------
+
+async fn get_report(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(date): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    // queries::get_report returns Result<Option<DailyReport>>
+    let report = queries::get_report(&*conn, &date).map_err(internal)?;
+    Ok(Json(serde_json::to_value(report).unwrap_or(serde_json::Value::Null)))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/reports/:date/generate
+// ---------------------------------------------------------------------------
+
+async fn generate_report_endpoint(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(date): Path<String>,
+) -> Result<Json<queries::DailyReport>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    // queries::generate_report is the actual function name
+    let report = queries::generate_report(&*conn, &date).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ReportChanged { date });
+    Ok(Json(report))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/reports/:date/reflection
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ReflectionBody {
+    reflection: String,
+}
+
+async fn save_report_reflection(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(date): Path<String>,
+    Json(body): Json<ReflectionBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::save_ai_reflection(&*conn, &date, &body.reflection).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ReportChanged { date });
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/projects
+// ---------------------------------------------------------------------------
+
+async fn get_projects(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<Vec<queries::Project>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let projects = queries::get_projects(&*conn).map_err(internal)?;
+    Ok(Json(projects))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/projects
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateProjectBody {
+    name: String,
+    path: String,
+}
+
+async fn create_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateProjectBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let id = queries::create_project(&*conn, &body.name, &body.path).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: DELETE /api/projects/:id
+// ---------------------------------------------------------------------------
+
+async fn delete_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::delete_project(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/projects/:id/prompt
+// ---------------------------------------------------------------------------
+
+async fn get_project_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let prompt = queries::get_project_prompt(&*conn, &id).map_err(internal)?;
+    Ok(Json(serde_json::json!({ "prompt": prompt })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PUT /api/projects/:id/prompt
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetPromptBody {
+    prompt: String,
+}
+
+async fn set_project_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<SetPromptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::set_project_prompt(&*conn, &id, &body.prompt).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/prompt/global
+// ---------------------------------------------------------------------------
+
+async fn get_global_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let prompt = queries::get_setting(&*conn, "global_prompt").ok();
+    Ok(Json(serde_json::json!({ "prompt": prompt })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PUT /api/prompt/global
+// ---------------------------------------------------------------------------
+
+async fn set_global_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<SetPromptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::set_setting(&*conn, "global_prompt", &body.prompt).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::SettingsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/prompt/templates
+// ---------------------------------------------------------------------------
+
+async fn get_prompt_templates(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<Vec<queries::PromptTemplateItem>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let templates = queries::list_prompt_templates(&*conn).map_err(internal)?;
+    Ok(Json(templates))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/prompt/templates
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateTemplateBody {
+    name: String,
+    content: String,
+}
+
+async fn create_prompt_template(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateTemplateBody>,
+) -> Result<Json<queries::PromptTemplateItem>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let template = queries::create_prompt_template(&*conn, &body.name, &body.content)
+        .map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
+    Ok(Json(template))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PATCH /api/prompt/templates/:id
+// Note: update_prompt_template takes &str (not Option<&str>) — both name and
+// content are required. The client must supply both fields.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct UpdateTemplateBody {
+    name: String,
+    content: String,
+}
+
+async fn update_prompt_template(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTemplateBody>,
+) -> Result<Json<queries::PromptTemplateItem>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let template = queries::update_prompt_template(
+        &*conn,
+        &id,
+        &body.name,
+        &body.content,
+    )
+    .map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
+    Ok(Json(template))
+}
+
+// ---------------------------------------------------------------------------
+// Route: DELETE /api/prompt/templates/:id
+// ---------------------------------------------------------------------------
+
+async fn delete_prompt_template_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    // delete_prompt_template returns Result<bool>; map the error only
+    queries::delete_prompt_template(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +960,55 @@ fn sse_stream(
     rx: mpsc::Receiver<Result<Event, Infallible>>,
 ) -> Sse<ReceiverStream<Result<Event, Infallible>>> {
     Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/events  (SSE — real-time push)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    token: Option<String>,
+}
+
+async fn events_stream(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<EventsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+
+    let mut rx = s.event_tx.subscribe();
+    let (tx, stream_rx) = mpsc::channel::<Result<Event, Infallible>>(64);
+
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    let event_type = match &event {
+                        ServerEvent::TaskChanged { .. } => "task_changed",
+                        ServerEvent::SettingsChanged => "settings_changed",
+                        ServerEvent::SessionChanged => "session_changed",
+                        ServerEvent::ReportChanged { .. } => "report_changed",
+                        ServerEvent::ProjectsChanged => "projects_changed",
+                        ServerEvent::TemplatesChanged => "templates_changed",
+                    };
+                    if tx
+                        .send(Ok(Event::default().event(event_type).data(data)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            }
+        }
+    });
+
+    Ok(sse_stream(stream_rx))
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +1030,6 @@ async fn prompt_improve(
 ) -> Result<impl IntoResponse, ApiError> {
     check_auth(&s.db, &headers)?;
 
-    // Read context from DB before spawning
     let (global_prompt, project_prompt, selected_model) = {
         let conn = s.db.lock().map_err(internal)?;
         let gp = queries::get_setting(&*conn, "global_prompt")
@@ -569,8 +1129,7 @@ async fn prompt_improve(
         });
 
         let _ = tokio::join!(stdout_task, stderr_task);
-        let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
-        let _ = success;
+        let _ = child.wait().await;
     });
 
     Ok(sse_stream(rx))
@@ -658,6 +1217,7 @@ async fn prompt_run(
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let tx_err = tx.clone();
+        let tx_done = tx.clone();
         let jid = job_id.clone();
 
         let stdout_task = tokio::spawn(async move {
@@ -690,10 +1250,11 @@ async fn prompt_run(
         let _ = tokio::join!(stdout_task, stderr_task);
         registry.lock().unwrap().remove(&jid);
         let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
-        let exit_code = 0i32; // simplified
-        let _ = exit_code;
-        let _ = success;
-        // channel drops, SSE stream ends naturally
+        let _ = tx_done
+            .send(Ok(Event::default()
+                .event("done")
+                .data(serde_json::json!({ "job_id": jid, "success": success }).to_string())))
+            .await;
     });
 
     Ok(sse_stream(rx))
@@ -706,8 +1267,8 @@ async fn prompt_run(
 pub async fn start(
     db_path: PathBuf,
     job_registry: Arc<Mutex<HashMap<String, u32>>>,
+    dist_path: Option<PathBuf>,
 ) {
-    // Open dedicated DB connection for the HTTP server
     let conn = match Connection::open(&db_path) {
         Ok(c) => c,
         Err(e) => {
@@ -715,44 +1276,76 @@ pub async fn start(
             return;
         }
     };
-    if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;") {
+    if let Err(e) = conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"
+    ) {
         eprintln!("[http_server] Failed to set DB pragmas: {}", e);
     }
     let db = Arc::new(Mutex::new(conn));
 
-    // Read port + auth token from settings
-    let (port, _auth_token) = {
+    let port: u16 = {
         let c = db.lock().unwrap();
-        let port: u16 = queries::get_setting(&*c, "http_server_port")
+        queries::get_setting(&*c, "http_server_port")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(7734);
-        let tok = queries::get_setting(&*c, "http_auth_token")
-            .unwrap_or_default();
-        (port, tok)
+            .unwrap_or(7734)
     };
 
-    let state = ServerState { db, job_registry };
+    let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
+
+    let state = ServerState { db, job_registry, event_tx };
 
     let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::PUT, Method::OPTIONS])
         .allow_headers(Any)
         .allow_origin(Any);
 
     let app = Router::new()
-        .route("/", get(serve_ui))
+        // Health (no auth)
         .route("/api/health", get(health))
+        // Real-time events SSE (auth via query param)
+        .route("/api/events", get(events_stream))
+        // Tasks
         .route("/api/tasks", get(get_tasks).post(create_task))
+        .route("/api/tasks/range", get(get_tasks_range))
+        .route("/api/tasks/rollover", post(rollover_tasks))
+        .route("/api/tasks/reorder", patch(reorder_tasks))
         .route("/api/tasks/:id", get(get_task).patch(patch_task).delete(delete_task))
         .route("/api/tasks/:id/status", patch(patch_task_status))
+        .route("/api/tasks/:id/move-session", patch(move_task_session))
+        .route("/api/tasks/:id/carry-forward", post(carry_task_forward))
+        .route("/api/tasks/:id/prompt-result", post(save_task_prompt_result))
+        // Settings
         .route("/api/settings", get(get_settings))
+        .route("/api/settings/:key", get(get_setting_by_key).put(set_setting_by_key))
+        // Session
         .route("/api/session", get(get_session))
+        // Reports
         .route("/api/reports", get(get_reports))
+        .route("/api/reports/:date", get(get_report))
+        .route("/api/reports/:date/generate", post(generate_report_endpoint))
+        .route("/api/reports/:date/reflection", post(save_report_reflection))
+        // Projects
+        .route("/api/projects", get(get_projects).post(create_project))
+        .route("/api/projects/:id", delete(delete_project))
+        .route("/api/projects/:id/prompt", get(get_project_prompt).put(set_project_prompt))
+        // Prompt
+        .route("/api/prompt/global", get(get_global_prompt).put(set_global_prompt))
+        .route("/api/prompt/templates", get(get_prompt_templates).post(create_prompt_template))
+        .route("/api/prompt/templates/:id", patch(update_prompt_template).delete(delete_prompt_template_handler))
         .route("/api/prompt/improve", post(prompt_improve))
         .route("/api/prompt/run", post(prompt_run))
-        .route("/api/prompt/templates", get(get_prompt_templates))
         .layer(cors)
         .with_state(state);
+
+    // SPA fallback — serves dist/ for all non-API routes
+    let app = if let Some(dist) = dist_path {
+        let index = dist.join("index.html");
+        let spa = ServeDir::new(&dist).not_found_service(ServeFile::new(index));
+        app.fallback_service(spa)
+    } else {
+        app.fallback(|| async { (StatusCode::SERVICE_UNAVAILABLE, "Frontend not built. Run: npm run build") })
+    };
 
     let bind_addr = format!("0.0.0.0:{}", port);
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
@@ -773,7 +1366,6 @@ pub async fn start(
 // Tauri commands for remote-access settings
 // ---------------------------------------------------------------------------
 
-/// Return the machine's primary local network IP address (best-effort).
 #[tauri::command]
 pub fn get_local_ip() -> String {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")
@@ -787,7 +1379,6 @@ pub fn get_local_ip() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
-/// Return the configured HTTP server port (default 7734).
 #[tauri::command]
 pub fn get_http_server_port(db: tauri::State<'_, crate::db::DbConnection>) -> Result<u16, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;

@@ -27,6 +27,25 @@ pub fn run() {
                 run_migrations(&mut *conn, Some(&db_path)).expect("Migrations failed");
             }
 
+            // Auto-generate HTTP auth token on first launch
+            {
+                let conn = db.0.lock().expect("DB lock");
+                let existing = db::queries::get_setting(&conn, "http_auth_token")
+                    .unwrap_or_default();
+                if existing.trim().is_empty() {
+                    let token: String = {
+                        use rand::Rng;
+                        rand::thread_rng()
+                            .sample_iter(&rand::distributions::Alphanumeric)
+                            .take(32)
+                            .map(char::from)
+                            .collect()
+                    };
+                    let _ = db::queries::set_setting(&conn, "http_auth_token", &token);
+                    eprintln!("[http_server] Generated new auth token");
+                }
+            }
+
             // Load settings for scheduler
             let (tz_offset, kickstart, planning_end, session2_start, warn_min, work_days) = {
                 let conn = db.0.lock().expect("DB lock");
@@ -64,8 +83,23 @@ pub fn run() {
             {
                 let http_db_path = db_path.clone();
                 let http_registry = job_registry_arc.clone();
+                // Determine dist/ path for static file serving.
+                // 1. current_dir() works when invoked via `cargo tauri dev` from project root.
+                // 2. Fallback: walk up from the exe (target/debug/bin → project root).
+                let dist_path = std::env::current_dir()
+                    .ok()
+                    .map(|d| d.join("dist"))
+                    .filter(|p| p.join("index.html").exists())
+                    .or_else(|| {
+                        std::env::current_exe().ok().and_then(|mut exe| {
+                            for _ in 0..4 { exe.pop(); } // binary→debug→target→src-tauri→root
+                            exe.push("dist");
+                            if exe.join("index.html").exists() { Some(exe) } else { None }
+                        })
+                    });
+                eprintln!("[http_server] dist path: {:?}", dist_path);
                 tauri::async_runtime::spawn(async move {
-                    http_server::start(http_db_path, http_registry).await;
+                    http_server::start(http_db_path, http_registry, dist_path).await;
                 });
             }
 

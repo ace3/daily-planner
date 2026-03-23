@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Wifi, Copy, Check, QrCode, RefreshCw, ExternalLink } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { getLocalIp, getHttpServerPort } from '../lib/tauri';
+import { getLocalIp, getHttpServerPort, getSetting, setSetting } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
 
 // Minimal QR code generator using canvas — no external dependency required.
@@ -50,19 +50,41 @@ export const RemoteAccessPage: React.FC = () => {
   const [port, setPort] = useState<number>(7734);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
+  const [token, setToken] = useState<string>('');
+  const [regenerating, setRegenerating] = useState(false);
 
-  const localUrl = `http://${localIp}:${port}`;
+  const localUrl = token
+    ? `http://${localIp}:${port}/?token=${token}`
+    : `http://${localIp}:${port}`;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ip, p] = await Promise.all([getLocalIp(), getHttpServerPort()]);
+      const [ip, p, t] = await Promise.all([getLocalIp(), getHttpServerPort(), getSetting('http_auth_token')]);
       setLocalIp(ip);
       setPort(p);
+      setToken(t ?? '');
     } catch (e) {
       toast.error(`Failed to load remote access info: ${String(e)}`);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const handleRegenerateToken = useCallback(async () => {
+    setRegenerating(true);
+    try {
+      // Generate a random 32-char hex token
+      const array = new Uint8Array(16);
+      crypto.getRandomValues(array);
+      const newToken = Array.from(array).map((b) => b.toString(16).padStart(2, '0')).join('');
+      await setSetting('http_auth_token', newToken);
+      setToken(newToken);
+      toast.success('Auth token regenerated');
+    } catch (e) {
+      toast.error(`Failed to regenerate token: ${String(e)}`);
+    } finally {
+      setRegenerating(false);
     }
   }, []);
 
@@ -95,6 +117,51 @@ export const RemoteAccessPage: React.FC = () => {
         The embedded HTTP server runs on port <strong>{port}</strong>. Open the URL below from any
         device on the <strong>same WiFi network</strong> to access Daily Planner from your phone or
         tablet. The Tauri desktop app must be running on this Mac.
+      </div>
+
+      {/* Auth token warning */}
+      {!loading && !token && (
+        <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-300 leading-relaxed">
+          No auth token set — API is unprotected. Generate a token below to secure access.
+        </div>
+      )}
+
+      {/* Auth token card */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#8B949E]">
+            Auth Token
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={13} className={regenerating ? 'animate-spin' : ''} />}
+            onClick={handleRegenerateToken}
+            disabled={regenerating}
+          >
+            Regenerate Token
+          </Button>
+        </div>
+        {token ? (
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded-lg border border-[#30363D] bg-[#0F1117] px-3 py-2 text-xs text-[#8B949E] font-mono break-all">
+              {token}
+            </code>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={copied === 'token' ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+              onClick={() => handleCopy(token, 'token')}
+              className={copied === 'token' ? 'text-green-400' : ''}
+            >
+              {copied === 'token' ? 'Copied!' : 'Copy'}
+            </Button>
+          </div>
+        ) : (
+          <div className="text-xs text-gray-500 dark:text-[#484F58]">
+            No token configured. Click "Regenerate Token" to create one.
+          </div>
+        )}
       </div>
 
       {/* Local URL card */}

@@ -893,7 +893,7 @@ const MasterPromptPanel: React.FC<MasterPromptPanelProps> = ({ tasks, projects }
                 variant="primary"
                 size="sm"
                 icon={<Wand2 size={12} />}
-                onClick={handleImproveWithAi}
+                onClick={() => handleImproveWithAi()}
                 disabled={!output || improving}
               >
                 {improving ? 'Improving...' : 'Improve with AI'}
