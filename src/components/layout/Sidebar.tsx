@@ -1,19 +1,18 @@
 import React, { useRef, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Zap, MessageSquare, BarChart2, FolderOpen,
-  Settings, FileText, Wifi, History, MoreHorizontal, X,
+  LayoutDashboard, Zap, FolderGit2, BarChart3, Clock,
+  Settings, FileText, Wifi, MoreHorizontal, X,
 } from 'lucide-react';
 import { useMobileStore } from '../../stores/mobileStore';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', shortcut: '⌘1' },
-  { to: '/prompt', icon: MessageSquare, label: 'Prompt', shortcut: '⌘2' },
-  { to: '/history', icon: History, label: 'History', shortcut: '⌘3' },
-  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘4' },
-  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘5' },
-  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘6' },
-  { to: '/remote-access', icon: Wifi, label: 'Remote', shortcut: '⌘7' },
+  { to: '/projects', icon: FolderGit2, label: 'Projects', shortcut: '⌘2' },
+  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘3' },
+  { to: '/history', icon: Clock, label: 'History', shortcut: '⌘4' },
+  { to: '/reports', icon: BarChart3, label: 'Reports', shortcut: '⌘5' },
+  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘6' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
 

@@ -13,6 +13,7 @@ import type {
 import type { AppSettings, AiProvider } from '../types/settings';
 import type { DailyReport } from '../types/report';
 import type { Project, CreateProjectInput } from '../types/project';
+import type { PromptJob } from '../types/job';
 import { invoke } from '@tauri-apps/api/core';
 import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
 import { isWebBrowser, httpGet, httpPost, httpPatch, httpPut, httpDelete } from './http';
@@ -30,20 +31,15 @@ function tauriOpen(opts: Parameters<typeof dialogOpen>[0]) {
 // Tasks
 // ---------------------------------------------------------------------------
 
-export const getTasks = (date: string): Promise<Task[]> =>
+export const getTasks = (): Promise<Task[]> =>
   isWebBrowser()
-    ? httpGet<Task[]>('/api/tasks', { date })
-    : tauriInvoke<Task[]>('get_tasks', { date });
+    ? httpGet<Task[]>('/api/tasks')
+    : tauriInvoke<Task[]>('get_tasks', {});
 
 export const getTasksRange = (from: string, to: string): Promise<Task[]> =>
   isWebBrowser()
     ? httpGet<Task[]>('/api/tasks/range', { from, to })
     : tauriInvoke<Task[]>('get_tasks_range', { from, to });
-
-export const rolloverIncompleteTasks = (date: string): Promise<number> =>
-  isWebBrowser()
-    ? httpPost<{ rolled_over: number }>('/api/tasks/rollover', { date }).then((r) => r.rolled_over)
-    : tauriInvoke<number>('rollover_incomplete_tasks', { date });
 
 export const createTask = (input: CreateTaskInput): Promise<string> =>
   isWebBrowser()
@@ -65,31 +61,25 @@ export const deleteTask = (id: string): Promise<void> =>
     ? httpDelete<void>(`/api/tasks/${id}`)
     : tauriInvoke<void>('delete_task', { id });
 
-export const carryTaskForward = (id: string, tomorrowDate: string, sessionSlot: number): Promise<string> =>
+export const carryTaskForward = (id: string, tomorrowDate: string): Promise<string> =>
   isWebBrowser()
     ? httpPost<{ id: string }>(`/api/tasks/${id}/carry-forward`, {
         tomorrow_date: tomorrowDate,
-        session_slot: sessionSlot,
       }).then((r) => r.id)
-    : tauriInvoke<string>('carry_task_forward', { id, tomorrowDate, sessionSlot });
+    : tauriInvoke<string>('carry_task_forward', { id, tomorrowDate });
 
 export const reorderTasks = (taskIds: string[]): Promise<void> =>
   isWebBrowser()
     ? httpPatch<void>('/api/tasks/reorder', { task_ids: taskIds })
     : tauriInvoke<void>('reorder_tasks', { taskIds });
 
-export const savePromptResult = (id: string, promptUsed: string, promptResult: string): Promise<void> =>
+export const savePromptResult = (id: string, rawPrompt: string, improvedPrompt: string): Promise<void> =>
   isWebBrowser()
     ? httpPost<void>(`/api/tasks/${id}/prompt-result`, {
-        prompt_used: promptUsed,
-        prompt_result: promptResult,
+        raw_prompt: rawPrompt,
+        improved_prompt: improvedPrompt,
       })
-    : tauriInvoke<void>('save_prompt_result', { id, promptUsed, promptResult });
-
-export const moveTaskToSession = (taskId: string, targetSession: 1 | 2): Promise<void> =>
-  isWebBrowser()
-    ? httpPatch<void>(`/api/tasks/${taskId}/move-session`, { target_session: targetSession })
-    : tauriInvoke<void>('move_task_to_session', { taskId, targetSession });
+    : tauriInvoke<void>('save_prompt_result', { id, rawPrompt, improvedPrompt });
 
 // Desktop-only (git worktrees not available in browser)
 export const runTaskAsWorktree = (taskId: string): Promise<RunTaskWorktreeResult> =>
@@ -511,3 +501,81 @@ export const testTelegramNotification = (): Promise<void> =>
   isWebBrowser()
     ? Promise.reject(new Error('Not available in browser mode'))
     : tauriInvoke<void>('test_telegram_notification');
+
+// ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+export const getActiveJobs = (): Promise<PromptJob[]> =>
+  isWebBrowser()
+    ? httpGet<{ jobs: PromptJob[] }>('/api/jobs?status=active').then((r) => r.jobs ?? [])
+    : tauriInvoke<PromptJob[]>('get_active_jobs');
+
+export const getRecentJobs = (limit: number = 20): Promise<PromptJob[]> =>
+  isWebBrowser()
+    ? httpGet<{ jobs: PromptJob[] }>(`/api/jobs?limit=${limit}`).then((r) => r.jobs ?? [])
+    : tauriInvoke<PromptJob[]>('get_recent_jobs', { limit });
+
+export const getJob = (id: string): Promise<PromptJob | null> =>
+  isWebBrowser()
+    ? httpGet<PromptJob>(`/api/jobs/${id}`).catch(() => null)
+    : tauriInvoke<PromptJob | null>('get_job', { id });
+
+export const getJobsByTask = (taskId: string): Promise<PromptJob[]> =>
+  isWebBrowser()
+    ? httpGet<{ jobs: PromptJob[] }>('/api/jobs')
+        .then((r) => (r.jobs ?? []).filter((j) => j.task_id === taskId))
+    : tauriInvoke<PromptJob[]>('get_jobs_by_task', { taskId });
+
+export const runTaskPrompt = (taskId: string, prompt?: string, provider?: string): Promise<string> =>
+  isWebBrowser()
+    ? httpPost<{ job_id: string }>(`/api/tasks/${taskId}/run`, { prompt, provider }).then((r) => r.job_id)
+    : tauriInvoke<string>('create_and_run_job', { taskId, prompt, provider });
+
+export const cancelPromptRun = (jobId: string): Promise<void> =>
+  isWebBrowser()
+    ? httpPost<void>(`/api/jobs/${jobId}/cancel`, {})
+    : tauriInvoke<void>('cancel_prompt_run', { jobId });
+
+export const updateTaskPrompt = (taskId: string, rawPrompt?: string, improvedPrompt?: string): Promise<void> =>
+  isWebBrowser()
+    ? httpPatch<void>(`/api/tasks/${taskId}/prompt`, { raw_prompt: rawPrompt, improved_prompt: improvedPrompt })
+    : tauriInvoke<void>('save_task_prompt', { id: taskId, rawPrompt, improvedPrompt });
+
+// ---------------------------------------------------------------------------
+// Project-scoped tasks
+// ---------------------------------------------------------------------------
+
+export const getTasksByProject = (projectId: string): Promise<Task[]> =>
+  isWebBrowser()
+    ? httpGet<{ tasks: Task[] }>(`/api/projects/${projectId}/tasks`).then((r) => r.tasks ?? [])
+    : tauriInvoke<Task[]>('get_tasks_by_project', { projectId });
+
+export const getStandaloneTasks = (): Promise<Task[]> =>
+  isWebBrowser()
+    ? httpGet<{ tasks: Task[] }>('/api/tasks/standalone').then((r) => r.tasks ?? [])
+    : tauriInvoke<Task[]>('get_standalone_tasks');
+
+// ---------------------------------------------------------------------------
+// Project-scoped git (browser mode delegates to HTTP; desktop uses project path)
+// ---------------------------------------------------------------------------
+
+export const getProjectGitStatus = (projectId: string): Promise<{ status: string; clean: boolean }> =>
+  isWebBrowser()
+    ? httpGet<{ status: string; clean: boolean }>(`/api/projects/${projectId}/git/status`)
+    : tauriInvoke<{ status: string; clean: boolean }>('git_status', { projectId });
+
+export const getProjectGitDiff = (projectId: string): Promise<{ diff: string }> =>
+  isWebBrowser()
+    ? httpGet<{ diff: string }>(`/api/projects/${projectId}/git/diff`)
+    : tauriInvoke<{ diff: string }>('git_diff', { projectId });
+
+export const commitProject = (projectId: string, message: string): Promise<{ success: boolean; output: string }> =>
+  isWebBrowser()
+    ? httpPost<{ success: boolean; output: string }>(`/api/projects/${projectId}/git/commit`, { message })
+    : tauriInvoke<{ success: boolean; output: string }>('git_commit', { projectId, message });
+
+export const pushProject = (projectId: string): Promise<{ success: boolean; output: string }> =>
+  isWebBrowser()
+    ? httpPost<{ success: boolean; output: string }>(`/api/projects/${projectId}/git/push`, {})
+    : tauriInvoke<{ success: boolean; output: string }>('git_push', { projectId });

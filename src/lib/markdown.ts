@@ -17,9 +17,6 @@ export function reportToMarkdown(
     ? Math.round((report.tasks_completed / report.tasks_planned) * 100)
     : 0;
 
-  const session1Tasks = tasks.filter(t => t.session_slot === 1);
-  const session2Tasks = tasks.filter(t => t.session_slot === 2);
-
   const formatTaskList = (list: import('../types/task').Task[]) =>
     list.map(taskToMarkdown).join('\n');
 
@@ -30,13 +27,8 @@ export function reportToMarkdown(
 - Focus time: ${formatDuration(report.total_focus_min)}
 - Skipped: ${report.tasks_skipped} | Carried over: ${report.tasks_carried}
 
-## Session 1 (Planning + Coding)
-${session1Tasks.length > 0 ? formatTaskList(session1Tasks) : '_No tasks_'}
-Focus: ${formatDuration(report.session1_focus)}
-
-## Session 2 (Afternoon)
-${session2Tasks.length > 0 ? formatTaskList(session2Tasks) : '_No tasks_'}
-Focus: ${formatDuration(report.session2_focus)}
+## Tasks
+${tasks.length > 0 ? formatTaskList(tasks) : '_No tasks_'}
 
 ${report.ai_reflection ? `## AI Reflection\n${report.ai_reflection}` : ''}
 

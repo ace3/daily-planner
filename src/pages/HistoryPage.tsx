@@ -47,7 +47,7 @@ const TaskHistoryCard: React.FC<{ task: Task; projectName?: string }> = ({ task,
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const hasPromptData = task.prompt_used || task.prompt_result;
+  const hasPromptData = task.raw_prompt || task.improved_prompt;
 
   return (
     <div className="rounded-lg border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-3">
@@ -83,26 +83,26 @@ const TaskHistoryCard: React.FC<{ task: Task; projectName?: string }> = ({ task,
 
       {expanded && hasPromptData && (
         <div className="mt-3 space-y-2 border-t border-gray-100 dark:border-[#21262D] pt-2">
-          {task.prompt_used && (
+          {task.raw_prompt && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">Prompt Used</span>
+                <span className="text-[11px] font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">Raw Prompt</span>
                 <Button
                   variant="ghost"
                   size="sm"
                   icon={copiedField === 'used' ? <Check size={10} className="text-green-400" /> : <Copy size={10} />}
-                  onClick={() => handleCopy(task.prompt_used!, 'used')}
+                  onClick={() => handleCopy(task.raw_prompt!, 'used')}
                   className={`text-[10px] ${copiedField === 'used' ? 'text-green-400' : ''}`}
                 >
                   {copiedField === 'used' ? 'Copied' : 'Copy'}
                 </Button>
               </div>
               <pre className="rounded bg-gray-50 dark:bg-[#0F1117] border border-gray-200 dark:border-[#21262D] p-2 text-[11px] text-gray-700 dark:text-[#8B949E] font-mono whitespace-pre-wrap overflow-y-auto max-h-40">
-                {task.prompt_used}
+                {task.raw_prompt}
               </pre>
             </div>
           )}
-          {task.prompt_result && (
+          {task.improved_prompt && (
             <div>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[11px] font-semibold text-green-500 dark:text-green-400 uppercase tracking-wide">Improved Prompt</span>
@@ -110,14 +110,14 @@ const TaskHistoryCard: React.FC<{ task: Task; projectName?: string }> = ({ task,
                   variant="ghost"
                   size="sm"
                   icon={copiedField === 'result' ? <Check size={10} className="text-green-400" /> : <Copy size={10} />}
-                  onClick={() => handleCopy(task.prompt_result!, 'result')}
+                  onClick={() => handleCopy(task.improved_prompt!, 'result')}
                   className={`text-[10px] ${copiedField === 'result' ? 'text-green-400' : ''}`}
                 >
                   {copiedField === 'result' ? 'Copied' : 'Copy'}
                 </Button>
               </div>
               <pre className="rounded bg-green-50 dark:bg-green-500/5 border border-green-200 dark:border-green-500/20 p-2 text-[11px] text-gray-700 dark:text-[#E6EDF3] font-mono whitespace-pre-wrap overflow-y-auto max-h-40">
-                {task.prompt_result}
+                {task.improved_prompt}
               </pre>
             </div>
           )}
@@ -154,13 +154,14 @@ export const HistoryPage: React.FC = () => {
     return map;
   }, [projects]);
 
-  // Group tasks by date
+  // Group tasks by date (using created_at date portion)
   const tasksByDate = useMemo(() => {
     const groups = new Map<string, Task[]>();
     for (const t of tasks) {
-      const existing = groups.get(t.date) ?? [];
+      const dateKey = t.created_at.slice(0, 10);
+      const existing = groups.get(dateKey) ?? [];
       existing.push(t);
-      groups.set(t.date, existing);
+      groups.set(dateKey, existing);
     }
     // Sort dates descending
     return Array.from(groups.entries()).sort(([a], [b]) => b.localeCompare(a));

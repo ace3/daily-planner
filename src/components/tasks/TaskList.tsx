@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { TaskItem } from './TaskItem';
 import { TaskForm } from './TaskForm';
-import { SessionBadge } from '../session/SessionBadge';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMobileStore } from '../../stores/mobileStore';
@@ -14,11 +13,10 @@ import { toast } from '../ui/Toast';
 import { FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
 
 interface TaskListProps {
-  slot: number;
   onTaskSelect?: (task: Task) => void;
 }
 
-export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
+export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   const [completedOpen, setCompletedOpen] = useState(false);
   const { mobileMode: m } = useMobileStore();
   const {
@@ -30,13 +28,10 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     updateTask,
     runTaskAsWorktree,
     cleanupTaskWorktree,
-    moveTaskToSession,
-    activeDate,
   } = useTaskStore();
   const { settings } = useSettingsStore();
   const { projects } = useProjectStore();
   const { enqueue } = usePromptQueue();
-  const slotTasks = tasks.filter((t) => t.session_slot === slot);
 
   const handleCreate = async (input: Parameters<typeof createTask>[0]) => {
     await createTask(input);
@@ -56,7 +51,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     const tz = settings?.timezone_offset ?? 7;
     const today = getLocalDate(tz);
     const tomorrow = format(addDays(new Date(today + 'T00:00:00'), 1), 'yyyy-MM-dd');
-    await carryTaskForward(id, tomorrow, slot);
+    await carryTaskForward(id, tomorrow);
     toast.success('Task carried to tomorrow');
   };
 
@@ -96,13 +91,8 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
-  const handleMoveToSession = async (task: Task, targetSlot: number) => {
-    await moveTaskToSession(task.id, targetSlot as 1 | 2);
-    toast.success(`Moved to Session ${targetSlot}`);
-  };
-
-  const doneTasks = slotTasks.filter((t) => t.status === 'done');
-  const pendingTasks = slotTasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
+  const doneTasks = tasks.filter((t) => t.status === 'done');
+  const pendingTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
 
   // Group pending tasks by project
   const tasksByProject = new Map<string | null, Task[]>();
@@ -123,13 +113,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
   projectGroups.sort((a, b) => a.name.localeCompare(b.name));
 
   const noProjectTasks = tasksByProject.get(null) ?? [];
-  // Only show "No Project" label if there are also project groups
   const showProjectHeaders = projectGroups.length > 0;
-
-  const slotNames: Record<number, string> = {
-    1: '9AM–2PM Planning & Coding',
-    2: '2PM–7PM Afternoon',
-  };
 
   const renderTaskItem = (task: Task) => (
     <TaskItem
@@ -143,25 +127,21 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       onSelect={onTaskSelect}
       onRunAsWorktree={handleRunAsWorktree}
       onCleanupWorktree={handleCleanupWorktree}
-      onMoveToSession={handleMoveToSession}
     />
   );
 
   return (
     <div className={m ? 'space-y-4' : 'space-y-3'}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide ${m ? 'text-sm' : 'text-xs'}`}>
-            {slotNames[slot] ?? `Session ${slot}`}
-          </span>
-          <SessionBadge slot={slot} />
-        </div>
+        <span className={`font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide ${m ? 'text-sm' : 'text-xs'}`}>
+          Tasks
+        </span>
         <span className={`text-gray-400 dark:text-[#484F58] ${m ? 'text-sm' : 'text-xs'}`}>
-          {doneTasks.length}/{slotTasks.filter((t) => t.status !== 'carried_over').length}
+          {doneTasks.length}/{tasks.filter((t) => t.status !== 'carried_over').length}
         </span>
       </div>
 
-      <TaskForm date={activeDate} sessionSlot={slot} onSubmit={handleCreate} compact />
+      <TaskForm onSubmit={handleCreate} compact />
 
       <div className={m ? 'space-y-3' : 'space-y-1.5'}>
         {/* Project groups */}
@@ -224,7 +204,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
                   onSelect={onTaskSelect}
                   onRunAsWorktree={handleRunAsWorktree}
                   onCleanupWorktree={handleCleanupWorktree}
-                  onMoveToSession={handleMoveToSession}
                 />
               ))}
             </div>

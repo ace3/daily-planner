@@ -69,8 +69,6 @@ fn compute_sha256(data: &[u8]) -> String {
 
 fn count_items(backup: &BackupData) -> i64 {
     (backup.tasks.len()
-        + backup.focus_sessions.len()
-        + backup.daily_sessions.len()
         + backup.prompt_templates.len()
         + backup.daily_reports.len()
         + backup.settings.len()) as i64
@@ -81,8 +79,6 @@ fn make_backup_data(conn: &Connection) -> rusqlite::Result<BackupData> {
         version: 1,
         created_at: chrono::Utc::now().to_rfc3339(),
         tasks: queries::get_all_tasks(conn)?,
-        focus_sessions: queries::get_all_focus_sessions(conn)?,
-        daily_sessions: queries::get_all_daily_sessions(conn)?,
         prompt_templates: queries::get_all_prompt_templates(conn)?,
         daily_reports: queries::get_all_daily_reports(conn)?,
         settings: queries::get_all_settings_non_sensitive(conn)?,
@@ -406,41 +402,19 @@ pub fn restore_from_backup_session(
     for task in &backup.tasks {
         conn.execute(
             "INSERT OR REPLACE INTO tasks
-             (id, date, session_slot, title, notes, task_type, priority, status,
-              estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-              position, created_at, updated_at, completed_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             (id, title, notes, task_type, priority, status,
+              estimated_min, actual_min, raw_prompt, improved_prompt, prompt_output,
+              job_status, job_id, provider, carried_from, position,
+              created_at, updated_at, completed_at, project_id,
+              worktree_path, worktree_branch, worktree_status)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
             rusqlite::params![
-                task.id, task.date, task.session_slot, task.title, task.notes,
-                task.task_type, task.priority, task.status, task.estimated_min,
-                task.actual_min, task.prompt_used, task.prompt_result, task.carried_from,
-                task.position, task.created_at, task.updated_at, task.completed_at
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    for fs in &backup.focus_sessions {
-        conn.execute(
-            "INSERT OR REPLACE INTO focus_sessions
-             (id, task_id, date, started_at, ended_at, duration_min, notes)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            rusqlite::params![
-                fs.id, fs.task_id, fs.date, fs.started_at, fs.ended_at, fs.duration_min, fs.notes
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    for ds in &backup.daily_sessions {
-        conn.execute(
-            "INSERT OR REPLACE INTO daily_sessions
-             (id, date, session_slot, started_at, tasks_planned, tasks_completed,
-              tasks_skipped, focus_minutes, notes)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            rusqlite::params![
-                ds.id, ds.date, ds.session_slot, ds.started_at, ds.tasks_planned,
-                ds.tasks_completed, ds.tasks_skipped, ds.focus_minutes, ds.notes
+                task.id, task.title, task.notes, task.task_type, task.priority, task.status,
+                task.estimated_min, task.actual_min, task.raw_prompt, task.improved_prompt,
+                task.prompt_output, task.job_status, task.job_id, task.provider,
+                task.carried_from, task.position,
+                task.created_at, task.updated_at, task.completed_at, task.project_id,
+                task.worktree_path, task.worktree_branch, task.worktree_status
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -450,12 +424,11 @@ pub fn restore_from_backup_session(
         conn.execute(
             "INSERT OR REPLACE INTO daily_reports
              (id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
-              total_focus_min, session1_focus, session2_focus, ai_reflection,
-              markdown_export, generated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+              total_focus_min, ai_reflection, markdown_export, generated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             rusqlite::params![
                 dr.id, dr.date, dr.tasks_planned, dr.tasks_completed, dr.tasks_skipped,
-                dr.tasks_carried, dr.total_focus_min, dr.session1_focus, dr.session2_focus,
+                dr.tasks_carried, dr.total_focus_min,
                 dr.ai_reflection, dr.markdown_export, dr.generated_at
             ],
         )
@@ -664,8 +637,8 @@ mod tests {
 
         // Insert a task
         conn.execute(
-            "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, position)
-             VALUES ('test-task-1', '2026-01-01', 1, 'Test Task', 'code', 2, 0)",
+            "INSERT INTO tasks (id, title, task_type, priority, position)
+             VALUES ('test-task-1', 'Test Task', 'prompt', 2, 0)",
             [],
         ).unwrap();
 

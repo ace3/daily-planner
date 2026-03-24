@@ -1,16 +1,16 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import React, { useEffect, useRef, useCallback } from 'react';
+import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { Dashboard } from './pages/Dashboard';
-import { PromptPage } from './pages/PromptPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { ProjectDetail } from './pages/ProjectDetail';
 import { RemoteAccessPage } from './pages/RemoteAccessPage';
 import { HistoryPage } from './pages/HistoryPage';
-import { MorningPlanning } from './pages/MorningPlanning';
+import { TaskDetail } from './pages/TaskDetail';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTaskStore } from './stores/taskStore';
@@ -19,20 +19,17 @@ import { useProviderStore } from './stores/providerStore';
 import { useSyncStore } from './stores/syncStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useMobileStore } from './stores/mobileStore';
-import { getLocalDate, getLocalTime, timeToMinutes } from './lib/time';
 import { extractAndStoreToken, isWebBrowser } from './lib/http';
 import { startSseClient, stopSseClient } from './lib/eventSource';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 
 const AppInner: React.FC = () => {
   const { fetchSettings, settings } = useSettingsStore();
-  const { fetchTasks, activeDate } = useTaskStore();
+  const { fetchTasks } = useTaskStore();
   const { fetchProjects, initSelectedProject } = useProjectStore();
   const { checkAvailability } = useProviderStore();
   const { mobileMode } = useMobileStore();
   const { syncAll } = useSyncStore();
-  const [showMorningPlanning, setShowMorningPlanning] = useState(false);
-  const navigate = useNavigate();
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   const scrollBy = useCallback((amount: number) => {
@@ -58,8 +55,8 @@ const AppInner: React.FC = () => {
   useEffect(() => {
     if (!isWebBrowser()) return;
     startSseClient({
-      onTaskChanged: (date) => {
-        useTaskStore.getState().fetchTasks(date || useTaskStore.getState().activeDate);
+      onTaskChanged: () => {
+        useTaskStore.getState().fetchTasks();
       },
       onSettingsChanged: () => {
         useSettingsStore.getState().fetchSettings();
@@ -79,41 +76,22 @@ const AppInner: React.FC = () => {
 
   // Auto-poll every 30s to pick up changes made from the web interface
   useEffect(() => {
-    if (!activeDate) return;
     const interval = setInterval(() => {
-      syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+      syncAll(fetchTasks, fetchSettings, fetchProjects);
     }, 30_000);
     return () => clearInterval(interval);
-  }, [activeDate]);
+  }, []);
 
   // Sync immediately when the window regains focus
   useEffect(() => {
-    if (!activeDate) return;
-    const onFocus = () => syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+    const onFocus = () => syncAll(fetchTasks, fetchSettings, fetchProjects);
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [activeDate]);
+  }, []);
 
   useEffect(() => {
     if (!settings) return;
-    const today = getLocalDate(settings.timezone_offset);
-    fetchTasks(today);
-
-    // Check if we should show morning planning modal
-    const now = getLocalTime(settings.timezone_offset);
-    const currentMins = now.getHours() * 60 + now.getMinutes();
-    const kickstartMins = timeToMinutes(settings.session1_kickstart);
-    const planningEndMins = timeToMinutes(settings.planning_end);
-
-    // Show if within the first 30 min of kickstart and planning phase not ended
-    if (currentMins >= kickstartMins && currentMins < kickstartMins + 30 && currentMins < planningEndMins) {
-      const lastShownKey = `morning-planning-shown-${today}`;
-      const alreadyShown = sessionStorage.getItem(lastShownKey);
-      if (!alreadyShown) {
-        setShowMorningPlanning(true);
-        sessionStorage.setItem(lastShownKey, '1');
-      }
-    }
+    fetchTasks();
   }, [settings]);
 
   return (
@@ -127,26 +105,17 @@ const AppInner: React.FC = () => {
         <TopBar />
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/prompt" element={<PromptPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/:id" element={<ProjectDetail />} />
+          <Route path="/tasks/:id" element={<TaskDetail />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/remote-access" element={<RemoteAccessPage />} />
         </Routes>
       </div>
       {mobileMode && <Sidebar />}
-
-      {showMorningPlanning && (
-        <MorningPlanning
-          onClose={() => setShowMorningPlanning(false)}
-          onGoToFocus={() => {
-            setShowMorningPlanning(false);
-            navigate('/prompt');
-          }}
-        />
-      )}
 
       <ToastContainer />
 

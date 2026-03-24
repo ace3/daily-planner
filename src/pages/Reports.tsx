@@ -15,7 +15,7 @@ import { toast } from '../components/ui/Toast';
 
 export const Reports: React.FC = () => {
   const { report, recentReports, loading, generateReport, fetchReport, fetchRecentReports, saveReflection } = useReportStore();
-  const { tasks, fetchTasks, activeDate } = useTaskStore();
+  const { tasks, fetchTasks } = useTaskStore();
   const { settings } = useSettingsStore();
   const { claudeAvailable, opencodeAvailable } = useProviderStore();
   const activeProvider = settings?.ai_provider ?? 'claude';
@@ -26,7 +26,7 @@ export const Reports: React.FC = () => {
   useEffect(() => {
     fetchReport(today);
     fetchRecentReports(30);
-    if (today !== activeDate) fetchTasks(today);
+    fetchTasks();
   }, [today]);
 
   const handleGenerate = async () => {

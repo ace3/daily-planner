@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -63,6 +63,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 11 {
         apply_v11(conn)?;
+    }
+    if current < 12 {
+        apply_v12(conn)?;
     }
 
     eprintln!(
@@ -626,6 +629,129 @@ fn apply_v11(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v12(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 12, "V3 refactor: project-centric model", |tx| {
+        // 1. Drop session tables
+        tx.execute_batch("
+            DROP TABLE IF EXISTS focus_sessions;
+            DROP TABLE IF EXISTS daily_sessions;
+        ").context("Drop session tables")?;
+
+        // 2. Recreate tasks table without session_slot/date, with new columns
+        // SQLite requires table recreation for column removal
+        tx.execute_batch("
+            CREATE TABLE tasks_v3 (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                notes           TEXT DEFAULT '',
+                task_type       TEXT NOT NULL DEFAULT 'prompt',
+                priority        INTEGER NOT NULL DEFAULT 2,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                estimated_min   INTEGER DEFAULT NULL,
+                actual_min      INTEGER DEFAULT NULL,
+                raw_prompt      TEXT DEFAULT NULL,
+                improved_prompt TEXT DEFAULT NULL,
+                prompt_output   TEXT DEFAULT NULL,
+                job_status      TEXT NOT NULL DEFAULT 'idle',
+                job_id          TEXT DEFAULT NULL,
+                provider        TEXT DEFAULT NULL,
+                carried_from    TEXT DEFAULT NULL,
+                position        INTEGER NOT NULL DEFAULT 0,
+                project_id      TEXT DEFAULT NULL,
+                worktree_path   TEXT DEFAULT NULL,
+                worktree_branch TEXT DEFAULT NULL,
+                worktree_status TEXT DEFAULT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                completed_at    TEXT DEFAULT NULL
+            );
+        ").context("Create tasks_v3")?;
+
+        // 3. Migrate data from old tasks table
+        tx.execute_batch("
+            INSERT INTO tasks_v3 (id, title, notes, task_type, priority, status,
+                estimated_min, actual_min, raw_prompt, improved_prompt,
+                carried_from, position, project_id,
+                worktree_path, worktree_branch, worktree_status,
+                created_at, updated_at, completed_at)
+            SELECT id, title, notes, task_type, priority, status,
+                estimated_min, actual_min, prompt_used, prompt_result,
+                carried_from, position, project_id,
+                worktree_path, worktree_branch, worktree_status,
+                created_at, updated_at, completed_at
+            FROM tasks;
+
+            DROP TABLE tasks;
+            ALTER TABLE tasks_v3 RENAME TO tasks;
+
+            CREATE INDEX idx_tasks_status ON tasks(status);
+            CREATE INDEX idx_tasks_project ON tasks(project_id);
+            CREATE INDEX idx_tasks_job_status ON tasks(job_status);
+            CREATE INDEX idx_tasks_created ON tasks(created_at);
+        ").context("Migrate tasks data")?;
+
+        // 4. Create prompt_jobs table
+        tx.execute_batch("
+            CREATE TABLE prompt_jobs (
+                id              TEXT PRIMARY KEY,
+                task_id         TEXT NOT NULL,
+                project_id      TEXT DEFAULT NULL,
+                provider        TEXT NOT NULL,
+                prompt          TEXT NOT NULL,
+                output          TEXT DEFAULT NULL,
+                status          TEXT NOT NULL DEFAULT 'queued',
+                exit_code       INTEGER DEFAULT NULL,
+                worktree_path   TEXT DEFAULT NULL,
+                worktree_branch TEXT DEFAULT NULL,
+                error_message   TEXT DEFAULT NULL,
+                started_at      TEXT DEFAULT NULL,
+                finished_at     TEXT DEFAULT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX idx_prompt_jobs_status ON prompt_jobs(status);
+            CREATE INDEX idx_prompt_jobs_task ON prompt_jobs(task_id);
+            CREATE INDEX idx_prompt_jobs_project ON prompt_jobs(project_id);
+        ").context("Create prompt_jobs table")?;
+
+        // 5. Clean up session-related settings
+        tx.execute_batch("
+            DELETE FROM settings WHERE key IN (
+                'session1_kickstart', 'planning_end', 'session2_start',
+                'warn_before_min', 'work_days'
+            );
+        ").context("Clean session settings")?;
+
+        // 6. Update daily_reports - remove session focus columns via recreate
+        tx.execute_batch("
+            CREATE TABLE daily_reports_v3 (
+                id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                date            TEXT NOT NULL UNIQUE,
+                tasks_planned   INTEGER DEFAULT 0,
+                tasks_completed INTEGER DEFAULT 0,
+                tasks_skipped   INTEGER DEFAULT 0,
+                tasks_carried   INTEGER DEFAULT 0,
+                total_focus_min INTEGER DEFAULT 0,
+                ai_reflection   TEXT DEFAULT NULL,
+                markdown_export TEXT DEFAULT NULL,
+                generated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO daily_reports_v3 (id, date, tasks_planned, tasks_completed,
+                tasks_skipped, tasks_carried, total_focus_min,
+                ai_reflection, markdown_export, generated_at)
+            SELECT id, date, tasks_planned, tasks_completed,
+                tasks_skipped, tasks_carried, total_focus_min,
+                ai_reflection, markdown_export, generated_at
+            FROM daily_reports;
+
+            DROP TABLE daily_reports;
+            ALTER TABLE daily_reports_v3 RENAME TO daily_reports;
+        ").context("Migrate daily_reports")?;
+
+        Ok(())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -753,25 +879,31 @@ mod tests {
         let mut conn = open_test_db();
         run_migrations(&mut conn, None).unwrap();
 
-        // All expected tables exist.
+        // All expected tables exist (focus_sessions and daily_sessions dropped in v12).
         for tbl in &[
             "tasks",
-            "focus_sessions",
-            "daily_sessions",
             "prompt_templates",
             "daily_reports",
             "settings",
             "projects",
             "schema_version",
+            "prompt_jobs",
         ] {
             assert!(table_exists(&conn, tbl).unwrap(), "Table '{}' missing", tbl);
         }
+
+        // Session tables must NOT exist after v12.
+        assert!(!table_exists(&conn, "focus_sessions").unwrap(), "focus_sessions must be dropped");
+        assert!(!table_exists(&conn, "daily_sessions").unwrap(), "daily_sessions must be dropped");
 
         // New columns added.
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
+        assert!(column_exists(&conn, "tasks", "raw_prompt").unwrap());
+        assert!(column_exists(&conn, "tasks", "improved_prompt").unwrap());
+        assert!(column_exists(&conn, "tasks", "job_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
 
         // Schema version recorded correctly.
@@ -804,6 +936,8 @@ mod tests {
         assert!(setting_exists(&conn, "default_model_opencode").unwrap());
         assert!(setting_exists(&conn, "default_model_copilot").unwrap());
         assert!(setting_exists(&conn, "active_ai_provider").unwrap());
+        // session1_kickstart must be deleted by v12
+        assert!(!setting_exists(&conn, "session1_kickstart").unwrap(), "session1_kickstart must be deleted");
     }
 
     // --- 2. Upgrade with existing populated data ---
@@ -913,11 +1047,11 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
             .unwrap();
 
-        // Insert user data.
+        // Insert user data using v12 schema (no date/session_slot).
         conn.execute(
-            "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, \
+            "INSERT INTO tasks (id, title, task_type, priority, \
              status, position, created_at, updated_at) \
-             VALUES ('t1','2026-01-01',1,'My Task','code',1,'pending',0,\
+             VALUES ('t1','My Task','prompt',1,'pending',0,\
              datetime('now'),datetime('now'))",
             [],
         )

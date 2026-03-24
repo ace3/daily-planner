@@ -55,11 +55,12 @@ use crate::db::queries;
 pub enum ServerEvent {
     TaskChanged { date: String },
     SettingsChanged,
-    SessionChanged,
     ReportChanged { date: String },
     ProjectsChanged,
     TemplatesChanged,
     DevicesChanged,
+    JobStatusChanged { job_id: String },
+    JobOutput { job_id: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -178,12 +179,8 @@ async fn get_tasks(
     Query(q): Query<DateQuery>,
 ) -> Result<Json<Vec<queries::Task>>, ApiError> {
     check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
-    let date = q
-        .date
-        .filter(|d| !d.is_empty())
-        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
     let conn = s.db.lock().map_err(internal)?;
-    let tasks = queries::get_tasks_by_date(&*conn, &date).map_err(internal)?;
+    let tasks = queries::get_standalone_tasks(&*conn).map_err(internal)?;
     Ok(Json(tasks))
 }
 
@@ -218,8 +215,6 @@ async fn get_tasks_range(
 
 #[derive(Deserialize)]
 struct CreateTaskBody {
-    date: String,
-    session_slot: i64,
     title: String,
     task_type: Option<String>,
     priority: Option<i64>,
@@ -239,64 +234,32 @@ async fn create_task(
     let conn = s.db.lock().map_err(internal)?;
     let id = queries::create_task(
         &*conn,
-        &body.date,
-        body.session_slot,
         &body.title,
-        &body.task_type.unwrap_or_else(|| "other".into()),
+        &body.task_type.unwrap_or_else(|| "prompt".into()),
         body.priority.unwrap_or(2),
         body.estimated_min,
         body.project_id.as_deref(),
     )
     .map_err(internal)?;
     drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.date });
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
     Ok(Json(serde_json::json!({ "id": id })))
-}
-
-// ---------------------------------------------------------------------------
-// Route: POST /api/tasks/rollover
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct RolloverBody {
-    date: String,
-}
-
-async fn rollover_tasks(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Json(body): Json<RolloverBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    let count = queries::rollover_incomplete_tasks(&*conn, &body.date).map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.date });
-    Ok(Json(serde_json::json!({ "rolled_over": count })))
 }
 
 // ---------------------------------------------------------------------------
 // Route: POST /api/tasks/:id/carry-forward
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
-struct CarryForwardBody {
-    tomorrow_date: String,
-    session_slot: i64,
-}
-
 async fn carry_task_forward(
     State(s): State<ServerState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(body): Json<CarryForwardBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
-    let new_id = queries::carry_task_forward(&*conn, &id, &body.tomorrow_date, body.session_slot)
-        .map_err(internal)?;
+    let new_id = queries::carry_task_forward(&*conn, &id).map_err(internal)?;
     drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: body.tomorrow_date.clone() });
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
     Ok(Json(serde_json::json!({ "id": new_id })))
 }
 
@@ -337,49 +300,12 @@ async fn patch_task_status(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
-    // Get task date for event
-    let date = queries::get_task_by_id(&*conn, &id)
-        .ok()
-        .flatten()
-        .map(|t| t.date)
-        .unwrap_or_default();
     queries::update_task_status(&*conn, &id, &body.status).map_err(internal)?;
     drop(conn);
-    if !date.is_empty() {
-        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
-    }
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-// ---------------------------------------------------------------------------
-// Route: PATCH /api/tasks/:id/move-session
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct MoveSessionBody {
-    target_session: i64,
-}
-
-async fn move_task_session(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(body): Json<MoveSessionBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    let date = queries::get_task_by_id(&*conn, &id)
-        .ok()
-        .flatten()
-        .map(|t| t.date)
-        .unwrap_or_default();
-    queries::move_task_to_session(&*conn, &id, body.target_session).map_err(internal)?;
-    drop(conn);
-    if !date.is_empty() {
-        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
-    }
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
 
 // ---------------------------------------------------------------------------
 // Route: GET /api/tasks/:id
@@ -410,12 +336,11 @@ struct PatchTaskBody {
     task_type: Option<String>,
     priority: Option<i64>,
     estimated_min: Option<i64>,
-    session_slot: Option<i64>,
     project_id: Option<String>,
     clear_project: Option<bool>,
     status: Option<String>,
-    prompt_used: Option<String>,
-    prompt_result: Option<String>,
+    raw_prompt: Option<String>,
+    improved_prompt: Option<String>,
 }
 
 async fn patch_task(
@@ -426,19 +351,14 @@ async fn patch_task(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
-    let date = queries::get_task_by_id(&*conn, &id)
-        .ok()
-        .flatten()
-        .map(|t| t.date)
-        .unwrap_or_default();
     if let Some(status) = &body.status {
         queries::update_task_status(&*conn, &id, status).map_err(internal)?;
-    } else if body.prompt_used.is_some() || body.prompt_result.is_some() {
-        queries::save_prompt_result(
+    } else if body.raw_prompt.is_some() || body.improved_prompt.is_some() {
+        queries::save_task_prompt(
             &*conn,
             &id,
-            body.prompt_used.as_deref().unwrap_or(""),
-            body.prompt_result.as_deref().unwrap_or(""),
+            body.raw_prompt.as_deref(),
+            body.improved_prompt.as_deref(),
         )
         .map_err(internal)?;
     } else {
@@ -450,16 +370,13 @@ async fn patch_task(
             body.task_type.as_deref(),
             body.priority,
             body.estimated_min,
-            body.session_slot,
             body.project_id.as_deref(),
             body.clear_project.unwrap_or(false),
         )
         .map_err(internal)?;
     }
     drop(conn);
-    if !date.is_empty() {
-        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
-    }
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -469,8 +386,8 @@ async fn patch_task(
 
 #[derive(Deserialize)]
 struct PromptResultBody {
-    prompt_used: String,
-    prompt_result: String,
+    raw_prompt: Option<String>,
+    improved_prompt: Option<String>,
 }
 
 async fn save_task_prompt_result(
@@ -481,7 +398,7 @@ async fn save_task_prompt_result(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
-    queries::save_prompt_result(&*conn, &id, &body.prompt_used, &body.prompt_result)
+    queries::save_task_prompt(&*conn, &id, body.raw_prompt.as_deref(), body.improved_prompt.as_deref())
         .map_err(internal)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -497,16 +414,9 @@ async fn delete_task(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
-    let date = queries::get_task_by_id(&*conn, &id)
-        .ok()
-        .flatten()
-        .map(|t| t.date)
-        .unwrap_or_default();
     queries::delete_task(&*conn, &id).map_err(internal)?;
     drop(conn);
-    if !date.is_empty() {
-        let _ = s.event_tx.send(ServerEvent::TaskChanged { date });
-    }
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1046,11 +956,12 @@ async fn events_stream(
                     let event_type = match &event {
                         ServerEvent::TaskChanged { .. } => "task_changed",
                         ServerEvent::SettingsChanged => "settings_changed",
-                        ServerEvent::SessionChanged => "session_changed",
                         ServerEvent::ReportChanged { .. } => "report_changed",
                         ServerEvent::ProjectsChanged => "projects_changed",
                         ServerEvent::TemplatesChanged => "templates_changed",
                         ServerEvent::DevicesChanged => "devices_changed",
+                        ServerEvent::JobStatusChanged { .. } => "job_status_changed",
+                        ServerEvent::JobOutput { .. } => "job_output",
                     };
                     if tx
                         .send(Ok(Event::default().event(event_type).data(data)))
@@ -1319,6 +1230,303 @@ async fn prompt_run(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: look up a project by id using the existing connection guard
+// ---------------------------------------------------------------------------
+
+fn get_project_by_id(conn: &Connection, id: &str) -> Option<queries::Project> {
+    conn.query_row(
+        "SELECT id, name, path, prompt, created_at FROM projects WHERE id = ?1",
+        rusqlite::params![id],
+        |row| {
+            Ok(queries::Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                path: row.get(2)?,
+                prompt: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        },
+    )
+    .ok()
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/projects/:id/tasks
+// ---------------------------------------------------------------------------
+
+async fn get_project_tasks(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let tasks = queries::get_tasks_by_project(&*conn, &id).map_err(internal)?;
+    Ok(Json(serde_json::json!({ "tasks": tasks })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/tasks/standalone
+// ---------------------------------------------------------------------------
+
+async fn get_standalone_tasks_http(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let tasks = queries::get_standalone_tasks(&*conn).map_err(internal)?;
+    Ok(Json(serde_json::json!({ "tasks": tasks })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/jobs[?status=active]
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct JobsQuery {
+    status: Option<String>,
+    token: Option<String>,
+}
+
+async fn get_jobs_http(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<JobsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let jobs = if q.status.as_deref() == Some("active") {
+        queries::get_active_jobs(&*conn).map_err(internal)?
+    } else {
+        queries::get_recent_jobs(&*conn, 50).map_err(internal)?
+    };
+    Ok(Json(serde_json::json!({ "jobs": jobs })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/jobs/:id
+// ---------------------------------------------------------------------------
+
+async fn get_job_http(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    match queries::get_prompt_job(&*conn, &id).map_err(internal)? {
+        Some(job) => Ok(Json(serde_json::to_value(job).unwrap_or_default())),
+        None => Err(ApiError(StatusCode::NOT_FOUND, "Job not found".into())),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/tasks/:id/run  — create a prompt job record
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RunPromptBody {
+    prompt: Option<String>,
+    provider: Option<String>,
+}
+
+async fn run_task_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<RunPromptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    let task = queries::get_task_by_id(&*conn, &task_id)
+        .map_err(internal)?
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Task not found".into()))?;
+
+    let prompt = body.prompt.unwrap_or_else(|| {
+        task.improved_prompt
+            .clone()
+            .or(task.raw_prompt.clone())
+            .unwrap_or_default()
+    });
+    let provider = body.provider.unwrap_or_else(|| "claude".to_string());
+
+    let job_id = queries::create_prompt_job(
+        &*conn,
+        &task_id,
+        task.project_id.as_deref(),
+        &provider,
+        &prompt,
+        None,
+        None,
+    )
+    .map_err(internal)?;
+    drop(conn);
+    let _ = s
+        .event_tx
+        .send(ServerEvent::JobStatusChanged { job_id: job_id.clone() });
+    Ok(Json(serde_json::json!({ "job_id": job_id, "status": "queued" })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: PATCH /api/tasks/:id/prompt  — update raw/improved prompt fields
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct UpdatePromptBody {
+    raw_prompt: Option<String>,
+    improved_prompt: Option<String>,
+}
+
+async fn update_task_prompt(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<UpdatePromptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::save_task_prompt(
+        &*conn,
+        &task_id,
+        body.raw_prompt.as_deref(),
+        body.improved_prompt.as_deref(),
+    )
+    .map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/projects/:id/git/status
+// ---------------------------------------------------------------------------
+
+async fn get_project_git_status(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let project = {
+        let conn = s.db.lock().map_err(internal)?;
+        get_project_by_id(&*conn, &id)
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Project not found".into()))?
+    };
+
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &project.path, "status", "--porcelain", "-b"])
+        .output()
+        .await
+        .map_err(internal)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let line_count = stdout.lines().count();
+    // With -b the first line is always the branch header; clean means only that line
+    Ok(Json(serde_json::json!({
+        "status": stdout,
+        "clean": line_count <= 1
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/projects/:id/git/diff
+// ---------------------------------------------------------------------------
+
+async fn get_project_git_diff(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let project = {
+        let conn = s.db.lock().map_err(internal)?;
+        get_project_by_id(&*conn, &id)
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Project not found".into()))?
+    };
+
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &project.path, "diff", "HEAD"])
+        .output()
+        .await
+        .map_err(internal)?;
+    let diff = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(Json(serde_json::json!({ "diff": diff })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/projects/:id/git/commit
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CommitBody {
+    message: String,
+}
+
+async fn commit_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<CommitBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let project = {
+        let conn = s.db.lock().map_err(internal)?;
+        get_project_by_id(&*conn, &id)
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Project not found".into()))?
+    };
+
+    // Stage all changes first
+    let _ = tokio::process::Command::new("git")
+        .args(["-C", &project.path, "add", "-A"])
+        .output()
+        .await;
+
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &project.path, "commit", "-m", &body.message])
+        .output()
+        .await
+        .map_err(internal)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let success = output.status.success();
+    Ok(Json(serde_json::json!({ "success": success, "output": stdout })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/projects/:id/git/push
+// ---------------------------------------------------------------------------
+
+async fn push_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let project = {
+        let conn = s.db.lock().map_err(internal)?;
+        get_project_by_id(&*conn, &id)
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Project not found".into()))?
+    };
+
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &project.path, "push"])
+        .output()
+        .await
+        .map_err(internal)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let success = output.status.success();
+    Ok(Json(serde_json::json!({
+        "success": success,
+        "output": format!("{}{}", stdout, stderr)
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // Server entry point
 // ---------------------------------------------------------------------------
 
@@ -1366,11 +1574,9 @@ pub async fn start(
         // Tasks
         .route("/api/tasks", get(get_tasks).post(create_task))
         .route("/api/tasks/range", get(get_tasks_range))
-        .route("/api/tasks/rollover", post(rollover_tasks))
         .route("/api/tasks/reorder", patch(reorder_tasks))
         .route("/api/tasks/:id", get(get_task).patch(patch_task).delete(delete_task))
         .route("/api/tasks/:id/status", patch(patch_task_status))
-        .route("/api/tasks/:id/move-session", patch(move_task_session))
         .route("/api/tasks/:id/carry-forward", post(carry_task_forward))
         .route("/api/tasks/:id/prompt-result", post(save_task_prompt_result))
         // Settings
@@ -1387,6 +1593,18 @@ pub async fn start(
         .route("/api/projects", get(get_projects).post(create_project))
         .route("/api/projects/:id", delete(delete_project))
         .route("/api/projects/:id/prompt", get(get_project_prompt).put(set_project_prompt))
+        .route("/api/projects/:id/tasks", get(get_project_tasks))
+        .route("/api/projects/:id/git/status", get(get_project_git_status))
+        .route("/api/projects/:id/git/diff", get(get_project_git_diff))
+        .route("/api/projects/:id/git/commit", post(commit_project))
+        .route("/api/projects/:id/git/push", post(push_project))
+        // Tasks — extra routes
+        .route("/api/tasks/standalone", get(get_standalone_tasks_http))
+        .route("/api/tasks/:id/run", post(run_task_prompt))
+        .route("/api/tasks/:id/prompt", patch(update_task_prompt))
+        // Jobs
+        .route("/api/jobs", get(get_jobs_http))
+        .route("/api/jobs/:id", get(get_job_http))
         // Devices
         .route("/api/devices", get(list_devices_handler).post(register_device_handler))
         .route("/api/devices/:id", delete(delete_device_handler))

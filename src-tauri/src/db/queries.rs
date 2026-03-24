@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub id: String,
-    pub date: String,
-    pub session_slot: i64,
     pub title: String,
     pub notes: String,
     pub task_type: String,
@@ -13,8 +11,12 @@ pub struct Task {
     pub status: String,
     pub estimated_min: Option<i64>,
     pub actual_min: Option<i64>,
-    pub prompt_used: Option<String>,
-    pub prompt_result: Option<String>,
+    pub raw_prompt: Option<String>,
+    pub improved_prompt: Option<String>,
+    pub prompt_output: Option<String>,
+    pub job_status: String,
+    pub job_id: Option<String>,
+    pub provider: Option<String>,
     pub carried_from: Option<String>,
     pub position: i64,
     pub created_at: String,
@@ -27,14 +29,21 @@ pub struct Task {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FocusSession {
+pub struct PromptJob {
     pub id: String,
     pub task_id: String,
-    pub date: String,
-    pub started_at: String,
-    pub ended_at: Option<String>,
-    pub duration_min: Option<i64>,
-    pub notes: String,
+    pub project_id: Option<String>,
+    pub provider: String,
+    pub prompt: String,
+    pub output: Option<String>,
+    pub status: String,
+    pub exit_code: Option<i64>,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -65,24 +74,9 @@ pub struct DailyReport {
     pub tasks_skipped: i64,
     pub tasks_carried: i64,
     pub total_focus_min: i64,
-    pub session1_focus: i64,
-    pub session2_focus: i64,
     pub ai_reflection: Option<String>,
     pub markdown_export: Option<String>,
     pub generated_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DailySession {
-    pub id: String,
-    pub date: String,
-    pub session_slot: i64,
-    pub started_at: String,
-    pub tasks_planned: i64,
-    pub tasks_completed: i64,
-    pub tasks_skipped: i64,
-    pub focus_minutes: i64,
-    pub notes: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -110,116 +104,68 @@ pub struct Device {
 
 // ---- TASK QUERIES ----
 
-pub fn get_tasks_by_date(conn: &Connection, date: &str) -> Result<Vec<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
-                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id,
-                worktree_path, worktree_branch, worktree_status
-         FROM tasks WHERE date = ?1 ORDER BY session_slot, position, created_at",
-    )?;
-    let tasks = stmt
-        .query_map(params![date], |row| {
-            Ok(Task {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                title: row.get(3)?,
-                notes: row.get(4)?,
-                task_type: row.get(5)?,
-                priority: row.get(6)?,
-                status: row.get(7)?,
-                estimated_min: row.get(8)?,
-                actual_min: row.get(9)?,
-                prompt_used: row.get(10)?,
-                prompt_result: row.get(11)?,
-                carried_from: row.get(12)?,
-                position: row.get(13)?,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                completed_at: row.get(16)?,
-                project_id: row.get(17)?,
-                worktree_path: row.get(18)?,
-                worktree_branch: row.get(19)?,
-                worktree_status: row.get(20)?,
-            })
-        })?
+/// Column list for all task SELECT queries — must match row_to_task indices exactly.
+const TASK_COLUMNS: &str = "id, title, notes, task_type, priority, status,
+    estimated_min, actual_min, raw_prompt, improved_prompt, prompt_output,
+    job_status, job_id, provider, carried_from, position,
+    created_at, updated_at, completed_at, project_id,
+    worktree_path, worktree_branch, worktree_status";
+
+fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
+    Ok(Task {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        notes: row.get(2)?,
+        task_type: row.get(3)?,
+        priority: row.get(4)?,
+        status: row.get(5)?,
+        estimated_min: row.get(6)?,
+        actual_min: row.get(7)?,
+        raw_prompt: row.get(8)?,
+        improved_prompt: row.get(9)?,
+        prompt_output: row.get(10)?,
+        job_status: row.get(11)?,
+        job_id: row.get(12)?,
+        provider: row.get(13)?,
+        carried_from: row.get(14)?,
+        position: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+        completed_at: row.get(18)?,
+        project_id: row.get(19)?,
+        worktree_path: row.get(20)?,
+        worktree_branch: row.get(21)?,
+        worktree_status: row.get(22)?,
+    })
+}
+
+pub fn get_tasks_by_project(conn: &Connection, project_id: &str) -> Result<Vec<Task>> {
+    let sql = format!("SELECT {} FROM tasks WHERE project_id = ?1 ORDER BY position, created_at", TASK_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let tasks = stmt.query_map(params![project_id], |row| row_to_task(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(tasks)
+}
+
+pub fn get_standalone_tasks(conn: &Connection) -> Result<Vec<Task>> {
+    let sql = format!("SELECT {} FROM tasks WHERE project_id IS NULL ORDER BY position, created_at", TASK_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let tasks = stmt.query_map([], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
     Ok(tasks)
 }
 
 pub fn get_tasks_by_date_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
-                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id,
-                worktree_path, worktree_branch, worktree_status
-         FROM tasks WHERE date >= ?1 AND date <= ?2 ORDER BY date DESC, session_slot, position, created_at",
-    )?;
-    let tasks = stmt
-        .query_map(params![from, to], |row| {
-            Ok(Task {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                title: row.get(3)?,
-                notes: row.get(4)?,
-                task_type: row.get(5)?,
-                priority: row.get(6)?,
-                status: row.get(7)?,
-                estimated_min: row.get(8)?,
-                actual_min: row.get(9)?,
-                prompt_used: row.get(10)?,
-                prompt_result: row.get(11)?,
-                carried_from: row.get(12)?,
-                position: row.get(13)?,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                completed_at: row.get(16)?,
-                project_id: row.get(17)?,
-                worktree_path: row.get(18)?,
-                worktree_branch: row.get(19)?,
-                worktree_status: row.get(20)?,
-            })
-        })?
+    let sql = format!("SELECT {} FROM tasks WHERE date(created_at) >= ?1 AND date(created_at) <= ?2 ORDER BY created_at DESC, position", TASK_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let tasks = stmt.query_map(params![from, to], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
     Ok(tasks)
 }
 
 pub fn get_task_by_id(conn: &Connection, id: &str) -> Result<Option<Task>> {
-    let result = conn.query_row(
-        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
-                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id,
-                worktree_path, worktree_branch, worktree_status
-         FROM tasks WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(Task {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                title: row.get(3)?,
-                notes: row.get(4)?,
-                task_type: row.get(5)?,
-                priority: row.get(6)?,
-                status: row.get(7)?,
-                estimated_min: row.get(8)?,
-                actual_min: row.get(9)?,
-                prompt_used: row.get(10)?,
-                prompt_result: row.get(11)?,
-                carried_from: row.get(12)?,
-                position: row.get(13)?,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                completed_at: row.get(16)?,
-                project_id: row.get(17)?,
-                worktree_path: row.get(18)?,
-                worktree_branch: row.get(19)?,
-                worktree_status: row.get(20)?,
-            })
-        },
-    );
+    let sql = format!("SELECT {} FROM tasks WHERE id = ?1", TASK_COLUMNS);
+    let result = conn.query_row(&sql, params![id], |row| row_to_task(row));
     match result {
         Ok(task) => Ok(Some(task)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -229,8 +175,6 @@ pub fn get_task_by_id(conn: &Connection, id: &str) -> Result<Option<Task>> {
 
 pub fn create_task(
     conn: &Connection,
-    date: &str,
-    session_slot: i64,
     title: &str,
     task_type: &str,
     priority: i64,
@@ -238,18 +182,24 @@ pub fn create_task(
     project_id: Option<&str>,
 ) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string().replace("-", "");
-    let max_pos: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE date = ?1 AND session_slot = ?2",
-            params![date, session_slot],
+    let max_pos: i64 = if let Some(pid) = project_id {
+        conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE project_id = ?1",
+            params![pid],
             |row| row.get(0),
-        )
-        .unwrap_or(-1);
+        ).unwrap_or(-1)
+    } else {
+        conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE project_id IS NULL",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(-1)
+    };
 
     conn.execute(
-        "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, estimated_min, position, project_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![id, date, session_slot, title, task_type, priority, estimated_min, max_pos + 1, project_id],
+        "INSERT INTO tasks (id, title, task_type, priority, estimated_min, position, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, title, task_type, priority, estimated_min, max_pos + 1, project_id],
     )?;
     Ok(id)
 }
@@ -267,14 +217,6 @@ pub fn update_task_status(conn: &Connection, id: &str, status: &str) -> Result<(
     Ok(())
 }
 
-pub fn move_task_to_session(conn: &Connection, id: &str, target_session: i64) -> Result<()> {
-    conn.execute(
-        "UPDATE tasks SET session_slot = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![target_session, id],
-    )?;
-    Ok(())
-}
-
 pub fn update_task(
     conn: &Connection,
     id: &str,
@@ -283,7 +225,6 @@ pub fn update_task(
     task_type: Option<&str>,
     priority: Option<i64>,
     estimated_min: Option<i64>,
-    session_slot: Option<i64>,
     project_id: Option<&str>,
     clear_project: bool,
 ) -> Result<()> {
@@ -317,12 +258,6 @@ pub fn update_task(
             params![e, id],
         )?;
     }
-    if let Some(s) = session_slot {
-        conn.execute(
-            "UPDATE tasks SET session_slot = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![s, id],
-        )?;
-    }
     if clear_project {
         conn.execute(
             "UPDATE tasks SET project_id = NULL, updated_at = datetime('now') WHERE id = ?1",
@@ -342,52 +277,15 @@ pub fn delete_task(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn carry_task_forward(
-    conn: &Connection,
-    id: &str,
-    tomorrow_date: &str,
-    session_slot: i64,
-) -> Result<String> {
-    let task: Task = conn.query_row(
-        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
-                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id,
-                worktree_path, worktree_branch, worktree_status
-         FROM tasks WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(Task {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                title: row.get(3)?,
-                notes: row.get(4)?,
-                task_type: row.get(5)?,
-                priority: row.get(6)?,
-                status: row.get(7)?,
-                estimated_min: row.get(8)?,
-                actual_min: row.get(9)?,
-                prompt_used: row.get(10)?,
-                prompt_result: row.get(11)?,
-                carried_from: row.get(12)?,
-                position: row.get(13)?,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                completed_at: row.get(16)?,
-                project_id: row.get(17)?,
-                worktree_path: row.get(18)?,
-                worktree_branch: row.get(19)?,
-                worktree_status: row.get(20)?,
-            })
-        },
-    )?;
+pub fn carry_task_forward(conn: &Connection, id: &str) -> Result<String> {
+    let sql = format!("SELECT {} FROM tasks WHERE id = ?1", TASK_COLUMNS);
+    let task: Task = conn.query_row(&sql, params![id], |row| row_to_task(row))?;
 
     let new_id = uuid::Uuid::new_v4().to_string().replace("-", "");
     conn.execute(
-        "INSERT INTO tasks (id, date, session_slot, title, notes, task_type, priority, estimated_min, carried_from, project_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![new_id, tomorrow_date, session_slot, task.title, task.notes,
-                task.task_type, task.priority, task.estimated_min, id, task.project_id],
+        "INSERT INTO tasks (id, title, notes, task_type, priority, estimated_min, carried_from, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![new_id, task.title, task.notes, task.task_type, task.priority, task.estimated_min, id, task.project_id],
     )?;
     conn.execute(
         "UPDATE tasks SET status = 'carried_over', updated_at = datetime('now') WHERE id = ?1",
@@ -396,98 +294,31 @@ pub fn carry_task_forward(
     Ok(new_id)
 }
 
-pub fn rollover_incomplete_tasks(conn: &Connection, target_date: &str) -> Result<i64> {
-    #[derive(Debug)]
-    struct SourceTask {
-        id: String,
-        session_slot: i64,
-        title: String,
-        notes: String,
-        task_type: String,
-        priority: i64,
-        estimated_min: Option<i64>,
-        project_id: Option<String>,
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT id, session_slot, title, notes, task_type, priority, estimated_min, project_id
-         FROM tasks
-         WHERE date < ?1 AND status IN ('pending', 'in_progress')
-         ORDER BY date, session_slot, position, created_at",
-    )?;
-
-    let candidates = stmt
-        .query_map(params![target_date], |row| {
-            Ok(SourceTask {
-                id: row.get(0)?,
-                session_slot: row.get(1)?,
-                title: row.get(2)?,
-                notes: row.get(3)?,
-                task_type: row.get(4)?,
-                priority: row.get(5)?,
-                estimated_min: row.get(6)?,
-                project_id: row.get(7)?,
-            })
-        })?
-        .collect::<Result<Vec<_>>>()?;
-
-    let mut carried_count = 0_i64;
-
-    for source in candidates {
-        let already_exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND carried_from = ?2",
-            params![target_date, source.id],
-            |row| row.get(0),
-        )?;
-        if already_exists > 0 {
-            continue;
-        }
-
-        let max_pos: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE date = ?1 AND session_slot = ?2",
-            params![target_date, source.session_slot],
-            |row| row.get(0),
-        )?;
-
-        let new_id = uuid::Uuid::new_v4().to_string().replace("-", "");
-        conn.execute(
-            "INSERT INTO tasks (id, date, session_slot, title, notes, task_type, priority, estimated_min, carried_from, position, project_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                new_id,
-                target_date,
-                source.session_slot,
-                source.title,
-                source.notes,
-                source.task_type,
-                source.priority,
-                source.estimated_min,
-                source.id,
-                max_pos + 1,
-                source.project_id
-            ],
-        )?;
-
-        conn.execute(
-            "UPDATE tasks SET status = 'carried_over', updated_at = datetime('now') WHERE id = ?1",
-            params![source.id],
-        )?;
-        carried_count += 1;
-    }
-
-    Ok(carried_count)
+// Stub kept for compatibility — callers that need bulk rollover can use carry_task_forward per task.
+// This function previously required a date column; it now returns 0 as no-op.
+#[allow(dead_code)]
+pub fn rollover_incomplete_tasks(_conn: &Connection) -> Result<i64> {
+    Ok(0)
 }
 
-pub fn save_prompt_result(
+pub fn save_task_prompt(
     conn: &Connection,
     id: &str,
-    prompt_used: &str,
-    prompt_result: &str,
+    raw_prompt: Option<&str>,
+    improved_prompt: Option<&str>,
 ) -> Result<()> {
-    conn.execute(
-        "UPDATE tasks SET prompt_used = ?1, prompt_result = ?2, updated_at = datetime('now') WHERE id = ?3",
-        params![prompt_used, prompt_result, id],
-    )?;
+    if let Some(rp) = raw_prompt {
+        conn.execute(
+            "UPDATE tasks SET raw_prompt = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![rp, id],
+        )?;
+    }
+    if let Some(ip) = improved_prompt {
+        conn.execute(
+            "UPDATE tasks SET improved_prompt = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![ip, id],
+        )?;
+    }
     Ok(())
 }
 
@@ -515,8 +346,8 @@ pub struct TaskWorktreeContext {
     pub id: String,
     pub title: String,
     pub notes: String,
-    pub prompt_used: Option<String>,
-    pub prompt_result: Option<String>,
+    pub raw_prompt: Option<String>,
+    pub improved_prompt: Option<String>,
     pub project_path: Option<String>,
     pub worktree_path: Option<String>,
     pub worktree_branch: Option<String>,
@@ -525,7 +356,7 @@ pub struct TaskWorktreeContext {
 
 pub fn get_task_worktree_context(conn: &Connection, id: &str) -> Result<TaskWorktreeContext> {
     conn.query_row(
-        "SELECT t.id, t.title, t.notes, t.prompt_used, t.prompt_result,
+        "SELECT t.id, t.title, t.notes, t.raw_prompt, t.improved_prompt,
                 p.path, t.worktree_path, t.worktree_branch, t.worktree_status
          FROM tasks t
          LEFT JOIN projects p ON p.id = t.project_id
@@ -536,8 +367,8 @@ pub fn get_task_worktree_context(conn: &Connection, id: &str) -> Result<TaskWork
                 id: row.get(0)?,
                 title: row.get(1)?,
                 notes: row.get(2)?,
-                prompt_used: row.get(3)?,
-                prompt_result: row.get(4)?,
+                raw_prompt: row.get(3)?,
+                improved_prompt: row.get(4)?,
                 project_path: row.get(5)?,
                 worktree_path: row.get(6)?,
                 worktree_branch: row.get(7)?,
@@ -557,54 +388,152 @@ pub fn reorder_tasks(conn: &Connection, task_ids: &[String]) -> Result<()> {
     Ok(())
 }
 
-// ---- FOCUS SESSION QUERIES ----
+// ---- PROMPT JOB QUERIES ----
 
-pub fn start_focus_session(conn: &Connection, task_id: &str, date: &str) -> Result<String> {
+const JOB_COLUMNS: &str = "id, task_id, project_id, provider, prompt, output, status,
+    exit_code, worktree_path, worktree_branch, error_message, started_at, finished_at, created_at";
+
+fn row_to_job(row: &rusqlite::Row) -> Result<PromptJob> {
+    Ok(PromptJob {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        project_id: row.get(2)?,
+        provider: row.get(3)?,
+        prompt: row.get(4)?,
+        output: row.get(5)?,
+        status: row.get(6)?,
+        exit_code: row.get(7)?,
+        worktree_path: row.get(8)?,
+        worktree_branch: row.get(9)?,
+        error_message: row.get(10)?,
+        started_at: row.get(11)?,
+        finished_at: row.get(12)?,
+        created_at: row.get(13)?,
+    })
+}
+
+pub fn create_prompt_job(
+    conn: &Connection,
+    task_id: &str,
+    project_id: Option<&str>,
+    provider: &str,
+    prompt: &str,
+    worktree_path: Option<&str>,
+    worktree_branch: Option<&str>,
+) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string().replace("-", "");
-    let started_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO focus_sessions (id, task_id, date, started_at) VALUES (?1, ?2, ?3, ?4)",
-        params![id, task_id, date, started_at],
+        "INSERT INTO prompt_jobs (id, task_id, project_id, provider, prompt, worktree_path, worktree_branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, task_id, project_id, provider, prompt, worktree_path, worktree_branch],
     )?;
+    // Update task job_status and job_id
     conn.execute(
-        "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?1",
-        params![task_id],
+        "UPDATE tasks SET job_status = 'queued', job_id = ?1, provider = ?2, updated_at = datetime('now') WHERE id = ?3",
+        params![id, provider, task_id],
     )?;
     Ok(id)
 }
 
-pub fn end_focus_session(conn: &Connection, session_id: &str, notes: &str) -> Result<i64> {
-    let started_at: String = conn.query_row(
-        "SELECT started_at FROM focus_sessions WHERE id = ?1",
-        params![session_id],
+pub fn update_prompt_job_status(
+    conn: &Connection,
+    id: &str,
+    status: &str,
+    exit_code: Option<i64>,
+    error_message: Option<&str>,
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    match status {
+        "running" => {
+            conn.execute(
+                "UPDATE prompt_jobs SET status = 'running', started_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+        }
+        "completed" | "failed" | "cancelled" => {
+            conn.execute(
+                "UPDATE prompt_jobs SET status = ?1, exit_code = ?2, error_message = ?3, finished_at = ?4 WHERE id = ?5",
+                params![status, exit_code, error_message, now, id],
+            )?;
+        }
+        _ => {
+            conn.execute(
+                "UPDATE prompt_jobs SET status = ?1 WHERE id = ?2",
+                params![status, id],
+            )?;
+        }
+    }
+    // Sync task job_status
+    let task_id: String = conn.query_row(
+        "SELECT task_id FROM prompt_jobs WHERE id = ?1",
+        params![id],
         |row| row.get(0),
     )?;
-    let ended_at = chrono::Utc::now().to_rfc3339();
-    let start = chrono::DateTime::parse_from_rfc3339(&started_at)
-        .unwrap_or_else(|_| chrono::Utc::now().into());
-    let end = chrono::DateTime::parse_from_rfc3339(&ended_at)
-        .unwrap_or_else(|_| chrono::Utc::now().into());
-    let duration_min = (end - start).num_minutes().max(0);
-
     conn.execute(
-        "UPDATE focus_sessions SET ended_at = ?1, duration_min = ?2, notes = ?3 WHERE id = ?4",
-        params![ended_at, duration_min, notes, session_id],
+        "UPDATE tasks SET job_status = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![status, task_id],
     )?;
-    Ok(duration_min)
+    Ok(())
 }
 
-#[allow(dead_code)]
-pub fn get_active_focus_session(conn: &Connection, task_id: &str) -> Result<Option<String>> {
-    let result = conn.query_row(
-        "SELECT id FROM focus_sessions WHERE task_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-        params![task_id],
-        |row| row.get::<_, String>(0),
-    );
+pub fn save_prompt_job_output(conn: &Connection, id: &str, output: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE prompt_jobs SET output = ?1 WHERE id = ?2",
+        params![output, id],
+    )?;
+    // Also save to task's prompt_output
+    let task_id: String = conn.query_row(
+        "SELECT task_id FROM prompt_jobs WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "UPDATE tasks SET prompt_output = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![output, task_id],
+    )?;
+    Ok(())
+}
+
+pub fn get_prompt_job(conn: &Connection, id: &str) -> Result<Option<PromptJob>> {
+    let sql = format!("SELECT {} FROM prompt_jobs WHERE id = ?1", JOB_COLUMNS);
+    let result = conn.query_row(&sql, params![id], |row| row_to_job(row));
     match result {
-        Ok(id) => Ok(Some(id)),
+        Ok(job) => Ok(Some(job)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+pub fn get_active_jobs(conn: &Connection) -> Result<Vec<PromptJob>> {
+    let sql = format!("SELECT {} FROM prompt_jobs WHERE status IN ('queued', 'running') ORDER BY created_at", JOB_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let jobs = stmt.query_map([], |row| row_to_job(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(jobs)
+}
+
+pub fn get_recent_jobs(conn: &Connection, limit: i64) -> Result<Vec<PromptJob>> {
+    let sql = format!("SELECT {} FROM prompt_jobs ORDER BY created_at DESC LIMIT ?1", JOB_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let jobs = stmt.query_map(params![limit], |row| row_to_job(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(jobs)
+}
+
+pub fn get_jobs_by_task(conn: &Connection, task_id: &str) -> Result<Vec<PromptJob>> {
+    let sql = format!("SELECT {} FROM prompt_jobs WHERE task_id = ?1 ORDER BY created_at DESC", JOB_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let jobs = stmt.query_map(params![task_id], |row| row_to_job(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(jobs)
+}
+
+pub fn get_all_prompt_jobs(conn: &Connection) -> Result<Vec<PromptJob>> {
+    let sql = format!("SELECT {} FROM prompt_jobs ORDER BY created_at", JOB_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let jobs = stmt.query_map([], |row| row_to_job(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(jobs)
 }
 
 // ---- TEMPLATE QUERIES ----
@@ -704,66 +633,37 @@ pub fn get_all_settings(conn: &Connection) -> Result<std::collections::HashMap<S
 // ---- REPORT QUERIES ----
 
 pub fn generate_report(conn: &Connection, date: &str) -> Result<DailyReport> {
-    let tasks_planned: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND status != 'carried_over'",
-            params![date],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    let tasks_completed: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND status = 'done'",
-            params![date],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    let tasks_skipped: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND status = 'skipped'",
-            params![date],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    let tasks_carried: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE date = ?1 AND status = 'carried_over'",
-            params![date],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    let total_focus_min: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(duration_min), 0) FROM focus_sessions WHERE date = ?1 AND duration_min IS NOT NULL",
+    let tasks_planned: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE date(created_at) = ?1 AND status != 'carried_over'",
         params![date], |row| row.get(0),
     ).unwrap_or(0);
-
-    // Estimate session splits from task data
-    let session1_focus: i64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(fs.duration_min), 0) FROM focus_sessions fs
-         JOIN tasks t ON t.id = fs.task_id
-         WHERE fs.date = ?1 AND t.session_slot = 1 AND fs.duration_min IS NOT NULL",
-            params![date],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    let session2_focus = total_focus_min - session1_focus;
+    let tasks_completed: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE date(created_at) = ?1 AND status = 'done'",
+        params![date], |row| row.get(0),
+    ).unwrap_or(0);
+    let tasks_skipped: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE date(created_at) = ?1 AND status = 'skipped'",
+        params![date], |row| row.get(0),
+    ).unwrap_or(0);
+    let tasks_carried: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE date(created_at) = ?1 AND status = 'carried_over'",
+        params![date], |row| row.get(0),
+    ).unwrap_or(0);
 
     let id = uuid::Uuid::new_v4().to_string().replace("-", "");
 
     conn.execute(
-        "INSERT INTO daily_reports (id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried, total_focus_min, session1_focus, session2_focus)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO daily_reports (id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried, total_focus_min)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)
          ON CONFLICT(date) DO UPDATE SET
            tasks_planned = ?3, tasks_completed = ?4, tasks_skipped = ?5,
-           tasks_carried = ?6, total_focus_min = ?7, session1_focus = ?8, session2_focus = ?9,
-           generated_at = datetime('now')",
-        params![id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried, total_focus_min, session1_focus, session2_focus],
+           tasks_carried = ?6, generated_at = datetime('now')",
+        params![id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried],
     )?;
 
     let report = conn.query_row(
         "SELECT id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
-                total_focus_min, session1_focus, session2_focus, ai_reflection, markdown_export, generated_at
+                total_focus_min, ai_reflection, markdown_export, generated_at
          FROM daily_reports WHERE date = ?1", params![date],
         |row| Ok(DailyReport {
             id: row.get(0)?,
@@ -773,11 +673,9 @@ pub fn generate_report(conn: &Connection, date: &str) -> Result<DailyReport> {
             tasks_skipped: row.get(4)?,
             tasks_carried: row.get(5)?,
             total_focus_min: row.get(6)?,
-            session1_focus: row.get(7)?,
-            session2_focus: row.get(8)?,
-            ai_reflection: row.get(9)?,
-            markdown_export: row.get(10)?,
-            generated_at: row.get(11)?,
+            ai_reflection: row.get(7)?,
+            markdown_export: row.get(8)?,
+            generated_at: row.get(9)?,
         }),
     )?;
     Ok(report)
@@ -786,7 +684,7 @@ pub fn generate_report(conn: &Connection, date: &str) -> Result<DailyReport> {
 pub fn get_report(conn: &Connection, date: &str) -> Result<Option<DailyReport>> {
     let result = conn.query_row(
         "SELECT id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
-                total_focus_min, session1_focus, session2_focus, ai_reflection, markdown_export, generated_at
+                total_focus_min, ai_reflection, markdown_export, generated_at
          FROM daily_reports WHERE date = ?1", params![date],
         |row| Ok(DailyReport {
             id: row.get(0)?,
@@ -796,11 +694,9 @@ pub fn get_report(conn: &Connection, date: &str) -> Result<Option<DailyReport>> 
             tasks_skipped: row.get(4)?,
             tasks_carried: row.get(5)?,
             total_focus_min: row.get(6)?,
-            session1_focus: row.get(7)?,
-            session2_focus: row.get(8)?,
-            ai_reflection: row.get(9)?,
-            markdown_export: row.get(10)?,
-            generated_at: row.get(11)?,
+            ai_reflection: row.get(7)?,
+            markdown_export: row.get(8)?,
+            generated_at: row.get(9)?,
         }),
     );
     match result {
@@ -821,7 +717,7 @@ pub fn save_ai_reflection(conn: &Connection, date: &str, reflection: &str) -> Re
 pub fn get_reports_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<DailyReport>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
-                total_focus_min, session1_focus, session2_focus, ai_reflection, markdown_export, generated_at
+                total_focus_min, ai_reflection, markdown_export, generated_at
          FROM daily_reports WHERE date >= ?1 AND date <= ?2 ORDER BY date DESC"
     )?;
     let reports = stmt
@@ -834,11 +730,9 @@ pub fn get_reports_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<
                 tasks_skipped: row.get(4)?,
                 tasks_carried: row.get(5)?,
                 total_focus_min: row.get(6)?,
-                session1_focus: row.get(7)?,
-                session2_focus: row.get(8)?,
-                ai_reflection: row.get(9)?,
-                markdown_export: row.get(10)?,
-                generated_at: row.get(11)?,
+                ai_reflection: row.get(7)?,
+                markdown_export: row.get(8)?,
+                generated_at: row.get(9)?,
             })
         })?
         .collect::<Result<Vec<_>>>()?;
@@ -848,86 +742,11 @@ pub fn get_reports_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<
 // ---- BULK READ QUERIES (for backup) ----
 
 pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, date, session_slot, title, notes, task_type, priority, status,
-                estimated_min, actual_min, prompt_used, prompt_result, carried_from,
-                position, created_at, updated_at, completed_at, project_id,
-                worktree_path, worktree_branch, worktree_status
-         FROM tasks ORDER BY created_at",
-    )?;
-    let tasks = stmt
-        .query_map([], |row| {
-            Ok(Task {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                title: row.get(3)?,
-                notes: row.get(4)?,
-                task_type: row.get(5)?,
-                priority: row.get(6)?,
-                status: row.get(7)?,
-                estimated_min: row.get(8)?,
-                actual_min: row.get(9)?,
-                prompt_used: row.get(10)?,
-                prompt_result: row.get(11)?,
-                carried_from: row.get(12)?,
-                position: row.get(13)?,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                completed_at: row.get(16)?,
-                project_id: row.get(17)?,
-                worktree_path: row.get(18)?,
-                worktree_branch: row.get(19)?,
-                worktree_status: row.get(20)?,
-            })
-        })?
+    let sql = format!("SELECT {} FROM tasks ORDER BY created_at", TASK_COLUMNS);
+    let mut stmt = conn.prepare(&sql)?;
+    let tasks = stmt.query_map([], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
     Ok(tasks)
-}
-
-pub fn get_all_focus_sessions(conn: &Connection) -> Result<Vec<FocusSession>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, task_id, date, started_at, ended_at, duration_min, notes
-         FROM focus_sessions ORDER BY started_at",
-    )?;
-    let sessions = stmt
-        .query_map([], |row| {
-            Ok(FocusSession {
-                id: row.get(0)?,
-                task_id: row.get(1)?,
-                date: row.get(2)?,
-                started_at: row.get(3)?,
-                ended_at: row.get(4)?,
-                duration_min: row.get(5)?,
-                notes: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(sessions)
-}
-
-pub fn get_all_daily_sessions(conn: &Connection) -> Result<Vec<DailySession>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, date, session_slot, started_at, tasks_planned, tasks_completed,
-                tasks_skipped, focus_minutes, notes
-         FROM daily_sessions ORDER BY date, session_slot",
-    )?;
-    let sessions = stmt
-        .query_map([], |row| {
-            Ok(DailySession {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                session_slot: row.get(2)?,
-                started_at: row.get(3)?,
-                tasks_planned: row.get(4)?,
-                tasks_completed: row.get(5)?,
-                tasks_skipped: row.get(6)?,
-                focus_minutes: row.get(7)?,
-                notes: row.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(sessions)
 }
 
 pub fn get_all_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
@@ -955,7 +774,7 @@ pub fn get_all_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>
 pub fn get_all_daily_reports(conn: &Connection) -> Result<Vec<DailyReport>> {
     let mut stmt = conn.prepare(
         "SELECT id, date, tasks_planned, tasks_completed, tasks_skipped, tasks_carried,
-                total_focus_min, session1_focus, session2_focus, ai_reflection, markdown_export, generated_at
+                total_focus_min, ai_reflection, markdown_export, generated_at
          FROM daily_reports ORDER BY date"
     )?;
     let reports = stmt
@@ -968,11 +787,9 @@ pub fn get_all_daily_reports(conn: &Connection) -> Result<Vec<DailyReport>> {
                 tasks_skipped: row.get(4)?,
                 tasks_carried: row.get(5)?,
                 total_focus_min: row.get(6)?,
-                session1_focus: row.get(7)?,
-                session2_focus: row.get(8)?,
-                ai_reflection: row.get(9)?,
-                markdown_export: row.get(10)?,
-                generated_at: row.get(11)?,
+                ai_reflection: row.get(7)?,
+                markdown_export: row.get(8)?,
+                generated_at: row.get(9)?,
             })
         })?
         .collect::<Result<Vec<_>>>()?;
@@ -1120,106 +937,52 @@ mod tests {
     #[test]
     fn test_create_and_get_task() {
         let conn = setup_test_db();
-        let id = create_task(
-            &conn,
-            "2026-03-22",
-            1,
-            "Test task",
-            "code",
-            2,
-            Some(30),
-            None,
-        )
-        .unwrap();
-        let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
+        let id = create_task(&conn, "Test task", "prompt", 2, Some(30), None).unwrap();
+        let tasks = get_standalone_tasks(&conn).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, id);
         assert_eq!(tasks[0].title, "Test task");
         assert_eq!(tasks[0].status, "pending");
+        assert_eq!(tasks[0].job_status, "idle");
         assert_eq!(tasks[0].worktree_status, None);
+    }
+
+    #[test]
+    fn test_create_task_with_project() {
+        let conn = setup_test_db();
+        let pid = create_project(&conn, "My Project", "/tmp/proj").unwrap();
+        let id = create_task(&conn, "Project task", "prompt", 1, None, Some(&pid)).unwrap();
+        let tasks = get_tasks_by_project(&conn, &pid).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, id);
+        assert_eq!(tasks[0].project_id.as_deref(), Some(pid.as_str()));
+        // standalone list must not include it
+        let standalone = get_standalone_tasks(&conn).unwrap();
+        assert!(standalone.is_empty());
     }
 
     #[test]
     fn test_update_task_status() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-22", 1, "Test", "code", 2, None, None).unwrap();
+        let id = create_task(&conn, "Test", "prompt", 2, None, None).unwrap();
         update_task_status(&conn, &id, "done").unwrap();
-        let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
-        assert_eq!(tasks[0].status, "done");
-        assert!(tasks[0].completed_at.is_some());
+        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
+        assert_eq!(task.status, "done");
+        assert!(task.completed_at.is_some());
     }
 
     #[test]
     fn test_carry_forward() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-22", 1, "Carry me", "code", 1, None, None).unwrap();
-        let _new_id = carry_task_forward(&conn, &id, "2026-03-23", 1).unwrap();
-        let tomorrow_tasks = get_tasks_by_date(&conn, "2026-03-23").unwrap();
-        assert_eq!(tomorrow_tasks.len(), 1);
-        assert_eq!(tomorrow_tasks[0].carried_from, Some(id.clone()));
-        let today_tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
-        assert_eq!(today_tasks[0].status, "carried_over");
-    }
-
-    #[test]
-    fn test_rollover_incomplete_tasks_carries_only_incomplete_items() {
-        let conn = setup_test_db();
-        let pending = create_task(
-            &conn,
-            "2026-03-20",
-            1,
-            "Pending carry",
-            "code",
-            2,
-            Some(25),
-            None,
-        )
-        .unwrap();
-        let in_progress = create_task(
-            &conn,
-            "2026-03-21",
-            2,
-            "In progress carry",
-            "code",
-            2,
-            None,
-            None,
-        )
-        .unwrap();
-        let done = create_task(&conn, "2026-03-21", 1, "Done keep", "code", 2, None, None).unwrap();
-        update_task_status(&conn, &in_progress, "in_progress").unwrap();
-        update_task_status(&conn, &done, "done").unwrap();
-
-        let carried = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
-        assert_eq!(carried, 2);
-
-        let today = get_tasks_by_date(&conn, "2026-03-23").unwrap();
-        assert_eq!(today.len(), 2);
-        assert!(today.iter().any(|t| t.carried_from.as_deref() == Some(pending.as_str())));
-        assert!(today
-            .iter()
-            .any(|t| t.carried_from.as_deref() == Some(in_progress.as_str())));
-
-        let historical = get_tasks_by_date(&conn, "2026-03-21").unwrap();
-        let done_task = historical.iter().find(|t| t.id == done).unwrap();
-        let in_progress_task = historical.iter().find(|t| t.id == in_progress).unwrap();
-        assert_eq!(done_task.status, "done");
-        assert_eq!(in_progress_task.status, "carried_over");
-    }
-
-    #[test]
-    fn test_rollover_incomplete_tasks_is_idempotent() {
-        let conn = setup_test_db();
-        let pending = create_task(&conn, "2026-03-22", 1, "Carry once", "code", 2, None, None).unwrap();
-
-        let first = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
-        let second = rollover_incomplete_tasks(&conn, "2026-03-23").unwrap();
-        assert_eq!(first, 1);
-        assert_eq!(second, 0);
-
-        let today = get_tasks_by_date(&conn, "2026-03-23").unwrap();
-        assert_eq!(today.len(), 1);
-        assert_eq!(today[0].carried_from.as_deref(), Some(pending.as_str()));
+        let id = create_task(&conn, "Carry me", "prompt", 1, None, None).unwrap();
+        let new_id = carry_task_forward(&conn, &id).unwrap();
+        let all = get_standalone_tasks(&conn).unwrap();
+        // original is carried_over, new one is pending
+        let original = all.iter().find(|t| t.id == id).unwrap();
+        let carried = all.iter().find(|t| t.id == new_id).unwrap();
+        assert_eq!(original.status, "carried_over");
+        assert_eq!(carried.carried_from.as_deref(), Some(id.as_str()));
+        assert_eq!(carried.status, "pending");
     }
 
     #[test]
@@ -1233,38 +996,23 @@ mod tests {
     #[test]
     fn test_generate_report() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "2026-03-22", 1, "Task 1", "code", 1, Some(30), None).unwrap();
-        let id2 = create_task(&conn, "2026-03-22", 1, "Task 2", "code", 2, Some(20), None).unwrap();
+        let id1 = create_task(&conn, "Task 1", "prompt", 1, Some(30), None).unwrap();
+        let id2 = create_task(&conn, "Task 2", "prompt", 2, Some(20), None).unwrap();
         update_task_status(&conn, &id1, "done").unwrap();
         update_task_status(&conn, &id2, "skipped").unwrap();
-        let report = generate_report(&conn, "2026-03-22").unwrap();
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let report = generate_report(&conn, &today).unwrap();
         assert_eq!(report.tasks_completed, 1);
         assert_eq!(report.tasks_skipped, 1);
     }
 
     #[test]
-    fn test_focus_session() {
-        let conn = setup_test_db();
-        let task_id =
-            create_task(&conn, "2026-03-22", 1, "Focus task", "code", 1, None, None).unwrap();
-        let session_id = start_focus_session(&conn, &task_id, "2026-03-22").unwrap();
-        let active = get_active_focus_session(&conn, &task_id).unwrap();
-        assert!(active.is_some());
-        // Duration may be 0 since no real time passes; just verify it ends cleanly
-        let duration = end_focus_session(&conn, &session_id, "Notes here").unwrap();
-        assert!(duration >= 0);
-        let active_after = get_active_focus_session(&conn, &task_id).unwrap();
-        assert!(active_after.is_none());
-    }
-
-    #[test]
     fn test_reorder_tasks() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "2026-03-22", 1, "Task A", "code", 1, None, None).unwrap();
-        let id2 = create_task(&conn, "2026-03-22", 1, "Task B", "code", 2, None, None).unwrap();
+        let id1 = create_task(&conn, "Task A", "prompt", 1, None, None).unwrap();
+        let id2 = create_task(&conn, "Task B", "prompt", 2, None, None).unwrap();
         reorder_tasks(&conn, &[id2.clone(), id1.clone()]).unwrap();
-        let tasks = get_tasks_by_date(&conn, "2026-03-22").unwrap();
-        // id2 should be position 0
+        let tasks = get_standalone_tasks(&conn).unwrap();
         let t2 = tasks.iter().find(|t| t.id == id2).unwrap();
         assert_eq!(t2.position, 0);
     }
@@ -1272,17 +1020,7 @@ mod tests {
     #[test]
     fn test_set_task_worktree_metadata() {
         let conn = setup_test_db();
-        let id = create_task(
-            &conn,
-            "2026-03-22",
-            1,
-            "Worktree task",
-            "code",
-            2,
-            None,
-            None,
-        )
-        .unwrap();
+        let id = create_task(&conn, "Worktree task", "prompt", 2, None, None).unwrap();
 
         set_task_worktree_metadata(
             &conn,
@@ -1293,29 +1031,10 @@ mod tests {
         )
         .unwrap();
 
-        let task = get_tasks_by_date(&conn, "2026-03-22").unwrap().remove(0);
-        assert_eq!(
-            task.worktree_path.as_deref(),
-            Some("/tmp/daily-planner-worktrees/abc")
-        );
-        assert_eq!(
-            task.worktree_branch.as_deref(),
-            Some("task/worktree-task-abc")
-        );
+        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
+        assert_eq!(task.worktree_path.as_deref(), Some("/tmp/daily-planner-worktrees/abc"));
+        assert_eq!(task.worktree_branch.as_deref(), Some("task/worktree-task-abc"));
         assert_eq!(task.worktree_status.as_deref(), Some("active"));
-    }
-
-    #[test]
-    fn test_move_task_to_session() {
-        let conn = setup_test_db();
-        let id = create_task(&conn, "2026-03-23", 1, "Move Me", "code", 2, None, None).unwrap();
-        move_task_to_session(&conn, &id, 2).unwrap();
-        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
-        assert_eq!(task.session_slot, 2);
-        // move back to session 1
-        move_task_to_session(&conn, &id, 1).unwrap();
-        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
-        assert_eq!(task.session_slot, 1);
     }
 
     #[test]
@@ -1323,5 +1042,62 @@ mod tests {
         let conn = setup_test_db();
         let result = get_task_by_id(&conn, "nonexistent-id").unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_create_prompt_job() {
+        let conn = setup_test_db();
+        let task_id = create_task(&conn, "AI task", "prompt", 1, None, None).unwrap();
+        let job_id = create_prompt_job(
+            &conn, &task_id, None, "claude", "Do the thing", None, None,
+        ).unwrap();
+
+        // task should have job_status = queued and job_id set
+        let task = get_task_by_id(&conn, &task_id).unwrap().unwrap();
+        assert_eq!(task.job_status, "queued");
+        assert_eq!(task.job_id.as_deref(), Some(job_id.as_str()));
+
+        // job should be retrievable
+        let job = get_prompt_job(&conn, &job_id).unwrap().unwrap();
+        assert_eq!(job.task_id, task_id);
+        assert_eq!(job.provider, "claude");
+        assert_eq!(job.status, "queued");
+    }
+
+    #[test]
+    fn test_get_active_jobs() {
+        let conn = setup_test_db();
+        let task_id = create_task(&conn, "AI task 2", "prompt", 1, None, None).unwrap();
+        let job_id = create_prompt_job(
+            &conn, &task_id, None, "claude", "Prompt text", None, None,
+        ).unwrap();
+
+        let active = get_active_jobs(&conn).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, job_id);
+
+        // After marking completed, active list should be empty
+        update_prompt_job_status(&conn, &job_id, "completed", Some(0), None).unwrap();
+        let active_after = get_active_jobs(&conn).unwrap();
+        assert!(active_after.is_empty());
+    }
+
+    #[test]
+    fn test_save_task_prompt() {
+        let conn = setup_test_db();
+        let id = create_task(&conn, "Prompt task", "prompt", 1, None, None).unwrap();
+        save_task_prompt(&conn, &id, Some("raw text"), Some("improved text")).unwrap();
+        let task = get_task_by_id(&conn, &id).unwrap().unwrap();
+        assert_eq!(task.raw_prompt.as_deref(), Some("raw text"));
+        assert_eq!(task.improved_prompt.as_deref(), Some("improved text"));
+    }
+
+    #[test]
+    fn test_tasks_by_date_range() {
+        let conn = setup_test_db();
+        let _id = create_task(&conn, "Range task", "prompt", 1, None, None).unwrap();
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let tasks = get_tasks_by_date_range(&conn, &today, &today).unwrap();
+        assert_eq!(tasks.len(), 1);
     }
 }

@@ -10,6 +10,8 @@ interface SseHandlers {
   onReportChanged?: (date: string) => void;
   onTemplatesChanged?: () => void;
   onDevicesChanged?: () => void;
+  onJobStatusChanged?: (jobId: string) => void;
+  onJobOutput?: (jobId: string) => void;
 }
 
 let es: EventSource | null = null;
@@ -52,6 +54,20 @@ function connect() {
 
   es.addEventListener('devices_changed', () => {
     handlers.onDevicesChanged?.();
+  });
+
+  es.addEventListener('job_status_changed', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data) as { data?: { job_id?: string } };
+      handlers.onJobStatusChanged?.(data?.data?.job_id ?? '');
+    } catch { /* ignore parse errors */ }
+  });
+
+  es.addEventListener('job_output', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data) as { data?: { job_id?: string } };
+      handlers.onJobOutput?.(data?.data?.job_id ?? '');
+    } catch { /* ignore parse errors */ }
   });
 
   es.onerror = () => {

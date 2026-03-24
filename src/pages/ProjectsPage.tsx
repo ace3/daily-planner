@@ -7,11 +7,10 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../components/ui/Toast';
-import { useSessionDraftState } from '../hooks/useSessionDraftState';
 
 export const ProjectsPage: React.FC = () => {
   const { projects, loading, fetchProjects, createProject, deleteProject, setProjectPrompt } = useProjectStore();
-  const [draft, setDraft] = useSessionDraftState('projects-page-draft', {
+  const [draft, setDraft] = useState({
     selectedPath: '',
     projectName: '',
     expandedPrompt: null as string | null,

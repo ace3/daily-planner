@@ -1,32 +1,27 @@
 import React from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { Sun, Moon, Smartphone, Monitor, RefreshCw } from 'lucide-react';
-import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMobileStore } from '../../stores/mobileStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSyncStore } from '../../stores/syncStore';
-import { formatCountdown } from '../../lib/time';
 import { AiProviderSelector } from '../AiProviderSelector';
 
 export const TopBar: React.FC = () => {
-  const { sessionInfo, currentDate } = useSessionStore();
   const { settings, setTheme, fetchSettings } = useSettingsStore();
   const { mobileMode, toggleMobileMode } = useMobileStore();
-  const { fetchTasks, activeDate } = useTaskStore();
+  const { fetchTasks } = useTaskStore();
   const { fetchProjects } = useProjectStore();
   const { syncing, lastSyncedAt, syncAll } = useSyncStore();
 
   const handleForceSync = () => {
-    if (activeDate) syncAll(fetchTasks, activeDate, fetchSettings, fetchProjects);
+    syncAll(fetchTasks, fetchSettings, fetchProjects);
   };
 
   const isDark = settings?.theme === 'dark';
 
-  const displayDate = currentDate
-    ? format(new Date(currentDate + 'T00:00:00'), 'EEE, MMM d')
-    : format(new Date(), 'EEE, MMM d');
+  const displayDate = format(new Date(), 'EEE, MMM d');
 
   return (
     <div
@@ -37,32 +32,9 @@ export const TopBar: React.FC = () => {
         <span className={`font-medium text-[#64748B] dark:text-[#94A3B8] ${mobileMode ? 'text-sm' : 'text-xs'}`}>
           {displayDate}
         </span>
-        {sessionInfo && (
-          <div className="flex items-center gap-2">
-            <div
-              className={`rounded-full animate-pulse ${mobileMode ? 'w-2.5 h-2.5' : 'w-2 h-2'}`}
-              style={{ backgroundColor: sessionInfo.phaseColor }}
-            />
-            <span
-              className={`font-medium ${mobileMode ? 'text-sm' : 'text-xs'}`}
-              style={{ color: sessionInfo.phaseColor }}
-            >
-              {sessionInfo.phaseLabel}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="flex items-center gap-2">
-        {sessionInfo && sessionInfo.phase !== 'off' && sessionInfo.phase !== 'end_of_day' && !mobileMode && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-[#64748B] dark:text-[#64748B]">{sessionInfo.nextEventLabel} in</span>
-            <span className="font-mono font-medium text-[#111827] dark:text-[#E5E7EB]">
-              {formatCountdown(sessionInfo.timeUntilNext)}
-            </span>
-          </div>
-        )}
-
         {!mobileMode && <span className="text-[#CBD5E1] dark:text-[#334155] select-none">|</span>}
 
         {/* Sync button */}

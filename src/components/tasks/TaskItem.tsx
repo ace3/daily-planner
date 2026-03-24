@@ -10,7 +10,6 @@ import {
   GripVertical,
   GitBranchPlus,
   FolderX,
-  ArrowLeftRight,
   MoreHorizontal,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
@@ -29,7 +28,6 @@ interface TaskItemProps {
   onSelect?: (task: Task) => void;
   onRunAsWorktree?: (task: Task) => Promise<void>;
   onCleanupWorktree?: (task: Task) => Promise<void>;
-  onMoveToSession?: (task: Task, targetSlot: number) => Promise<void>;
 }
 
 const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple'> = {
@@ -54,7 +52,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onSelect,
   onRunAsWorktree,
   onCleanupWorktree,
-  onMoveToSession,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const { mobileMode: m } = useMobileStore();
@@ -143,15 +140,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 >
                   <ArrowRight size={16} />
                   Tomorrow
-                </button>
-              )}
-              {!isCarried && onMoveToSession && (
-                <button
-                  onClick={() => onMoveToSession(task, task.session_slot === 1 ? 2 : 1)}
-                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-teal-400 bg-teal-500/10 border border-teal-500/20 whitespace-nowrap cursor-pointer"
-                >
-                  <ArrowLeftRight size={16} />
-                  S{task.session_slot === 1 ? '2' : '1'}
                 </button>
               )}
               {!isCarried && task.project_id && (
@@ -273,15 +261,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               title="Carry to tomorrow"
             >
               <ArrowRight size={13} />
-            </button>
-          )}
-          {!isCarried && onMoveToSession && (
-            <button
-              onClick={() => onMoveToSession(task, task.session_slot === 1 ? 2 : 1)}
-              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-teal-400 transition-colors cursor-pointer rounded"
-              title={task.session_slot === 1 ? 'Move to Session 2' : 'Move to Session 1'}
-            >
-              <ArrowLeftRight size={13} />
             </button>
           )}
           {!isCarried && (

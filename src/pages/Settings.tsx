@@ -12,14 +12,9 @@ import {
   type BackupSessionInfo, type BackupSettings,
 } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
-import { useSessionDraftState } from '../hooks/useSessionDraftState';
 
 interface SettingsDraft {
   timezone_offset: string;
-  session1_kickstart: string;
-  planning_end: string;
-  session2_start: string;
-  warn_before_min: string;
   default_model_codex: string;
   default_model_claude: string;
   default_model_opencode: string;
@@ -35,7 +30,7 @@ interface SettingsDraft {
 
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
-  const { fetchTasks, activeDate } = useTaskStore();
+  const { fetchTasks } = useTaskStore();
   const { fetchRecentReports } = useReportStore();
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -53,12 +48,8 @@ export const SettingsPage: React.FC = () => {
   const [sessionActions, setSessionActions] = useState<Record<string, string>>({});
   const [restoreSessionId, setRestoreSessionId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(false);
-  const [draft, setDraft] = useSessionDraftState<SettingsDraft>('settings-page-draft', {
+  const [draft, setDraft] = useState<SettingsDraft>({
     timezone_offset: '',
-    session1_kickstart: '',
-    planning_end: '',
-    session2_start: '',
-    warn_before_min: '',
     default_model_codex: '',
     default_model_claude: '',
     default_model_opencode: '',
@@ -102,10 +93,6 @@ export const SettingsPage: React.FC = () => {
     setDraft((prev) => ({
       ...prev,
       timezone_offset: String(settings.timezone_offset),
-      session1_kickstart: settings.session1_kickstart,
-      planning_end: settings.planning_end,
-      session2_start: settings.session2_start,
-      warn_before_min: String(settings.warn_before_min),
       default_model_codex: settings.default_model_codex,
       default_model_claude: settings.default_model_claude,
       default_model_opencode: settings.default_model_opencode,
@@ -201,7 +188,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const result = await restoreData();
       if (result === 'cancelled') return;
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
       toast.success('Data restored successfully');
     } catch (e) {
       toast.error(String(e));
@@ -217,7 +204,7 @@ export const SettingsPage: React.FC = () => {
       const keepSettings = checkValues?.['keep_settings'] ?? true;
       const keepBuiltinTemplates = checkValues?.['keep_builtin_templates'] ?? true;
       await resetAppData(keepSettings, keepBuiltinTemplates);
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
       toast.success('App data cleared');
     } catch (e) {
       toast.error(String(e));
@@ -285,7 +272,7 @@ export const SettingsPage: React.FC = () => {
     setSessionActions((p) => ({ ...p, [id]: 'restoring' }));
     try {
       await restoreFromBackupSession(id);
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
       toast.success('Restored from backup session');
     } catch (e) {
       toast.error(`Restore failed: ${String(e)}`);
@@ -345,47 +332,6 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Time settings */}
-            {[
-              { key: 'session1_kickstart', label: 'Morning Kickstart', desc: 'When to start prompting (5-hour session begins)' },
-              { key: 'planning_end', label: 'Switch to Claude Code', desc: 'End of planning phase — switch to development' },
-              { key: 'session2_start', label: 'Session Reset', desc: 'When Claude Pro session resets (5-hour cycle)' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} className="space-y-1.5">
-                <div>
-                  <label className={labelClass}>{label}</label>
-                  <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5">{desc}</p>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="time"
-                    value={draft[key as 'session1_kickstart' | 'planning_end' | 'session2_start']}
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        [key]: e.target.value,
-                      }))
-                    }
-                    onBlur={(e) => handleSave(key, e.target.value)}
-                    className={inputClass}
-                  />
-                </div>
-              </div>
-            ))}
-
-            {/* Warning time */}
-            <div className="space-y-1.5">
-              <label className={labelClass}>Warning Before Reset (minutes)</label>
-              <input
-                type="number"
-                value={draft.warn_before_min}
-                min={5}
-                max={60}
-                onChange={(e) => setDraft((prev) => ({ ...prev, warn_before_min: e.target.value }))}
-                onBlur={(e) => handleSave('warn_before_min', e.target.value)}
-                className={`w-24 ${inputClass}`}
-              />
-            </div>
           </div>
         </section>
 

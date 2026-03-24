@@ -1,259 +1,389 @@
-import React, { useEffect, useState } from 'react';
-import { useTaskStore } from '../stores/taskStore';
-import { useSettingsStore } from '../stores/settingsStore';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMobileStore } from '../stores/mobileStore';
-import { SessionTimer } from '../components/session/SessionTimer';
-import { SessionWarning } from '../components/session/SessionWarning';
-import { TaskList } from '../components/tasks/TaskList';
-import { useSessionTimer } from '../hooks/useSessionTimer';
-import { usePhaseListener } from '../hooks/useNotifications';
-import { useSessionStore } from '../stores/sessionStore';
-import { getLocalDate } from '../lib/time';
-import { formatCountdown } from '../lib/time';
-import { format } from 'date-fns';
-import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
-import { Button } from '../components/ui/Button';
+import { useProjectStore } from '../stores/projectStore';
+import { useJobStore } from '../stores/jobStore';
+import { Task, CreateTaskInput } from '../types/task';
+import { PromptJob } from '../types/job';
+import {
+  getStandaloneTasks,
+  getTasksByProject,
+  createTask,
+  updateTaskStatus,
+  deleteTask,
+} from '../lib/tauri';
+import { Plus, X, FolderOpen, Loader2, CheckCircle2, Circle, Clock } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function elapsedTime(job: PromptJob): string {
+  const start = job.started_at ?? job.created_at;
+  try {
+    return formatDistanceToNow(new Date(start), { addSuffix: false });
+  } catch {
+    return '—';
+  }
+}
+
+function relativeTime(dateStr: string): string {
+  try {
+    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+  } catch {
+    return '—';
+  }
+}
+
+function providerBadgeClass(provider: string): string {
+  const p = provider.toLowerCase();
+  if (p.includes('claude')) return 'bg-purple-900/50 text-purple-300';
+  if (p.includes('opencode') || p.includes('openai')) return 'bg-blue-900/50 text-blue-300';
+  return 'bg-gray-700/60 text-gray-300';
+}
+
+function statusDotClass(status: string): string {
+  switch (status) {
+    case 'done': return 'bg-emerald-500';
+    case 'in_progress': return 'bg-blue-500';
+    case 'skipped': return 'bg-gray-500';
+    default: return 'bg-gray-400 dark:bg-gray-600';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+interface ActiveJobRowProps {
+  job: PromptJob;
+  projectName?: string;
+  onCancel: (id: string) => void;
+  mobile: boolean;
+}
+
+const ActiveJobRow: React.FC<ActiveJobRowProps> = ({ job, projectName, onCancel, mobile }) => (
+  <div className="flex items-center gap-3 dark:bg-[#161B22] rounded-lg px-3 py-2.5 border border-white/5">
+    <Loader2 size={14} className="animate-spin text-green-400 shrink-0" />
+    <div className="flex-1 min-w-0">
+      <p className={`truncate dark:text-[#E6EDF3] ${mobile ? 'text-sm' : 'text-sm'}`}>
+        {job.prompt?.slice(0, 60) ?? 'Running…'}
+      </p>
+      <div className="flex items-center gap-2 mt-0.5">
+        {projectName && (
+          <span className="text-xs dark:text-gray-500 truncate">{projectName}</span>
+        )}
+        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${providerBadgeClass(job.provider)}`}>
+          {job.provider}
+        </span>
+        <span className="text-xs dark:text-gray-500 flex items-center gap-1">
+          <Clock size={10} />
+          {elapsedTime(job)}
+        </span>
+      </div>
+    </div>
+    <button
+      onClick={() => onCancel(job.id)}
+      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+      aria-label="Cancel job"
+    >
+      <X size={14} />
+    </button>
+  </div>
+);
+
+interface ProjectCardProps {
+  name: string;
+  taskCount: number;
+  activeJobCount: number;
+  createdAt: string;
+  onClick: () => void;
+  mobile: boolean;
+}
+
+const ProjectCard: React.FC<ProjectCardProps> = ({ name, taskCount, activeJobCount, createdAt, onClick, mobile }) => (
+  <button
+    onClick={onClick}
+    className={`text-left dark:bg-[#161B22] border border-white/5 rounded-xl p-4 hover:border-blue-500/40 hover:dark:bg-[#1C2128] transition-all active:scale-[0.98] ${mobile ? 'min-h-[80px]' : ''}`}
+  >
+    <div className="flex items-start justify-between gap-2">
+      <p className={`font-medium dark:text-[#E6EDF3] leading-snug ${mobile ? 'text-sm' : 'text-sm'}`}>{name}</p>
+      <div className="flex items-center gap-1 shrink-0">
+        {activeJobCount > 0 && (
+          <span className="flex items-center gap-1 text-xs bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            {activeJobCount}
+          </span>
+        )}
+        <span className="text-xs dark:bg-[#21262D] dark:text-gray-400 px-2 py-0.5 rounded-full">
+          {taskCount}
+        </span>
+      </div>
+    </div>
+    <p className="text-xs dark:text-gray-500 mt-2">{relativeTime(createdAt)}</p>
+  </button>
+);
+
+interface TaskRowProps {
+  task: Task;
+  onToggle: (id: string, current: string) => void;
+  onDelete: (id: string) => void;
+  mobile: boolean;
+}
+
+const TaskRow: React.FC<TaskRowProps> = ({ task, onToggle, onDelete, mobile }) => (
+  <div className="flex items-center gap-3 py-2 group">
+    <button
+      onClick={() => onToggle(task.id, task.status)}
+      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
+      aria-label="Toggle status"
+    >
+      {task.status === 'done' ? (
+        <CheckCircle2 size={16} className="text-emerald-500" />
+      ) : (
+        <Circle size={16} className="dark:text-gray-500" />
+      )}
+    </button>
+    <span
+      className={`flex-1 min-w-0 truncate ${mobile ? 'text-sm' : 'text-sm'} dark:text-[#E6EDF3] ${task.status === 'done' ? 'line-through dark:text-gray-500' : ''}`}
+    >
+      {task.title}
+    </span>
+    <div className="flex items-center gap-1">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(task.status)}`} />
+      <button
+        onClick={() => onDelete(task.id)}
+        className="w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-600 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+        aria-label="Delete task"
+      >
+        <X size={13} />
+      </button>
+    </div>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
 
 export const Dashboard: React.FC = () => {
-  const { fetchTasks, tasks, activeDate } = useTaskStore();
-  const { settings } = useSettingsStore();
-  const { mobileMode } = useMobileStore();
-  const { sessionInfo } = useSessionStore();
-  const [loading, setLoading] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
+  const { mobileMode: m } = useMobileStore();
+  const { projects, fetchProjects } = useProjectStore();
+  const { activeJobs, fetchActiveJobs, cancelJob } = useJobStore();
+  const navigate = useNavigate();
 
-  useSessionTimer();
-  usePhaseListener();
+  const [standaloneTasks, setStandaloneTasks] = useState<Task[]>([]);
+  const [projectTaskCounts, setProjectTaskCounts] = useState<Record<string, number>>({});
+  const [newTitle, setNewTitle] = useState('');
+  const [adding, setAdding] = useState(false);
 
-  const today = getLocalDate(settings?.timezone_offset ?? 7);
+  const loadStandaloneTasks = useCallback(async () => {
+    try {
+      const tasks = await getStandaloneTasks();
+      setStandaloneTasks(tasks);
+    } catch (e) {
+      console.error('Failed to load standalone tasks:', e);
+    }
+  }, []);
+
+  const loadProjectTaskCounts = useCallback(async (projectIds: string[]) => {
+    if (projectIds.length === 0) return;
+    try {
+      const entries = await Promise.all(
+        projectIds.map(async (id) => {
+          try {
+            const tasks = await getTasksByProject(id);
+            return [id, tasks.length] as [string, number];
+          } catch {
+            return [id, 0] as [string, number];
+          }
+        })
+      );
+      setProjectTaskCounts(Object.fromEntries(entries));
+    } catch (e) {
+      console.error('Failed to load project task counts:', e);
+    }
+  }, []);
 
   useEffect(() => {
-    if (today && today !== activeDate) {
-      setLoading(true);
-      fetchTasks(today).finally(() => setLoading(false));
+    fetchProjects();
+    fetchActiveJobs();
+    loadStandaloneTasks();
+  }, []);
+
+  // Load task counts once projects are available
+  useEffect(() => {
+    if (projects.length > 0) {
+      loadProjectTaskCounts(projects.map((p) => p.id));
     }
-  }, [today]);
+  }, [projects]);
 
-  const completedToday = tasks.filter((t) => t.status === 'done').length;
-  const totalToday = tasks.filter((t) => t.status !== 'carried_over').length;
-  const completionPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
-
-  // Mobile: ultra-compact layout — tasks first, timer collapsed
-  if (mobileMode) {
-    return (
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Compact header: date + progress + refresh in one row */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <h1 className="text-lg font-semibold text-gray-900 dark:text-[#E6EDF3] truncate">
-              {format(new Date(), 'EEE, MMM d')}
-            </h1>
-            {/* Inline progress pill */}
-            {totalToday > 0 && (
-              <span className="text-sm font-medium text-emerald-400 whitespace-nowrap">
-                {completedToday}/{totalToday} ({completionPct}%)
-              </span>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw size={16} className={loading ? 'animate-spin' : ''} />}
-            onClick={() => fetchTasks(today)}
-          />
-        </div>
-
-        {/* Slim progress bar */}
-        {totalToday > 0 && (
-          <div className="h-2 bg-gray-100 dark:bg-[#21262D] rounded-full overflow-hidden">
-            <div
-              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-              style={{ width: `${completionPct}%` }}
-            />
-          </div>
-        )}
-
-        {/* Session warning banner */}
-        <SessionWarning />
-
-        {/* Collapsible session status — tap to expand full timer */}
-        <button
-          onClick={() => setShowDetails(!showDetails)}
-          className="w-full flex items-center justify-between rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] px-4 py-3 cursor-pointer"
-        >
-          <div className="flex items-center gap-3">
-            {sessionInfo && (
-              <>
-                <div
-                  className="w-3 h-3 rounded-full animate-pulse"
-                  style={{ backgroundColor: sessionInfo.phaseColor }}
-                />
-                <span className="text-sm font-medium" style={{ color: sessionInfo.phaseColor }}>
-                  {sessionInfo.phaseLabel}
-                </span>
-                {sessionInfo.phase !== 'off' && sessionInfo.phase !== 'end_of_day' && (
-                  <span className="text-sm font-mono font-semibold text-gray-900 dark:text-[#E6EDF3]">
-                    {formatCountdown(sessionInfo.timeUntilNext)}
-                  </span>
-                )}
-              </>
-            )}
-            {!sessionInfo && (
-              <span className="text-sm text-gray-400">Session info loading...</span>
-            )}
-          </div>
-          {showDetails
-            ? <ChevronUp size={18} className="text-gray-400" />
-            : <ChevronDown size={18} className="text-gray-400" />
-          }
-        </button>
-
-        {/* Expanded: full timer + strategy */}
-        {showDetails && (
-          <div className="space-y-4">
-            <SessionTimer />
-
-            {/* Compact daily stats */}
-            {totalToday > 0 && (
-              <div className="grid grid-cols-3 text-center text-sm text-gray-500 dark:text-[#484F58] rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] py-3">
-                <div>
-                  <div className="text-lg font-semibold text-emerald-400">
-                    {tasks.filter((t) => t.status === 'done').length}
-                  </div>
-                  Done
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-amber-400">
-                    {tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length}
-                  </div>
-                  Active
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-gray-400 dark:text-[#8B949E]">
-                    {tasks.filter((t) => t.status === 'skipped').length}
-                  </div>
-                  Skipped
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tasks — immediately visible, no scrolling past big cards */}
-        <div className="space-y-6">
-          <TaskList slot={1} />
-          <div className="border-t border-gray-100 dark:border-[#21262D]" />
-          <TaskList slot={2} />
-        </div>
-      </div>
-    );
+  // Build a map of project_id -> active job count
+  const projectActiveJobs: Record<string, number> = {};
+  for (const job of activeJobs) {
+    if (job.project_id) {
+      projectActiveJobs[job.project_id] = (projectActiveJobs[job.project_id] ?? 0) + 1;
+    }
   }
 
-  // Desktop: original layout
+  const handleAddTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = newTitle.trim();
+    if (!title) return;
+    setAdding(true);
+    try {
+      const input: CreateTaskInput = { title, task_type: 'other', priority: 2 };
+      await createTask(input);
+      setNewTitle('');
+      await loadStandaloneTasks();
+    } catch (e) {
+      console.error('Failed to create task:', e);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleToggle = async (id: string, current: string) => {
+    const next = current === 'done' ? 'pending' : 'done';
+    try {
+      await updateTaskStatus(id, next);
+      setStandaloneTasks((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, status: next as Task['status'] } : t))
+      );
+    } catch (e) {
+      console.error('Failed to update task status:', e);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteTask(id);
+      setStandaloneTasks((prev) => prev.filter((t) => t.id !== id));
+    } catch (e) {
+      console.error('Failed to delete task:', e);
+    }
+  };
+
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      await cancelJob(jobId);
+    } catch (e) {
+      console.error('Failed to cancel job:', e);
+    }
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">
-            {format(new Date(), 'EEEE, MMMM d')}
-          </h1>
-          <p className="text-xs text-gray-500 dark:text-[#484F58] mt-0.5">
-            {completedToday}/{totalToday} tasks done
-            {totalToday > 0 && ` · ${completionPct}%`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="text-right text-xs text-gray-500 dark:text-[#484F58]">
-            <div className="font-mono">{today}</div>
+    <div className={`${m ? 'p-3' : 'p-6'} space-y-6 overflow-y-auto h-full`} data-scrollable>
+
+      {/* Section 1: Active Jobs */}
+      {activeJobs.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <h2 className={`font-semibold ${m ? 'text-base' : 'text-lg'} dark:text-[#E6EDF3]`}>
+              Running Jobs
+            </h2>
+            <span className="text-xs dark:text-gray-500">{activeJobs.length}</span>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw size={13} className={loading ? 'animate-spin' : ''} />}
-            onClick={() => fetchTasks(today)}
-          />
-        </div>
-      </div>
-
-      {/* Session warning banner */}
-      <SessionWarning />
-
-      {/* Bento grid: timer + tasks */}
-      <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-4">
-        {/* Left: Session Timer */}
-        <div className="space-y-3">
-          <SessionTimer />
-
-          {/* Daily progress */}
-          {totalToday > 0 && (
-            <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">
-                  Today's Progress
-                </span>
-                <span className="text-sm font-bold text-gray-900 dark:text-[#E6EDF3]">{completionPct}%</span>
-              </div>
-              <div className="h-2 bg-gray-100 dark:bg-[#21262D] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                  style={{ width: `${completionPct}%` }}
+          <div className="space-y-2">
+            {activeJobs.map((job) => {
+              const project = projects.find((p) => p.id === job.project_id);
+              return (
+                <ActiveJobRow
+                  key={job.id}
+                  job={job}
+                  projectName={project?.name}
+                  onCancel={handleCancelJob}
+                  mobile={m}
                 />
-              </div>
-              <div className="mt-2 grid grid-cols-3 text-center text-xs text-gray-500 dark:text-[#484F58]">
-                <div>
-                  <div className="text-emerald-400 font-semibold">
-                    {tasks.filter((t) => t.status === 'done').length}
-                  </div>
-                  Done
-                </div>
-                <div>
-                  <div className="text-amber-400 font-semibold">
-                    {tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length}
-                  </div>
-                  Active
-                </div>
-                <div>
-                  <div className="text-gray-400 dark:text-[#8B949E] font-semibold">
-                    {tasks.filter((t) => t.status === 'skipped').length}
-                  </div>
-                  Skipped
-                </div>
-              </div>
-            </div>
-          )}
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-          {/* Phase guide */}
-          <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4 space-y-2">
-            <span className="text-xs font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">
-              Daily Strategy
-            </span>
-            {[
-              { time: settings?.session1_kickstart ?? '09:00', label: 'Start prompting', desc: 'Kickstart 5-hour session', color: '#3B82F6' },
-              { time: settings?.planning_end ?? '11:00', label: 'Switch to Claude Code', desc: 'Begin development', color: '#10B981' },
-              { time: settings?.session2_start ?? '14:00', label: 'Fresh session!', desc: 'Session resets — double usage', color: '#10B981' },
-              { time: '19:00', label: 'Wrap up', desc: 'Generate daily report', color: '#8B949E' },
-            ].map(({ time, label, desc, color }) => (
-              <div key={time} className="flex items-start gap-2.5">
-                <span className="font-mono text-xs font-medium w-11 shrink-0 mt-0.5" style={{ color }}>
-                  {time}
-                </span>
-                <div>
-                  <div className="text-xs font-medium text-gray-900 dark:text-[#E6EDF3]">{label}</div>
-                  <div className="text-xs text-gray-500 dark:text-[#484F58]">{desc}</div>
-                </div>
-              </div>
+      {/* Section 2: Projects Grid */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className={`font-semibold ${m ? 'text-base' : 'text-lg'} dark:text-[#E6EDF3]`}>
+            Projects
+          </h2>
+          <button
+            onClick={() => navigate('/projects')}
+            className="text-sm dark:text-blue-400 hover:underline min-h-[44px] px-2 flex items-center"
+          >
+            View All
+          </button>
+        </div>
+        <div className={`grid ${m ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+          {projects.map((project) => (
+            <ProjectCard
+              key={project.id}
+              name={project.name}
+              taskCount={projectTaskCounts[project.id] ?? 0}
+              activeJobCount={projectActiveJobs[project.id] ?? 0}
+              createdAt={project.created_at}
+              onClick={() => navigate(`/projects/${project.id}`)}
+              mobile={m}
+            />
+          ))}
+          {/* New Project card */}
+          <button
+            onClick={() => navigate('/projects')}
+            className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed dark:border-white/10 rounded-xl p-4 dark:text-gray-500 hover:dark:border-blue-500/40 hover:dark:text-blue-400 transition-all ${m ? 'min-h-[80px]' : 'min-h-[80px]'}`}
+          >
+            <Plus size={18} />
+            <span className="text-xs font-medium">New Project</span>
+          </button>
+        </div>
+      </section>
+
+      {/* Section 3: Standalone Tasks */}
+      <section>
+        <h2 className={`font-semibold ${m ? 'text-base' : 'text-lg'} dark:text-[#E6EDF3] mb-3`}>
+          Quick Tasks
+        </h2>
+
+        {/* Inline add form */}
+        <form onSubmit={handleAddTask} className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="Add a task…"
+            className={`flex-1 rounded-lg px-3 dark:bg-[#161B22] border border-white/10 dark:text-[#E6EDF3] dark:placeholder-gray-600 focus:outline-none focus:border-blue-500/60 text-sm ${m ? 'h-11' : 'h-10'}`}
+          />
+          <button
+            type="submit"
+            disabled={adding || !newTitle.trim()}
+            className={`shrink-0 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5 ${m ? 'h-11' : 'h-10'}`}
+          >
+            {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            Add
+          </button>
+        </form>
+
+        {/* Task list */}
+        {standaloneTasks.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-8 dark:text-gray-600">
+            <FolderOpen size={24} />
+            <p className="text-sm">No quick tasks yet</p>
+          </div>
+        ) : (
+          <div className="divide-y dark:divide-white/5">
+            {standaloneTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                onToggle={handleToggle}
+                onDelete={handleDelete}
+                mobile={m}
+              />
             ))}
           </div>
-        </div>
-
-        {/* Right: Task lists */}
-        <div className="space-y-6 min-w-0">
-          <TaskList slot={1} />
-          <div className="border-t border-gray-100 dark:border-[#21262D]" />
-          <TaskList slot={2} />
-        </div>
-      </div>
+        )}
+      </section>
     </div>
   );
 };

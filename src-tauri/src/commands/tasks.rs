@@ -7,8 +7,6 @@ use tauri::State;
 
 #[derive(Deserialize)]
 pub struct CreateTaskInput {
-    pub date: String,
-    pub session_slot: i64,
     pub title: String,
     pub task_type: Option<String>,
     pub priority: Option<i64>,
@@ -24,7 +22,6 @@ pub struct UpdateTaskInput {
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
-    pub session_slot: Option<i64>,
     pub project_id: Option<String>,
     pub clear_project: Option<bool>,
 }
@@ -92,19 +89,19 @@ fn build_launch_command(worktree_path: &str, prompt: &str) -> String {
 
 fn pick_prompt(ctx: &queries::TaskWorktreeContext) -> String {
     let from_improved = ctx
-        .prompt_result
+        .improved_prompt
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(prompt) = from_improved {
         return prompt.to_string();
     }
-    let from_used = ctx
-        .prompt_used
+    let from_raw = ctx
+        .raw_prompt
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if let Some(prompt) = from_used {
+    if let Some(prompt) = from_raw {
         return prompt.to_string();
     }
     let from_notes = ctx.notes.trim();
@@ -125,9 +122,12 @@ fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<std::process::Output, St
 }
 
 #[tauri::command]
-pub fn get_tasks(date: String, db: State<'_, DbConnection>) -> Result<Vec<queries::Task>, String> {
+pub fn get_tasks(project_id: Option<String>, db: State<'_, DbConnection>) -> Result<Vec<queries::Task>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_tasks_by_date(&conn, &date).map_err(|e| e.to_string())
+    match project_id.as_deref() {
+        Some(pid) if !pid.is_empty() => queries::get_tasks_by_project(&conn, pid).map_err(|e| e.to_string()),
+        _ => queries::get_standalone_tasks(&conn).map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -137,20 +137,12 @@ pub fn get_tasks_range(from: String, to: String, db: State<'_, DbConnection>) ->
 }
 
 #[tauri::command]
-pub fn rollover_incomplete_tasks(date: String, db: State<'_, DbConnection>) -> Result<i64, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::rollover_incomplete_tasks(&conn, &date).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::create_task(
         &conn,
-        &input.date,
-        input.session_slot,
         &input.title,
-        &input.task_type.unwrap_or_else(|| "other".to_string()),
+        &input.task_type.unwrap_or_else(|| "prompt".to_string()),
         input.priority.unwrap_or(2),
         input.estimated_min,
         input.project_id.as_deref(),
@@ -169,7 +161,6 @@ pub fn update_task(input: UpdateTaskInput, db: State<'_, DbConnection>) -> Resul
         input.task_type.as_deref(),
         input.priority,
         input.estimated_min,
-        input.session_slot,
         input.project_id.as_deref(),
         input.clear_project.unwrap_or(false),
     )
@@ -186,18 +177,6 @@ pub fn update_task_status(
     queries::update_task_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn move_task_to_session(
-    task_id: String,
-    target_session: i64,
-    db: State<'_, DbConnection>,
-) -> Result<(), String> {
-    if target_session != 1 && target_session != 2 {
-        return Err(format!("Invalid session: {}. Must be 1 or 2.", target_session));
-    }
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::move_task_to_session(&conn, &task_id, target_session).map_err(|e| e.to_string())
-}
 
 #[tauri::command]
 pub fn delete_task(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
@@ -208,12 +187,10 @@ pub fn delete_task(id: String, db: State<'_, DbConnection>) -> Result<(), String
 #[tauri::command]
 pub fn carry_task_forward(
     id: String,
-    tomorrow_date: String,
-    session_slot: i64,
     db: State<'_, DbConnection>,
 ) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::carry_task_forward(&conn, &id, &tomorrow_date, session_slot).map_err(|e| e.to_string())
+    queries::carry_task_forward(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -223,14 +200,15 @@ pub fn reorder_tasks(task_ids: Vec<String>, db: State<'_, DbConnection>) -> Resu
 }
 
 #[tauri::command]
-pub fn save_prompt_result(
+pub fn save_task_prompt(
     id: String,
-    prompt_used: String,
-    prompt_result: String,
+    raw_prompt: Option<String>,
+    improved_prompt: Option<String>,
     db: State<'_, DbConnection>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::save_prompt_result(&conn, &id, &prompt_used, &prompt_result).map_err(|e| e.to_string())
+    queries::save_task_prompt(&conn, &id, raw_prompt.as_deref(), improved_prompt.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -449,25 +427,6 @@ pub fn cleanup_task_worktree(
     })
 }
 
-#[tauri::command]
-pub fn start_focus_session(
-    task_id: String,
-    date: String,
-    db: State<'_, DbConnection>,
-) -> Result<String, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::start_focus_session(&conn, &task_id, &date).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn end_focus_session(
-    session_id: String,
-    notes: String,
-    db: State<'_, DbConnection>,
-) -> Result<i64, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::end_focus_session(&conn, &session_id, &notes).map_err(|e| e.to_string())
-}
 
 #[cfg(test)]
 mod tests {
@@ -500,8 +459,8 @@ mod tests {
             id: "t1".to_string(),
             title: "Task".to_string(),
             notes: "notes".to_string(),
-            prompt_used: Some("used".to_string()),
-            prompt_result: Some("improved".to_string()),
+            raw_prompt: Some("used".to_string()),
+            improved_prompt: Some("improved".to_string()),
             project_path: Some("/tmp/repo".to_string()),
             worktree_path: None,
             worktree_branch: None,
@@ -509,10 +468,10 @@ mod tests {
         };
         assert_eq!(pick_prompt(&ctx), "improved");
 
-        ctx.prompt_result = None;
+        ctx.improved_prompt = None;
         assert_eq!(pick_prompt(&ctx), "used");
 
-        ctx.prompt_used = None;
+        ctx.raw_prompt = None;
         assert_eq!(pick_prompt(&ctx), "notes");
     }
 }
