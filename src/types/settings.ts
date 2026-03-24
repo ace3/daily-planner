@@ -19,6 +19,8 @@ export interface AppSettings {
   show_in_tray: boolean;
   telegram_bot_token: string | null;
   telegram_channel_id: string | null;
+  tunnel_name: string | null;
+  tunnel_hostname: string | null;
 }
 
 export interface AiProvider {

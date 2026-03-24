@@ -116,7 +116,7 @@ export const TemplatesPage: React.FC = () => {
         </Button>
       </div>
 
-      <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
+      <div className="flex-1 lg:overflow-hidden grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
         {/* Template list */}
         <div className="flex flex-col gap-3">
           {/* Search */}

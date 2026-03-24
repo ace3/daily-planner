@@ -117,53 +117,107 @@ impl TunnelManager {
             bail!("cloudflared not found");
         }
 
-        let url_arg = format!("http://localhost:{}", port);
-        let mut child = Command::new("cloudflared")
-            .args(["tunnel", "--url", &url_arg])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Failed to spawn cloudflared")?;
+        // Read named-tunnel settings from DB
+        let (tunnel_name, tunnel_hostname) = {
+            let inner = self.inner.lock().await;
+            let conn = Connection::open(&inner.db_path)?;
+            let name = read_setting(&conn, "tunnel_name")?;
+            let hostname = read_setting(&conn, "tunnel_hostname")?;
+            (name, hostname)
+        };
 
-        // Capture stderr (where cloudflared prints the URL) in a background task
+        let named_mode = tunnel_name.is_some() && tunnel_hostname.is_some();
+
+        let mut child = if named_mode {
+            let name = tunnel_name.as_deref().unwrap();
+            let home = std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
+            let config_path = format!("{}/.cloudflared/config.yml", home);
+            eprintln!("[tunnel] Starting named tunnel: {} (config: {})", name, config_path);
+            Command::new("cloudflared")
+                .args(["tunnel", "--config", &config_path, "run", name])
+                .env("HOME", &home)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Failed to spawn cloudflared named tunnel")?
+        } else {
+            let url_arg = format!("http://localhost:{}", port);
+            eprintln!("[tunnel] Starting quick tunnel on {}", url_arg);
+            Command::new("cloudflared")
+                .args(["tunnel", "--url", &url_arg])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Failed to spawn cloudflared quick tunnel")?
+        };
+
+        // For named tunnels, set the static URL immediately and notify Telegram
+        if named_mode {
+            let hostname = tunnel_hostname.as_deref().unwrap();
+            let static_url = if hostname.starts_with("https://") {
+                hostname.to_string()
+            } else {
+                format!("https://{}", hostname)
+            };
+            let mut inner = self.inner.lock().await;
+            let changed = inner.last_notified_url.as_deref() != Some(static_url.as_str());
+            inner.status.url = Some(static_url.clone());
+            inner.status.running = true;
+            inner.status.error = None;
+            if changed {
+                inner.last_notified_url = Some(static_url.clone());
+                let db_path = inner.db_path.clone();
+                drop(inner);
+                tokio::spawn(async move {
+                    if let Err(e) = notify_telegram_if_configured(&db_path, &static_url).await {
+                        eprintln!("[tunnel] Telegram notify error: {}", e);
+                    }
+                });
+            }
+        }
+
+        // Capture stderr/stdout in a background task
         let inner_arc = Arc::clone(&self.inner);
         let stderr = child.stderr.take();
         let stdout = child.stdout.take();
 
         tokio::spawn(async move {
-            // Parse URL from combined output (cloudflared uses stderr)
             let url_found2 = Arc::new(tokio::sync::Notify::new());
             let inner2 = Arc::clone(&inner_arc);
+            let is_named = named_mode;
 
             let stderr_task = tokio::spawn(async move {
                 if let Some(err) = stderr {
                     let mut lines = BufReader::new(err).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         eprintln!("[tunnel] {}", line);
-                        if let Some(url) = extract_tunnel_url(&line) {
-                            let mut s = inner2.lock().await;
-                            let changed = s.last_notified_url.as_deref() != Some(url.as_str());
-                            s.status.url = Some(url.clone());
-                            s.status.running = true;
-                            s.status.error = None;
-                            if changed {
-                                s.last_notified_url = Some(url.clone());
-                                let db_path = s.db_path.clone();
-                                drop(s);
-                                tokio::spawn(async move {
-                                    if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
-                                        eprintln!("[tunnel] Telegram notify error: {}", e);
-                                    }
-                                });
+                        // For quick tunnels, parse the URL from output
+                        if !is_named {
+                            if let Some(url) = extract_tunnel_url(&line) {
+                                let mut s = inner2.lock().await;
+                                let changed = s.last_notified_url.as_deref() != Some(url.as_str());
+                                s.status.url = Some(url.clone());
+                                s.status.running = true;
+                                s.status.error = None;
+                                if changed {
+                                    s.last_notified_url = Some(url.clone());
+                                    let db_path = s.db_path.clone();
+                                    drop(s);
+                                    tokio::spawn(async move {
+                                        if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
+                                            eprintln!("[tunnel] Telegram notify error: {}", e);
+                                        }
+                                    });
+                                }
+                                url_found2.notify_waiters();
                             }
-                            url_found2.notify_waiters();
                         }
                     }
                 }
             });
 
-            // Drain stdout too
             let stdout_task = tokio::spawn(async move {
                 if let Some(out) = stdout {
                     let mut lines = BufReader::new(out).lines();
@@ -175,10 +229,9 @@ impl TunnelManager {
 
             let _ = tokio::join!(stderr_task, stdout_task);
 
-            // Process exited — update status
+            // Process exited — update status and schedule respawn if still enabled
             let mut s = inner_arc.lock().await;
             if s.enabled {
-                // Unexpected exit — mark error and schedule respawn
                 s.status.running = false;
                 s.status.error = Some("cloudflared exited unexpectedly. Will retry in 10s.".to_string());
                 let port = s.port;
@@ -186,20 +239,51 @@ impl TunnelManager {
 
                 sleep(Duration::from_secs(10)).await;
 
-                // Check if still enabled before respawning
                 let still_enabled = inner_arc.lock().await.enabled;
                 if still_enabled {
                     eprintln!("[tunnel] Respawning cloudflared...");
-                    // Re-run spawn by rebuilding the command
-                    let url_arg2 = format!("http://localhost:{}", port);
-                    if let Ok(new_child) = Command::new("cloudflared")
-                        .args(["tunnel", "--url", &url_arg2])
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn()
-                    {
-                        inner_arc.lock().await.child = Some(new_child);
+                    // Re-read settings in case they changed
+                    let (rname, rhostname) = {
+                        let g = inner_arc.lock().await;
+                        let conn = Connection::open(&g.db_path);
+                        match conn {
+                            Ok(c) => (read_setting(&c, "tunnel_name").ok().flatten(),
+                                      read_setting(&c, "tunnel_hostname").ok().flatten()),
+                            Err(_) => (None, None),
+                        }
+                    };
+                    let respawn_named = rname.is_some() && rhostname.is_some();
+                    let new_child = if respawn_named {
+                        let home2 = std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
+                        let config_path2 = format!("{}/.cloudflared/config.yml", home2);
+                        Command::new("cloudflared")
+                            .args(["tunnel", "--config", &config_path2, "run", rname.as_deref().unwrap()])
+                            .env("HOME", &home2)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()
+                    } else {
+                        let url_arg2 = format!("http://localhost:{}", port);
+                        Command::new("cloudflared")
+                            .args(["tunnel", "--url", &url_arg2])
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()
+                    };
+                    if let Ok(c) = new_child {
+                        inner_arc.lock().await.child = Some(c);
+                        if respawn_named {
+                            let hostname = rhostname.as_deref().unwrap();
+                            let static_url = if hostname.starts_with("https://") {
+                                hostname.to_string()
+                            } else {
+                                format!("https://{}", hostname)
+                            };
+                            inner_arc.lock().await.status.url = Some(static_url);
+                            inner_arc.lock().await.status.running = true;
+                        }
                     }
                 }
             } else {

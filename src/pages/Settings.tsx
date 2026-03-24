@@ -27,6 +27,8 @@ interface SettingsDraft {
   promptDraft: string;
   telegram_bot_token: string;
   telegram_channel_id: string;
+  tunnel_name: string;
+  tunnel_hostname: string;
   initializedFromSettings: boolean;
   initializedPrompt: boolean;
 }
@@ -63,6 +65,8 @@ export const SettingsPage: React.FC = () => {
     promptDraft: '',
     telegram_bot_token: '',
     telegram_channel_id: '',
+    tunnel_name: '',
+    tunnel_hostname: '',
     initializedFromSettings: false,
     initializedPrompt: false,
   });
@@ -107,6 +111,8 @@ export const SettingsPage: React.FC = () => {
       default_model_copilot: settings.default_model_copilot,
       telegram_bot_token: settings.telegram_bot_token ?? '',
       telegram_channel_id: settings.telegram_channel_id ?? '',
+      tunnel_name: settings.tunnel_name ?? '',
+      tunnel_hostname: settings.tunnel_hostname ?? '',
       initializedFromSettings: true,
     }));
   }, [
@@ -504,6 +510,42 @@ export const SettingsPage: React.FC = () => {
             <p className="text-xs text-gray-400 dark:text-[#484F58]">
               When a Cloudflare tunnel is active, the public URL will be sent to this Telegram channel. A new message is sent only when the URL changes.
             </p>
+
+            {/* Named tunnel config */}
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-4 space-y-3">
+              <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9]">Named Tunnel (static domain)</p>
+              <p className="text-xs text-gray-400 dark:text-[#484F58]">
+                Leave blank to use a random <code className="font-mono">trycloudflare.com</code> URL. To use a static domain, set both fields below (requires <code className="font-mono">cloudflared tunnel login</code> and a DNS route).
+              </p>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Tunnel Name</label>
+                <input
+                  type="text"
+                  value={draft.tunnel_name}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, tunnel_name: e.target.value }))}
+                  onBlur={(e) => handleSave('tunnel_name', e.target.value)}
+                  placeholder="daily-planner"
+                  className={`w-full ${inputClass}`}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Tunnel Hostname</label>
+                <input
+                  type="text"
+                  value={draft.tunnel_hostname}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, tunnel_hostname: e.target.value }))}
+                  onBlur={(e) => handleSave('tunnel_hostname', e.target.value)}
+                  placeholder="planner.yourdomain.com"
+                  className={`w-full ${inputClass}`}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-4">
+              <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9] mb-3">Telegram Notification</p>
+            </div>
             <div className="space-y-1.5">
               <label className={labelClass}>Telegram Bot Token</label>
               <input

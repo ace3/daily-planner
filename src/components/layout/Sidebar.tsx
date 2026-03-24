@@ -9,10 +9,10 @@ import { useMobileStore } from '../../stores/mobileStore';
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', shortcut: '⌘1' },
   { to: '/prompt', icon: MessageSquare, label: 'Prompt', shortcut: '⌘2' },
-  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘3' },
-  { to: '/history', icon: History, label: 'History', shortcut: '⌘4' },
-  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘5' },
-  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘6' },
+  { to: '/history', icon: History, label: 'History', shortcut: '⌘3' },
+  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘4' },
+  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘5' },
+  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘6' },
   { to: '/remote-access', icon: Wifi, label: 'Remote', shortcut: '⌘7' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
