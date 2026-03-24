@@ -140,8 +140,8 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
 
     if (isWebBrowser()) {
       // Browser mode: POST to /api/prompt/run and stream SSE response
-      const token = localStorage.getItem('vegr-auth-token');
-      const base = localStorage.getItem('vegr-server-url') || window.location.origin;
+      const token = localStorage.getItem('synq-auth-token');
+      const base = localStorage.getItem('synq-server-url') || window.location.origin;
       const url = new URL('/api/prompt/run', base);
 
       fetch(url.toString(), {

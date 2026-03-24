@@ -85,7 +85,7 @@ describe('httpGet', () => {
   });
 
   it('includes Authorization header when token is stored', async () => {
-    localStorage.setItem('vegr-auth-token', 'tok123');
+    localStorage.setItem('synq-auth-token', 'tok123');
     mockFetchOk({});
     await httpGet('/api/settings');
     const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
@@ -104,8 +104,8 @@ describe('httpGet', () => {
     await expect(httpGet('/api/missing')).rejects.toThrow('HTTP 404');
   });
 
-  it('uses vegr-server-url from localStorage as base when set', async () => {
-    localStorage.setItem('vegr-server-url', 'http://192.168.1.10:7734');
+  it('uses synq-server-url from localStorage as base when set', async () => {
+    localStorage.setItem('synq-server-url', 'http://192.168.1.10:7734');
     mockFetchOk([]);
     await httpGet('/api/tasks');
     const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
@@ -229,8 +229,8 @@ describe('extractAndStoreToken', () => {
 
     extractAndStoreToken();
 
-    expect(localStorage.getItem('vegr-auth-token')).toBe('mytoken123');
-    expect(localStorage.getItem('vegr-server-url')).toBe(BASE);
+    expect(localStorage.getItem('synq-auth-token')).toBe('mytoken123');
+    expect(localStorage.getItem('synq-server-url')).toBe(BASE);
     expect(replaceState).toHaveBeenCalledOnce();
     const cleanUrl: string = replaceState.mock.calls[0][2];
     expect(cleanUrl).not.toContain('token=');
@@ -249,7 +249,7 @@ describe('extractAndStoreToken', () => {
 
     extractAndStoreToken();
 
-    expect(localStorage.getItem('vegr-auth-token')).toBeNull();
+    expect(localStorage.getItem('synq-auth-token')).toBeNull();
     expect(replaceState).not.toHaveBeenCalled();
   });
 });
@@ -260,7 +260,7 @@ describe('extractAndStoreToken', () => {
 
 describe('getSseUrl', () => {
   it('includes token as query param when token is in localStorage', () => {
-    localStorage.setItem('vegr-auth-token', 'ssetoken');
+    localStorage.setItem('synq-auth-token', 'ssetoken');
     const url = getSseUrl('/api/events');
     expect(url).toContain('token=ssetoken');
     expect(url).toContain('/api/events');
@@ -272,8 +272,8 @@ describe('getSseUrl', () => {
     expect(url).toContain('/api/events');
   });
 
-  it('uses vegr-server-url as base when set', () => {
-    localStorage.setItem('vegr-server-url', 'http://10.0.0.5:7734');
+  it('uses synq-server-url as base when set', () => {
+    localStorage.setItem('synq-server-url', 'http://10.0.0.5:7734');
     const url = getSseUrl('/api/events');
     expect(url).toContain('http://10.0.0.5:7734');
   });

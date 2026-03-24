@@ -21,7 +21,7 @@ const PRIMARY_COUNT = 4;
 
 const DesktopSidebar: React.FC = () => (
   <aside className="w-14 flex flex-col items-center py-4 gap-1 bg-[#F8FAFC] border-r border-[#E2E8F0] dark:bg-[#0F172A] dark:border-[#1E293B] shrink-0">
-    <div className="w-8 h-8 rounded-[10px] bg-[#60A5FA] dark:bg-[#7DD3FC] flex items-center justify-center mb-3 shadow-vegr-sm">
+    <div className="w-8 h-8 rounded-[10px] bg-[#60A5FA] dark:bg-[#7DD3FC] flex items-center justify-center mb-3 shadow-synq-sm">
       <Zap size={16} className="text-white dark:text-[#111827]" />
     </div>
     <div className="flex-1 flex flex-col items-center gap-0.5 w-full px-2">

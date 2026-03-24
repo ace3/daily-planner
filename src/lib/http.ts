@@ -6,11 +6,11 @@ export function isWebBrowser(): boolean {
 }
 
 function getBaseUrl(): string {
-  return localStorage.getItem('vegr-server-url') || window.location.origin;
+  return localStorage.getItem('synq-server-url') || window.location.origin;
 }
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('vegr-auth-token');
+  const token = localStorage.getItem('synq-auth-token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
@@ -88,9 +88,9 @@ export function extractAndStoreToken(): void {
   const url = new URL(window.location.href);
   const token = url.searchParams.get('token');
   if (token) {
-    localStorage.setItem('vegr-auth-token', token);
+    localStorage.setItem('synq-auth-token', token);
     // Store server URL as origin
-    localStorage.setItem('vegr-server-url', url.origin);
+    localStorage.setItem('synq-server-url', url.origin);
     // Remove token from URL without reload
     url.searchParams.delete('token');
     window.history.replaceState({}, '', url.toString());
@@ -99,7 +99,7 @@ export function extractAndStoreToken(): void {
 
 /** Build SSE URL with token query param (EventSource can't set headers) */
 export function getSseUrl(path: string): string {
-  const token = localStorage.getItem('vegr-auth-token');
+  const token = localStorage.getItem('synq-auth-token');
   const base = getBaseUrl();
   const url = new URL(path, base);
   if (token) url.searchParams.set('token', token);
