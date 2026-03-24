@@ -1,4 +1,5 @@
 use crate::db::{queries, DbConnection};
+use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -327,39 +328,124 @@ pub(crate) fn build_run_args(provider: AiProvider, prompt: &str, model: Option<&
     }
 }
 
-/// Spawn the CLI and stream its output as Tauri events.
-/// Returns immediately; streaming happens in a background task.
-#[tauri::command]
-pub async fn run_prompt(
+// ---------------------------------------------------------------------------
+// Telegram helpers (reused from tunnel.rs pattern)
+// ---------------------------------------------------------------------------
+
+fn read_setting_sync(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        rusqlite::params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .filter(|v| !v.trim().is_empty())
+}
+
+async fn send_telegram_message(bot_token: &str, chat_id: &str, text: &str) -> anyhow::Result<()> {
+    let api_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+    let resp = reqwest::Client::new()
+        .post(&api_url)
+        .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let description = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["description"].as_str().map(|s| s.to_string()))
+            .unwrap_or(body);
+        anyhow::bail!("Telegram error {}: {}", status.as_u16(), description);
+    }
+    Ok(())
+}
+
+async fn notify_telegram_job_result(
+    db_path: &std::path::Path,
+    title: &str,
+    project_name: &str,
+    success: bool,
+    exit_code: i32,
+    error_msg: Option<&str>,
+) {
+    let conn = match Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[claude] Failed to open DB for Telegram notify: {}", e);
+            return;
+        }
+    };
+    let bot_token = read_setting_sync(&conn, "telegram_bot_token");
+    let channel_id = read_setting_sync(&conn, "telegram_channel_id");
+    let (Some(token), Some(chat_id)) = (bot_token, channel_id) else {
+        return;
+    };
+    let text = if success {
+        format!(
+            "Task '{}' on project '{}' completed (exit {})",
+            title, project_name, exit_code
+        )
+    } else {
+        let err = error_msg.unwrap_or("non-zero exit code");
+        format!(
+            "Task '{}' on project '{}' failed: {}",
+            title, project_name, err
+        )
+    };
+    if let Err(e) = send_telegram_message(&token, &chat_id, &text).await {
+        eprintln!("[claude] Telegram notify error: {}", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal core: spawns CLI, streams output, updates DB job record.
+// job_id must already exist in prompt_jobs (status = "queued").
+// Opens its own DB connection from db_path to avoid holding a MutexGuard
+// across await points.
+// ---------------------------------------------------------------------------
+
+fn open_db(db_path: &std::path::Path) -> Option<Connection> {
+    Connection::open(db_path)
+        .map_err(|e| eprintln!("[claude] Failed to open DB: {}", e))
+        .ok()
+}
+
+async fn execute_prompt_job(
+    job_id: String,
     prompt: String,
     project_path: Option<String>,
     provider: Option<String>,
-    job_id: String,
+    task_title: String,
+    project_name: String,
+    db_path: std::path::PathBuf,
     app_handle: tauri::AppHandle,
-    db: State<'_, DbConnection>,
-    job_registry: State<'_, JobRegistry>,
-) -> Result<(), String> {
+    registry: Arc<Mutex<HashMap<String, u32>>>,
+) {
     let ai_provider = AiProvider::from_input(provider.as_deref());
     let cli = ai_provider.cli_binary().to_string();
+
     let selected_model = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let model_key = default_model_setting_key(provider.as_deref());
-        let configured_model = queries::get_setting(&conn, model_key)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let legacy_claude_model = if model_key == "default_model_claude" {
-            queries::get_setting(&conn, "claude_model")
+        let conn = open_db(&db_path);
+        conn.and_then(|c| {
+            let model_key = default_model_setting_key(provider.as_deref());
+            let configured_model = queries::get_setting(&c, model_key)
                 .ok()
                 .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        } else {
-            None
-        };
-        configured_model
-            .or(legacy_claude_model)
-            .unwrap_or_else(|| hardcoded_default_model(ai_provider).to_string())
+                .filter(|s| !s.is_empty());
+            let legacy_claude_model = if model_key == "default_model_claude" {
+                queries::get_setting(&c, "claude_model")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            };
+            configured_model.or(legacy_claude_model)
+        })
+        .unwrap_or_else(|| hardcoded_default_model(ai_provider).to_string())
     };
+
     let args = build_run_args(ai_provider, &prompt, Some(selected_model.as_str()));
 
     let mut cmd = tokio::process::Command::new(&cli);
@@ -372,101 +458,278 @@ pub async fn run_prompt(
     if ai_provider == AiProvider::Codex {
         cmd.stdin(Stdio::null());
     }
-
-    if let Some(path) = &project_path {
+    if let Some(ref path) = project_path {
         cmd.current_dir(path);
     }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[run_prompt] Failed to spawn '{}': {}", cli, e);
+            // Mark job failed
+            if let Some(conn) = open_db(&db_path) {
+                let _ = queries::update_prompt_job_status(
+                    &conn,
+                    &job_id,
+                    "failed",
+                    Some(-1),
+                    Some(&format!("Failed to spawn '{}': {}", cli, e)),
+                );
+            }
+            let _ = app_handle.emit(
+                "prompt_job_done",
+                PromptJobDonePayload { job_id: job_id.clone(), success: false, exit_code: -1 },
+            );
+            notify_telegram_job_result(
+                &db_path,
+                &task_title,
+                &project_name,
+                false,
+                -1,
+                Some(&format!("Failed to spawn '{}': {}", cli, e)),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Register PID for cancellation
+    if let Some(pid) = child.id() {
+        registry.lock().unwrap().insert(job_id.clone(), pid);
+    }
+
+    // Mark job as running
+    if let Some(conn) = open_db(&db_path) {
+        let _ = queries::update_prompt_job_status(&conn, &job_id, "running", None, None);
+    }
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Stream stdout lines and collect output
+    let app_out = app_handle.clone();
+    let jid_out = job_id.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut collected = String::new();
+        if let Some(out) = stdout {
+            let mut lines = BufReader::new(out).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let clean = strip_ansi(&line);
+                if !clean.trim().is_empty() {
+                    let _ = app_out.emit(
+                        "prompt_job_log",
+                        PromptJobLogPayload { job_id: jid_out.clone(), line: clean.clone() },
+                    );
+                }
+                collected.push_str(&line);
+                collected.push('\n');
+            }
+        }
+        collected
+    });
+
+    // Stream stderr lines and collect output
+    let app_err = app_handle.clone();
+    let jid_err = job_id.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut collected = String::new();
+        if let Some(err) = stderr {
+            let mut lines = BufReader::new(err).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let clean = strip_ansi(&line);
+                if !clean.trim().is_empty() {
+                    let _ = app_err.emit(
+                        "prompt_job_log",
+                        PromptJobLogPayload { job_id: jid_err.clone(), line: clean.clone() },
+                    );
+                }
+                collected.push_str(&line);
+                collected.push('\n');
+            }
+        }
+        collected
+    });
+
+    let (stdout_result, stderr_result) = tokio::join!(stdout_task, stderr_task);
+    let all_output = format!(
+        "{}{}",
+        stdout_result.unwrap_or_default(),
+        stderr_result.unwrap_or_default()
+    );
+
+    // Deregister PID
+    registry.lock().unwrap().remove(&job_id);
+
+    let (success, exit_code) = match child.wait().await {
+        Ok(status) => (status.success(), status.code().unwrap_or(-1)),
+        Err(e) => {
+            eprintln!("[run_prompt] wait() error: {}", e);
+            (false, -1)
+        }
+    };
+
+    // Save output and update job status in DB
+    if let Some(conn) = open_db(&db_path) {
+        let _ = queries::save_prompt_job_output(&conn, &job_id, &all_output);
+        let status = if success { "completed" } else { "failed" };
+        let error_msg = if success {
+            None
+        } else {
+            Some(format!("Exit code {}", exit_code))
+        };
+        let _ = queries::update_prompt_job_status(
+            &conn,
+            &job_id,
+            status,
+            Some(exit_code as i64),
+            error_msg.as_deref(),
+        );
+    }
+
+    let _ = app_handle.emit(
+        "prompt_job_done",
+        PromptJobDonePayload { job_id: job_id.clone(), success, exit_code },
+    );
+
+    // Send Telegram notification
+    let error_detail = if success {
+        None
+    } else {
+        Some(format!("exit code {}", exit_code))
+    };
+    notify_telegram_job_result(
+        &db_path,
+        &task_title,
+        &project_name,
+        success,
+        exit_code,
+        error_detail.as_deref(),
+    )
+    .await;
+}
+
+/// Spawn the CLI and stream its output as Tauri events.
+/// Returns immediately; streaming happens in a background task.
+/// If the job_id corresponds to an existing prompt_job record, updates its status.
+#[tauri::command]
+pub async fn run_prompt(
+    prompt: String,
+    project_path: Option<String>,
+    provider: Option<String>,
+    job_id: String,
+    app_handle: tauri::AppHandle,
+    db: State<'_, DbConnection>,
+    job_registry: State<'_, JobRegistry>,
+) -> Result<(), String> {
+    // Resolve task/project metadata for Telegram notifications
+    let (task_title, project_name, db_path) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        // Try to get task title from the job record
+        let (title, proj_name) = conn
+            .query_row(
+                "SELECT t.title, COALESCE(p.name, '') FROM prompt_jobs j
+                 LEFT JOIN tasks t ON t.id = j.task_id
+                 LEFT JOIN projects p ON p.id = j.project_id
+                 WHERE j.id = ?1",
+                rusqlite::params![job_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap_or_else(|_| (job_id.clone(), String::new()));
+        let path = conn.path().map(std::path::PathBuf::from).unwrap_or_default();
+        (title, proj_name, path)
+    };
 
     let registry = Arc::clone(&job_registry.0);
 
     tokio::spawn(async move {
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[run_prompt] Failed to spawn '{}': {}", cli, e);
-                let _ = app_handle.emit(
-                    "prompt_job_done",
-                    PromptJobDonePayload {
-                        job_id,
-                        success: false,
-                        exit_code: -1,
-                    },
-                );
-                return;
-            }
-        };
-
-        // Register PID for cancellation
-        if let Some(pid) = child.id() {
-            registry.lock().unwrap().insert(job_id.clone(), pid);
-        }
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        // Stream stdout lines
-        let app_out = app_handle.clone();
-        let jid_out = job_id.clone();
-        let stdout_task = tokio::spawn(async move {
-            if let Some(out) = stdout {
-                let mut lines = BufReader::new(out).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let clean = strip_ansi(&line);
-                    if !clean.trim().is_empty() {
-                        let _ = app_out.emit(
-                            "prompt_job_log",
-                            PromptJobLogPayload {
-                                job_id: jid_out.clone(),
-                                line: clean,
-                            },
-                        );
-                    }
-                }
-            }
-        });
-
-        // Stream stderr lines (some CLIs write progress to stderr)
-        let app_err = app_handle.clone();
-        let jid_err = job_id.clone();
-        let stderr_task = tokio::spawn(async move {
-            if let Some(err) = stderr {
-                let mut lines = BufReader::new(err).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let clean = strip_ansi(&line);
-                    if !clean.trim().is_empty() {
-                        let _ = app_err.emit(
-                            "prompt_job_log",
-                            PromptJobLogPayload {
-                                job_id: jid_err.clone(),
-                                line: clean,
-                            },
-                        );
-                    }
-                }
-            }
-        });
-
-        let _ = tokio::join!(stdout_task, stderr_task);
-
-        // Deregister PID before waiting
-        registry.lock().unwrap().remove(&job_id);
-
-        let (success, exit_code) = match child.wait().await {
-            Ok(status) => (status.success(), status.code().unwrap_or(-1)),
-            Err(_) => (false, -1),
-        };
-
-        let _ = app_handle.emit(
-            "prompt_job_done",
-            PromptJobDonePayload {
-                job_id,
-                success,
-                exit_code,
-            },
-        );
+        execute_prompt_job(
+            job_id,
+            prompt,
+            project_path,
+            provider,
+            task_title,
+            project_name,
+            db_path,
+            app_handle,
+            registry,
+        )
+        .await;
     });
 
     Ok(())
+}
+
+/// Create a prompt_job record and immediately trigger CLI execution.
+/// Returns the job_id so the frontend can subscribe to events.
+#[tauri::command]
+pub async fn create_and_run_job(
+    task_id: String,
+    prompt: String,
+    provider: Option<String>,
+    project_path: Option<String>,
+    app_handle: tauri::AppHandle,
+    db: State<'_, DbConnection>,
+    job_registry: State<'_, JobRegistry>,
+) -> Result<String, String> {
+    // Resolve project_id and names for the task
+    let (job_id, task_title, project_name, db_path) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+        // Get task details
+        let (title, proj_id): (String, Option<String>) = conn
+            .query_row(
+                "SELECT title, project_id FROM tasks WHERE id = ?1",
+                rusqlite::params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| format!("Task not found: {}", e))?;
+
+        let proj_name: String = proj_id
+            .as_deref()
+            .and_then(|pid| {
+                conn.query_row(
+                    "SELECT name FROM projects WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+
+        let id = queries::create_prompt_job(
+            &conn,
+            &task_id,
+            proj_id.as_deref(),
+            provider.as_deref().unwrap_or("claude"),
+            &prompt,
+            project_path.as_deref(),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let path = conn.path().map(std::path::PathBuf::from).unwrap_or_default();
+        (id, title, proj_name, path)
+    };
+
+    let registry = Arc::clone(&job_registry.0);
+    let jid_clone = job_id.clone();
+
+    tokio::spawn(async move {
+        execute_prompt_job(
+            jid_clone,
+            prompt,
+            project_path,
+            provider,
+            task_title,
+            project_name,
+            db_path,
+            app_handle,
+            registry,
+        )
+        .await;
+    });
+
+    Ok(job_id)
 }
 
 /// Cancel a running prompt job by sending SIGTERM to its child process.

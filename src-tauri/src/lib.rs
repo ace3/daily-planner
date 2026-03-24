@@ -1,7 +1,6 @@
 mod commands;
 mod db;
 mod http_server;
-mod scheduler;
 mod tray;
 mod tunnel;
 
@@ -47,31 +46,6 @@ pub fn run() {
                 }
             }
 
-            // Load settings for scheduler
-            let (tz_offset, kickstart, planning_end, session2_start, warn_min, work_days) = {
-                let conn = db.0.lock().expect("DB lock");
-                let tz: i64 = db::queries::get_setting(&conn, "timezone_offset")
-                    .unwrap_or_else(|_| "7".to_string())
-                    .parse()
-                    .unwrap_or(7);
-                let k = db::queries::get_setting(&conn, "session1_kickstart")
-                    .unwrap_or_else(|_| "09:00".to_string());
-                let p = db::queries::get_setting(&conn, "planning_end")
-                    .unwrap_or_else(|_| "11:00".to_string());
-                let s2 = db::queries::get_setting(&conn, "session2_start")
-                    .unwrap_or_else(|_| "14:00".to_string());
-                let w: i64 = db::queries::get_setting(&conn, "warn_before_min")
-                    .unwrap_or_else(|_| "15".to_string())
-                    .parse()
-                    .unwrap_or(15);
-                let wd: Vec<i64> = serde_json::from_str(
-                    &db::queries::get_setting(&conn, "work_days")
-                        .unwrap_or_else(|_| "[1,2,3,4,5]".to_string()),
-                )
-                .unwrap_or_else(|_| vec![1, 2, 3, 4, 5]);
-                (tz, k, p, s2, w, wd)
-            };
-
             app.manage(db);
 
             // Job registry shared by Tauri commands AND the HTTP server
@@ -116,33 +90,6 @@ pub fn run() {
             // Setup tray
             tray::setup_tray(app.handle())?;
 
-            // Setup scheduler
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                match scheduler::setup_scheduler(
-                    app_handle,
-                    tz_offset,
-                    &kickstart,
-                    &planning_end,
-                    &session2_start,
-                    warn_min,
-                    &work_days,
-                )
-                .await
-                {
-                    Ok(sched) => {
-                        if let Err(e) = sched.start().await {
-                            eprintln!("Scheduler start error: {}", e);
-                        }
-                        // Keep scheduler alive
-                        loop {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-                        }
-                    }
-                    Err(e) => eprintln!("Scheduler setup error: {}", e),
-                }
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -172,6 +119,7 @@ pub fn run() {
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
             commands::claude::run_prompt,
+            commands::claude::create_and_run_job,
             commands::claude::cancel_prompt_run,
             commands::claude::is_git_worktree,
             commands::claude::check_cli_availability,

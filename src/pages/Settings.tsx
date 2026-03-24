@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell, Info, X } from 'lucide-react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell, Info, X, Terminal } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useReportStore } from '../stores/reportStore';
+import { useProviderStore } from '../stores/providerStore';
 import {
   backupData, restoreData, resetAppData, testTelegramNotification,
   triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
@@ -32,6 +33,7 @@ export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
   const { fetchTasks } = useTaskStore();
   const { fetchRecentReports } = useReportStore();
+  const { claudeAvailable, opencodeAvailable, codexAvailable, copilotAvailable, checkAvailability } = useProviderStore();
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
@@ -80,6 +82,7 @@ export const SettingsPage: React.FC = () => {
     fetchSettings();
     fetchGlobalPrompt();
     loadBackupData();
+    checkAvailability();
   }, []);
 
   useEffect(() => {
@@ -304,6 +307,35 @@ export const SettingsPage: React.FC = () => {
           <SettingsIcon size={16} className="text-gray-500 dark:text-[#8B949E]" />
           <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Settings</h1>
         </div>
+
+        {/* CLI Tools Status */}
+        {(() => {
+          const tools = [
+            { name: 'claude', label: 'Claude CLI', available: claudeAvailable },
+            { name: 'codex', label: 'OpenAI Codex CLI', available: codexAvailable },
+            { name: 'opencode', label: 'OpenCode', available: opencodeAvailable },
+            { name: 'copilot', label: 'GitHub Copilot CLI', available: copilotAvailable },
+          ];
+          return (
+            <section className={sectionClass}>
+              <div className={sectionHeaderClass}>
+                <Terminal size={14} className="text-gray-500 dark:text-[#8B949E]" />
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">CLI Tools</h2>
+              </div>
+              <div className="px-4 py-2 divide-y divide-gray-100 dark:divide-[#21262D]">
+                {tools.map((tool) => (
+                  <div key={tool.name} className="flex items-center justify-between py-2.5">
+                    <span className="text-sm text-gray-700 dark:text-[#E6EDF3]">{tool.label}</span>
+                    <span className={`flex items-center gap-1.5 text-xs font-medium ${tool.available ? 'text-green-400' : 'text-gray-500 dark:text-[#484F58]'}`}>
+                      <span className={`w-2 h-2 rounded-full ${tool.available ? 'bg-green-500' : 'bg-gray-400 dark:bg-[#484F58]'}`} />
+                      {tool.available ? 'Installed' : 'Not found'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })()}
 
         {/* Timezone & Schedule */}
         <section className={sectionClass}>

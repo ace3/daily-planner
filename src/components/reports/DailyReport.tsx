@@ -71,18 +71,6 @@ export const DailyReportCard: React.FC<DailyReportProps> = ({ report }) => {
         ))}
       </div>
 
-      {/* Session split */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="p-2 rounded-lg bg-[#0F1117]">
-          <div className="text-[#484F58] mb-1">Session 1 focus</div>
-          <div className="text-[#E6EDF3] font-medium">{formatDuration(report.session1_focus)}</div>
-        </div>
-        <div className="p-2 rounded-lg bg-[#0F1117]">
-          <div className="text-[#484F58] mb-1">Session 2 focus</div>
-          <div className="text-[#E6EDF3] font-medium">{formatDuration(report.session2_focus)}</div>
-        </div>
-      </div>
-
       {report.ai_reflection && (
         <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
           <div className="text-xs font-medium text-blue-400 mb-1.5">AI Reflection</div>
