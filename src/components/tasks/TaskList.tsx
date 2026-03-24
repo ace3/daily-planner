@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TaskItem } from './TaskItem';
 import { TaskForm } from './TaskForm';
+import { TaskBrainstormModal } from './TaskBrainstormModal';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMobileStore } from '../../stores/mobileStore';
@@ -11,6 +12,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { addDays, format } from 'date-fns';
 import { toast } from '../ui/Toast';
 import { FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
+import type { BrainstormTaskSuggestion } from '../../types/task';
 
 interface TaskListProps {
   onTaskSelect?: (task: Task) => void;
@@ -18,9 +20,11 @@ interface TaskListProps {
 
 export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   const [completedOpen, setCompletedOpen] = useState(false);
+  const [brainstormOpen, setBrainstormOpen] = useState(false);
   const { mobileMode: m } = useMobileStore();
   const {
     tasks,
+    fetchTasks,
     createTask,
     updateTaskStatus,
     deleteTask,
@@ -36,6 +40,35 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   const handleCreate = async (input: Parameters<typeof createTask>[0]) => {
     await createTask(input);
     toast.success('Task added');
+  };
+
+  const handleCreateBrainstormTasks = async (
+    selectedTasks: BrainstormTaskSuggestion[],
+    projectId: string | null,
+    attachmentSummary: string,
+  ) => {
+    for (const item of selectedTasks) {
+      const title = item.title.trim();
+      if (!title) continue;
+      const id = await createTask({
+        title,
+        priority: item.priority,
+        project_id: projectId ?? undefined,
+      });
+      const checklist = (item.checklist || []).map((entry) => `- [ ] ${entry}`).join('\n');
+      const notes = [
+        item.description?.trim() || '',
+        checklist,
+        attachmentSummary ? `\nImage context:\n${attachmentSummary}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+      if (notes) {
+        await updateTask({ id, notes });
+      }
+    }
+    await fetchTasks();
   };
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -142,6 +175,23 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
       </div>
 
       <TaskForm onSubmit={handleCreate} compact />
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setBrainstormOpen(true)}
+          className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+        >
+          Generate tasks from notes
+        </button>
+      </div>
+
+      <TaskBrainstormModal
+        open={brainstormOpen}
+        onClose={() => setBrainstormOpen(false)}
+        provider={settings?.active_ai_provider || settings?.ai_provider || 'claude'}
+        projects={projects}
+        onCreateTasks={handleCreateBrainstormTasks}
+      />
 
       <div className={m ? 'space-y-3' : 'space-y-1.5'}>
         {/* Project groups */}

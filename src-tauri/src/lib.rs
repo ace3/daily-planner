@@ -20,6 +20,17 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                let display = std::env::var("DISPLAY").ok();
+                let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+                if display.as_deref().unwrap_or("").is_empty()
+                    && wayland.as_deref().unwrap_or("").is_empty()
+                {
+                    eprintln!("[runtime] Linux headless mode detected (no DISPLAY/WAYLAND_DISPLAY). Remote web access is expected.");
+                }
+            }
+
             // Init DB
             let (db, db_path) = init_db(app.handle())?;
             {
@@ -108,6 +119,7 @@ pub fn run() {
             commands::tasks::carry_task_forward,
             commands::tasks::reorder_tasks,
             commands::tasks::save_task_prompt,
+            commands::tasks::brainstorm_tasks_from_notes,
             commands::tasks::run_task_as_worktree,
             commands::tasks::cleanup_task_worktree,
             commands::tasks::get_prompt_templates,

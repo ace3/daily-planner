@@ -3,6 +3,8 @@ import type {
   CreateTaskInput,
   UpdateTaskInput,
   PromptTemplate,
+  BrainstormTaskSuggestion,
+  TaskAttachmentInput,
   RunTaskWorktreeResult,
   CleanupTaskWorktreeResult,
   CreatePromptWorktreeResult,
@@ -80,6 +82,26 @@ export const savePromptResult = (id: string, rawPrompt: string, improvedPrompt: 
         improved_prompt: improvedPrompt,
       })
     : tauriInvoke<void>('save_prompt_result', { id, rawPrompt, improvedPrompt });
+
+export const brainstormTasksFromNotes = (
+  notes: string,
+  attachments: TaskAttachmentInput[] = [],
+  provider?: string,
+  projectPath?: string,
+): Promise<BrainstormTaskSuggestion[]> =>
+  isWebBrowser()
+    ? httpPost<BrainstormTaskSuggestion[]>('/api/tasks/brainstorm', {
+        notes,
+        attachments,
+        provider,
+        project_path: projectPath,
+      })
+    : tauriInvoke<BrainstormTaskSuggestion[]>('brainstorm_tasks_from_notes', {
+        notes,
+        attachments,
+        provider,
+        projectPath,
+      });
 
 // Desktop-only (git worktrees not available in browser)
 export const runTaskAsWorktree = (taskId: string): Promise<RunTaskWorktreeResult> =>

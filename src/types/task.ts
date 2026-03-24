@@ -95,3 +95,19 @@ export interface CleanupWorktreeResult {
   success: boolean;
   message: string;
 }
+
+export interface TaskAttachmentInput {
+  source: 'clipboard' | 'path';
+  path?: string;
+  mime?: string;
+  size?: number;
+  data_base64?: string;
+}
+
+export interface BrainstormTaskSuggestion {
+  title: string;
+  description: string;
+  checklist: string[];
+  priority: TaskPriority;
+  project?: string | null;
+}

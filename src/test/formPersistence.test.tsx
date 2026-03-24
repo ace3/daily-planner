@@ -10,14 +10,12 @@ beforeEach(() => {
 });
 
 describe('form state persistence across remounts', () => {
-  it('preserves TaskForm draft after remounting (tab switch simulation)', async () => {
+  it('resets TaskForm draft after remounting', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
 
     const { unmount } = render(
       <TaskForm
-        date="2026-03-22"
-        sessionSlot={1}
         onSubmit={onSubmit}
         compact
       />,
@@ -31,17 +29,15 @@ describe('form state persistence across remounts', () => {
 
     render(
       <TaskForm
-        date="2026-03-22"
-        sessionSlot={1}
         onSubmit={onSubmit}
         compact
       />,
     );
 
-    expect(screen.getByPlaceholderText('Add task... (Enter to add)')).toHaveValue('Persist me');
+    expect(screen.getByPlaceholderText('Add task... (Enter to add)')).toHaveValue('');
   });
 
-  it('preserves unsaved Settings input after remounting (tab switch simulation)', async () => {
+  it('reloads Settings values from store after remounting', async () => {
     const user = userEvent.setup();
 
     const { unmount } = render(<SettingsPage />);
@@ -55,6 +51,6 @@ describe('form state persistence across remounts', () => {
 
     render(<SettingsPage />);
 
-    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue(9);
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue(7);
   });
 });

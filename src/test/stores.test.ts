@@ -185,29 +185,26 @@ describe('taskStore operations', () => {
     expect(store.loading).toBe(false);
   });
 
-  it('fetchTasks calls invoke with correct params', async () => {
+  it('fetchTasks calls get_tasks', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValueOnce(0).mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce([]);
     const { useTaskStore } = await import('../stores/taskStore');
-    await useTaskStore.getState().fetchTasks('2026-03-22');
-    expect(mockInvoke).toHaveBeenCalledWith('rollover_incomplete_tasks', { date: '2026-03-22' });
-    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', { date: '2026-03-22' });
+    await useTaskStore.getState().fetchTasks();
+    expect(mockInvoke).toHaveBeenCalledWith('get_tasks', {});
   });
 
-  it('getTasksBySlot filters correctly', async () => {
+  it('updateTaskStatus updates local task status optimistically', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockResolvedValue(undefined);
     const { useTaskStore } = await import('../stores/taskStore');
-    // Set tasks directly on the store
     useTaskStore.setState({
       tasks: [
-        { id: '1', session_slot: 1, status: 'pending', title: 'Task 1' } as any,
-        { id: '2', session_slot: 2, status: 'pending', title: 'Task 2' } as any,
-        { id: '3', session_slot: 1, status: 'done', title: 'Task 3' } as any,
+        { id: '1', status: 'pending', title: 'Task 1' } as any,
       ],
     });
-    const slot1 = useTaskStore.getState().getTasksBySlot(1);
-    expect(slot1).toHaveLength(2);
-    const slot2 = useTaskStore.getState().getTasksBySlot(2);
-    expect(slot2).toHaveLength(1);
+    await useTaskStore.getState().updateTaskStatus('1', 'done');
+    expect(useTaskStore.getState().tasks[0].status).toBe('done');
+    expect(mockInvoke).toHaveBeenCalledWith('update_task_status', { id: '1', status: 'done' });
   });
 });
 
@@ -273,21 +270,29 @@ describe('providerStore', () => {
 
   it('checkAvailability updates claudeAvailable/opencodeAvailable from invoke', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ claude_available: true, opencode_available: false });
+    mockInvoke
+      .mockResolvedValueOnce({ claude_available: true, opencode_available: false })
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValueOnce([{ id: 'codex', name: 'Codex', available: true }]);
     const { useProviderStore } = await import('../stores/providerStore');
     await useProviderStore.getState().checkAvailability();
     expect(useProviderStore.getState().claudeAvailable).toBe(true);
     expect(useProviderStore.getState().opencodeAvailable).toBe(false);
+    expect(useProviderStore.getState().codexAvailable).toBe(true);
     expect(mockInvoke).toHaveBeenCalledWith('check_cli_availability', {});
   });
 
   it('checkAvailability handles both CLIs available', async () => {
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue({ claude_available: true, opencode_available: true });
+    mockInvoke
+      .mockResolvedValueOnce({ claude_available: true, opencode_available: true })
+      .mockResolvedValueOnce({ available: true })
+      .mockResolvedValueOnce([{ id: 'codex', name: 'Codex', available: false }]);
     const { useProviderStore } = await import('../stores/providerStore');
     await useProviderStore.getState().checkAvailability();
     expect(useProviderStore.getState().claudeAvailable).toBe(true);
     expect(useProviderStore.getState().opencodeAvailable).toBe(true);
+    expect(useProviderStore.getState().copilotAvailable).toBe(true);
   });
 
   it('checkAvailability sets both false on invoke error', async () => {

@@ -75,12 +75,11 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('getTasks (browser mode)', () => {
-  it('GETs /api/tasks with date param', async () => {
+  it('GETs /api/tasks', async () => {
     mockFetchJson([]);
-    const result = await getTasks('2026-03-23');
+    const result = await getTasks();
     const [url, opts] = lastFetchCall();
     expect(url).toContain('/api/tasks');
-    expect(url).toContain('date=2026-03-23');
     expect((opts.headers as Record<string, string>)['Content-Type']).toBe('application/json');
     expect(result).toEqual([]);
   });

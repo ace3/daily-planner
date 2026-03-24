@@ -44,6 +44,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::commands::claude::{build_run_args, strip_ansi, AiProvider};
+use crate::commands::tasks::{
+    build_brainstorm_prompt, validate_and_sanitize_suggestions, validate_attachments,
+    BrainstormTaskSuggestion, TaskAttachmentInput,
+};
 use crate::db::queries;
 
 // ---------------------------------------------------------------------------
@@ -160,7 +164,17 @@ fn check_auth_with_query(
 // ---------------------------------------------------------------------------
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true }))
+    #[cfg(target_os = "linux")]
+    let headless = std::env::var("DISPLAY").ok().map(|v| !v.trim().is_empty()).unwrap_or(false) == false
+        && std::env::var("WAYLAND_DISPLAY").ok().map(|v| !v.trim().is_empty()).unwrap_or(false) == false;
+    #[cfg(not(target_os = "linux"))]
+    let headless = false;
+
+    Json(serde_json::json!({
+        "ok": true,
+        "platform": std::env::consts::OS,
+        "headless": headless
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1130,85 @@ struct RunBody {
     job_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct BrainstormBody {
+    notes: String,
+    attachments: Option<Vec<TaskAttachmentInput>>,
+    provider: Option<String>,
+    project_path: Option<String>,
+}
+
+async fn brainstorm_tasks(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<BrainstormBody>,
+) -> Result<Json<Vec<BrainstormTaskSuggestion>>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let trimmed_notes = body.notes.trim();
+    if trimmed_notes.is_empty() {
+        return Err(bad_request("notes are required"));
+    }
+
+    let attachments = body.attachments.unwrap_or_default();
+    let attachment_lines = validate_attachments(&attachments)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e))?;
+    let prompt = build_brainstorm_prompt(trimmed_notes, &attachment_lines);
+
+    let selected_model = {
+        let conn = s.db.lock().map_err(internal)?;
+        let model_key = crate::commands::claude::default_model_setting_key(body.provider.as_deref());
+        let model = queries::get_setting(&*conn, model_key)
+            .ok()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty());
+        let legacy = if model_key == "default_model_claude" {
+            queries::get_setting(&*conn, "claude_model")
+                .ok()
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+        } else {
+            None
+        };
+        model.or(legacy)
+    };
+
+    let ai_provider = AiProvider::from_input(body.provider.as_deref());
+    let model = selected_model
+        .unwrap_or_else(|| ai_provider.hardcoded_default_model().to_string());
+    let args = build_run_args(ai_provider, &prompt, Some(&model));
+
+    let mut cmd = tokio::process::Command::new(ai_provider.cli_binary());
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.env("NO_COLOR", "1");
+    cmd.stdin(Stdio::null());
+    if let Some(path) = body.project_path.as_deref().filter(|p| !p.trim().is_empty()) {
+        cmd.current_dir(path);
+    }
+
+    let output = cmd.output().await.map_err(|e| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to run AI brainstorm command: {}", e),
+        )
+    })?;
+    if !output.status.success() {
+        return Err(ApiError(
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "AI brainstorm failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let tasks = validate_and_sanitize_suggestions(&stdout)
+        .map_err(|e| ApiError(StatusCode::BAD_GATEWAY, e))?;
+
+    Ok(Json(tasks))
+}
+
 async fn prompt_run(
     State(s): State<ServerState>,
     headers: HeaderMap,
@@ -1614,6 +1707,7 @@ pub async fn start(
         .route("/api/prompt/templates/:id", patch(update_prompt_template).delete(delete_prompt_template_handler))
         .route("/api/prompt/improve", post(prompt_improve))
         .route("/api/prompt/run", post(prompt_run))
+        .route("/api/tasks/brainstorm", post(brainstorm_tasks))
         .layer(cors)
         .with_state(state);
 
