@@ -48,6 +48,10 @@ const defaultSettings: AppSettings = {
   theme: 'dark',
   work_days: [1, 2, 3, 4, 5],
   show_in_tray: true,
+  telegram_bot_token: null,
+  telegram_channel_id: null,
+  tunnel_name: null,
+  tunnel_hostname: null,
 };
 
 const providerToLegacyAiProvider: Record<AiProviderId, AppSettings['ai_provider']> = {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell } from 'lucide-react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell, Info, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -42,6 +42,7 @@ export const SettingsPage: React.FC = () => {
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
+  const [showTunnelGuide, setShowTunnelGuide] = useState(false);
 
   // Auto Backup state
   const [backupSessions, setBackupSessions] = useState<BackupSessionInfo[]>([]);
@@ -513,7 +514,16 @@ export const SettingsPage: React.FC = () => {
 
             {/* Named tunnel config */}
             <div className="border-t border-gray-100 dark:border-[#21262D] pt-4 space-y-3">
-              <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9]">Named Tunnel (static domain)</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9]">Named Tunnel (static domain)</p>
+                <button
+                  onClick={() => setShowTunnelGuide(true)}
+                  className="text-gray-400 hover:text-blue-500 dark:text-[#484F58] dark:hover:text-[#7DD3FC] transition-colors cursor-pointer"
+                  title="Setup guide"
+                >
+                  <Info size={13} />
+                </button>
+              </div>
               <p className="text-xs text-gray-400 dark:text-[#484F58]">
                 Leave blank to use a random <code className="font-mono">trycloudflare.com</code> URL. To use a static domain, set both fields below (requires <code className="font-mono">cloudflared tunnel login</code> and a DNS route).
               </p>
@@ -582,6 +592,107 @@ export const SettingsPage: React.FC = () => {
               </Button>
             </div>
           </div>
+
+          {/* Tunnel Setup Guide Modal */}
+          {showTunnelGuide && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              onClick={(e) => { if (e.target === e.currentTarget) setShowTunnelGuide(false); }}
+            >
+              <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-[#30363D] dark:bg-[#161B22] flex flex-col max-h-[90vh]">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-[#30363D] shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Info size={14} className="text-blue-500 dark:text-[#7DD3FC]" />
+                    <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Cloudflare Named Tunnel Setup</h2>
+                  </div>
+                  <button onClick={() => setShowTunnelGuide(false)} className="text-gray-400 hover:text-gray-600 dark:text-[#484F58] dark:hover:text-[#8B949E] cursor-pointer transition-colors">
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="overflow-y-auto p-4 space-y-5 text-xs text-gray-600 dark:text-[#8B949E]">
+
+                  <p>A <strong className="text-gray-800 dark:text-[#C9D1D9]">named tunnel</strong> gives you a permanent static URL (e.g. <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">planner.yourdomain.com</code>) instead of a random one each time.</p>
+
+                  {/* Prerequisites */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Prerequisites</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li>A Cloudflare account (free)</li>
+                      <li>A domain added to Cloudflare (nameservers pointing to CF)</li>
+                      <li><code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">cloudflared</code> installed — <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">brew install cloudflared</code></li>
+                    </ul>
+                  </div>
+
+                  {/* Step 1 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 1 — Authenticate</p>
+                    <p>Opens a browser to log in to your Cloudflare account and saves credentials to <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/cert.pem</code>.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel login</pre>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 2 — Create the tunnel</p>
+                    <p>Creates a named tunnel and saves a credentials JSON to <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/</code>. Note the tunnel UUID printed.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel create daily-planner</pre>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 3 — Create a DNS record</p>
+                    <p>Routes your subdomain to the tunnel. The CNAME is created automatically in Cloudflare DNS.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel route dns daily-planner planner.yourdomain.com</pre>
+                  </div>
+
+                  {/* Step 4 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 4 — Create config file</p>
+                    <p>Create <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/config.yml</code> with the following content (replace the UUID and hostname):</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto leading-relaxed">{`tunnel: daily-planner
+credentials-file: /Users/YOUR_USER/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: planner.yourdomain.com
+    service: http://localhost:7734
+  - service: http_status:404`}</pre>
+                    <p>Find your UUID by running: <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">cloudflared tunnel list</code></p>
+                  </div>
+
+                  {/* Step 5 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 5 — Fill in the settings</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li><strong className="text-gray-700 dark:text-[#C9D1D9]">Tunnel Name:</strong> <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">daily-planner</code></li>
+                      <li><strong className="text-gray-700 dark:text-[#C9D1D9]">Tunnel Hostname:</strong> <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">planner.yourdomain.com</code></li>
+                    </ul>
+                  </div>
+
+                  {/* Step 6 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 6 — Start the tunnel</p>
+                    <p>Go to the <strong className="text-gray-700 dark:text-[#C9D1D9]">Remote Access</strong> page and click <strong className="text-gray-700 dark:text-[#C9D1D9]">Start Tunnel</strong>. The URL will be permanent across restarts.</p>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400">
+                    <strong>Tip:</strong> Leave both fields blank to use a random <code className="font-mono">trycloudflare.com</code> URL without any setup.
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex justify-end px-4 py-3 border-t border-gray-100 dark:border-[#21262D] shrink-0">
+                  <button
+                    onClick={() => setShowTunnelGuide(false)}
+                    className="text-xs px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors cursor-pointer"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Global AI Prompt */}
