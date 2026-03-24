@@ -99,7 +99,7 @@ export const TemplatesPage: React.FC = () => {
   const showForm = isCreating || editingId !== null;
 
   return (
-    <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-4">
+    <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-4 min-h-0" data-scrollable>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -116,9 +116,9 @@ export const TemplatesPage: React.FC = () => {
         </Button>
       </div>
 
-      <div className="flex-1 lg:overflow-hidden grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
         {/* Template list */}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 min-h-0 lg:overflow-y-auto lg:pr-1">
           {/* Search */}
           <Input
             prefix={<FileText size={13} />}
