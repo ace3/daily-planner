@@ -137,8 +137,18 @@ fn check_auth_inner(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string());
-    // Check query param
-    let provided = header_token.as_deref().or(query_token);
+    // Check query param, then cookie as fallback
+    let cookie_token = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split("; ").find_map(|c| {
+                c.strip_prefix("synq-token=").map(|v| v.to_string())
+            })
+        });
+    let provided = header_token.as_deref()
+        .or(query_token)
+        .or(cookie_token.as_deref());
     if provided == Some(token.as_str()) {
         Ok(())
     } else {

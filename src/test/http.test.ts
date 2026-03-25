@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { isWebBrowser, httpGet, httpPost, httpPatch, httpPut, httpDelete, extractAndStoreToken, getSseUrl } from '../lib/http';
+import { isWebBrowser, httpGet, httpPost, httpPatch, httpPut, httpDelete, extractAndStoreToken, getSseUrl, getStoredToken, clearStoredToken } from '../lib/http';
 
 // setup.ts sets window.__TAURI_INTERNALS__ = {} so isWebBrowser() returns false by default.
 
@@ -32,6 +32,7 @@ function mockFetchError(status: number, body = 'Bad Request') {
 
 beforeEach(() => {
   localStorage.clear();
+  document.cookie = 'synq-token=; Max-Age=0; path=/';
   // Set a known origin so URL construction is deterministic
   Object.defineProperty(window, 'location', {
     value: { origin: BASE, href: BASE + '/', hostname: 'localhost', port: '', search: '', pathname: '/' },
@@ -42,6 +43,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  document.cookie = 'synq-token=; Max-Age=0; path=/';
 });
 
 // ---------------------------------------------------------------------------
@@ -276,5 +278,138 @@ describe('getSseUrl', () => {
     localStorage.setItem('synq-server-url', 'http://10.0.0.5:7734');
     const url = getSseUrl('/api/events');
     expect(url).toContain('http://10.0.0.5:7734');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getStoredToken — localStorage → cookie fallback
+// ---------------------------------------------------------------------------
+
+describe('getStoredToken', () => {
+  beforeEach(() => {
+    document.cookie = 'synq-token=; Max-Age=0; path=/';
+  });
+
+  it('returns token from localStorage when present', () => {
+    localStorage.setItem('synq-auth-token', 'ls-token');
+    expect(getStoredToken()).toBe('ls-token');
+  });
+
+  it('falls back to cookie when localStorage is empty', () => {
+    document.cookie = 'synq-token=cookie-token; path=/';
+    expect(getStoredToken()).toBe('cookie-token');
+  });
+
+  it('prefers localStorage over cookie', () => {
+    localStorage.setItem('synq-auth-token', 'ls-token');
+    document.cookie = 'synq-token=cookie-token; path=/';
+    expect(getStoredToken()).toBe('ls-token');
+  });
+
+  it('returns null when neither localStorage nor cookie has token', () => {
+    expect(getStoredToken()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clearStoredToken — clears both localStorage and cookie
+// ---------------------------------------------------------------------------
+
+describe('clearStoredToken', () => {
+  it('clears token from both localStorage and cookie', () => {
+    localStorage.setItem('synq-auth-token', 'tok');
+    document.cookie = 'synq-token=tok; path=/';
+    clearStoredToken();
+    expect(localStorage.getItem('synq-auth-token')).toBeNull();
+    expect(document.cookie).not.toContain('synq-token=tok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractAndStoreToken — cookie persistence
+// ---------------------------------------------------------------------------
+
+describe('extractAndStoreToken (cookie)', () => {
+  beforeEach(() => {
+    document.cookie = 'synq-token=; Max-Age=0; path=/';
+  });
+
+  it('sets synq-token cookie alongside localStorage when token is in URL', () => {
+    const replaceState = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: {
+        href: `${BASE}/?token=mytoken123`,
+        origin: BASE,
+        hostname: 'localhost',
+        port: '',
+      },
+      writable: true,
+    });
+    Object.defineProperty(window, 'history', {
+      value: { replaceState },
+      writable: true,
+    });
+
+    extractAndStoreToken();
+
+    expect(localStorage.getItem('synq-auth-token')).toBe('mytoken123');
+    expect(document.cookie).toContain('synq-token=mytoken123');
+  });
+
+  it('sets Secure flag on cookie when served over HTTPS (cloudflared)', () => {
+    const replaceState = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: {
+        href: 'https://myapp.trycloudflare.com/?token=sec-token',
+        origin: 'https://myapp.trycloudflare.com',
+        hostname: 'myapp.trycloudflare.com',
+        port: '',
+        protocol: 'https:',
+      },
+      writable: true,
+    });
+    Object.defineProperty(window, 'history', {
+      value: { replaceState },
+      writable: true,
+    });
+
+    extractAndStoreToken();
+
+    expect(localStorage.getItem('synq-auth-token')).toBe('sec-token');
+    expect(document.cookie).toContain('synq-token=sec-token');
+  });
+
+  it('does not set cookie when there is no token in URL', () => {
+    const replaceState = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { href: `${BASE}/`, origin: BASE, hostname: 'localhost', port: '' },
+      writable: true,
+    });
+    Object.defineProperty(window, 'history', {
+      value: { replaceState },
+      writable: true,
+    });
+
+    extractAndStoreToken();
+
+    expect(document.cookie).not.toContain('synq-token=');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// httpGet — cookie fallback for auth header
+// ---------------------------------------------------------------------------
+
+describe('httpGet (cookie auth fallback)', () => {
+  beforeEach(() => {
+    document.cookie = 'synq-token=; Max-Age=0; path=/';
+  });
+
+  it('uses cookie token for Authorization header when localStorage is empty', async () => {
+    document.cookie = 'synq-token=cookie-tok; path=/';
+    mockFetchOk({});
+    await httpGet('/api/settings');
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((opts.headers as Record<string, string>)['Authorization']).toBe('Bearer cookie-tok');
   });
 });

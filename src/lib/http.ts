@@ -9,8 +9,36 @@ function getBaseUrl(): string {
   return localStorage.getItem('synq-server-url') || window.location.origin;
 }
 
+/** Read a cookie value by name, or null if not found. */
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/** Set a cookie with a 1-year expiry. Adds Secure flag when served over HTTPS (e.g. cloudflared). */
+function setCookie(name: string, value: string): void {
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
+}
+
+/** Delete a cookie by setting max-age to 0. */
+function deleteCookie(name: string): void {
+  document.cookie = `${name}=; Max-Age=0; path=/`;
+}
+
+/** Get stored auth token from localStorage (primary) or cookie (fallback). */
+export function getStoredToken(): string | null {
+  return localStorage.getItem('synq-auth-token') || getCookie('synq-token');
+}
+
+/** Clear auth token from both localStorage and cookie. */
+export function clearStoredToken(): void {
+  localStorage.removeItem('synq-auth-token');
+  deleteCookie('synq-token');
+}
+
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('synq-auth-token');
+  const token = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
@@ -83,12 +111,13 @@ export async function httpDelete<T>(path: string): Promise<T> {
   return text ? JSON.parse(text) : (undefined as T);
 }
 
-/** Extract ?token= from URL on load, store in localStorage, redirect to clean URL */
+/** Extract ?token= from URL on load, store in localStorage + cookie, redirect to clean URL */
 export function extractAndStoreToken(): void {
   const url = new URL(window.location.href);
   const token = url.searchParams.get('token');
   if (token) {
     localStorage.setItem('synq-auth-token', token);
+    setCookie('synq-token', token);
     // Store server URL as origin
     localStorage.setItem('synq-server-url', url.origin);
     // Remove token from URL without reload
@@ -99,7 +128,7 @@ export function extractAndStoreToken(): void {
 
 /** Build SSE URL with token query param (EventSource can't set headers) */
 export function getSseUrl(path: string): string {
-  const token = localStorage.getItem('synq-auth-token');
+  const token = getStoredToken();
   const base = getBaseUrl();
   const url = new URL(path, base);
   if (token) url.searchParams.set('token', token);
