@@ -376,8 +376,14 @@ pub fn get_tasks(project_id: Option<String>, db: State<'_, DbConnection>) -> Res
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     match project_id.as_deref() {
         Some(pid) if !pid.is_empty() => queries::get_tasks_by_project(&conn, pid).map_err(|e| e.to_string()),
-        _ => queries::get_standalone_tasks(&conn).map_err(|e| e.to_string()),
+        _ => queries::get_all_tasks_active(&conn).map_err(|e| e.to_string()),
     }
+}
+
+#[tauri::command]
+pub fn get_task(id: String, db: State<'_, DbConnection>) -> Result<Option<queries::Task>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::get_task_by_id(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

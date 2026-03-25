@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -66,6 +66,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 12 {
         apply_v12(conn)?;
+    }
+    if current < 13 {
+        apply_v13(conn)?;
     }
 
     eprintln!(
@@ -752,6 +755,20 @@ fn apply_v12(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v13(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 13, "Add projects.deleted_at for soft-delete/trash", |tx| {
+        if !column_exists(tx, "projects", "deleted_at")? {
+            tx.execute_batch("ALTER TABLE projects ADD COLUMN deleted_at TEXT DEFAULT NULL;")
+                .context("ALTER TABLE projects ADD COLUMN deleted_at")?;
+        }
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_projects_deleted_at ON projects(deleted_at);",
+        )
+        .context("Create idx_projects_deleted_at")?;
+        Ok(())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -905,6 +922,7 @@ mod tests {
         assert!(column_exists(&conn, "tasks", "improved_prompt").unwrap());
         assert!(column_exists(&conn, "tasks", "job_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
 
         // Schema version recorded correctly.
         let v: i64 = conn
@@ -989,6 +1007,7 @@ mod tests {
         assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
 
         let v: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
@@ -1098,6 +1117,7 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION as i64);
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
     }
 
     // --- 5b. Edge case: corrupt negative version ---

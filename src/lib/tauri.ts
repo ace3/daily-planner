@@ -38,6 +38,25 @@ export const getTasks = (): Promise<Task[]> =>
     ? httpGet<Task[]>('/api/tasks')
     : tauriInvoke<Task[]>('get_tasks', {});
 
+export const getTask = async (id: string): Promise<Task | null> => {
+  try {
+    if (isWebBrowser()) {
+      return await httpGet<Task>(`/api/tasks/${id}`);
+    }
+    return await tauriInvoke<Task | null>('get_task', { id });
+  } catch (e) {
+    console.warn('[getTask] primary lookup failed, falling back to getTasks():', e);
+    // Fallback: fetch all tasks and find by id
+    try {
+      const all = await getTasks();
+      return all.find((t) => t.id === id) ?? null;
+    } catch (e2) {
+      console.error('[getTask] fallback also failed:', e2);
+      return null;
+    }
+  }
+};
+
 export const getTasksRange = (from: string, to: string): Promise<Task[]> =>
   isWebBrowser()
     ? httpGet<Task[]>('/api/tasks/range', { from, to })
@@ -240,6 +259,11 @@ export const getProjects = (): Promise<Project[]> =>
     ? httpGet<Project[]>('/api/projects')
     : tauriInvoke<Project[]>('get_projects', {});
 
+export const getTrashedProjects = (): Promise<Project[]> =>
+  isWebBrowser()
+    ? httpGet<Project[]>('/api/projects/trash')
+    : tauriInvoke<Project[]>('get_trashed_projects', {});
+
 export const createProject = (input: CreateProjectInput): Promise<string> =>
   isWebBrowser()
     ? httpPost<{ id: string }>('/api/projects', input).then((r) => r.id)
@@ -249,6 +273,16 @@ export const deleteProject = (id: string): Promise<void> =>
   isWebBrowser()
     ? httpDelete<void>(`/api/projects/${id}`)
     : tauriInvoke<void>('delete_project', { id });
+
+export const restoreProject = (id: string): Promise<void> =>
+  isWebBrowser()
+    ? httpPost<void>(`/api/projects/${id}/restore`, {})
+    : tauriInvoke<void>('restore_project', { id });
+
+export const hardDeleteProject = (id: string): Promise<void> =>
+  isWebBrowser()
+    ? httpDelete<void>(`/api/projects/${id}/hard`)
+    : tauriInvoke<void>('hard_delete_project', { id });
 
 export const getProjectPrompt = (id: string): Promise<string | null> =>
   isWebBrowser()
@@ -571,12 +605,12 @@ export const updateTaskPrompt = (taskId: string, rawPrompt?: string, improvedPro
 export const getTasksByProject = (projectId: string): Promise<Task[]> =>
   isWebBrowser()
     ? httpGet<{ tasks: Task[] }>(`/api/projects/${projectId}/tasks`).then((r) => r.tasks ?? [])
-    : tauriInvoke<Task[]>('get_tasks_by_project', { projectId });
+    : tauriInvoke<Task[]>('get_tasks', { projectId });
 
 export const getStandaloneTasks = (): Promise<Task[]> =>
   isWebBrowser()
     ? httpGet<{ tasks: Task[] }>('/api/tasks/standalone').then((r) => r.tasks ?? [])
-    : tauriInvoke<Task[]>('get_standalone_tasks');
+    : tauriInvoke<Task[]>('get_tasks', {}).then((tasks) => tasks.filter((t) => !t.project_id));
 
 // ---------------------------------------------------------------------------
 // Project-scoped git (browser mode delegates to HTTP; desktop uses project path)

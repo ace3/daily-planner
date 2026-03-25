@@ -56,6 +56,118 @@ The core idea: separate **thinking** (mobile, anytime, anywhere) from **executin
 - **Autostart** — Optional launch on login
 - **Encrypted storage** — API keys stored with AES-256-GCM
 
+## How It Works
+
+### Core Workflow
+
+```mermaid
+flowchart TD
+    A([📱 Mobile / 🖥️ Desktop]) --> B[Create Project\nLink to git repo]
+    B --> C[Add Task\ndescribe what to build]
+    C --> D[Write Prompt\nin Task Detail]
+    D --> E{Improve with AI?}
+    E -- Yes --> F[AI Rewrites Prompt\nClaude / Codex / Copilot]
+    F --> G[Run Prompt\nvia CLI tool]
+    E -- No --> G
+    G --> H{Where are you?}
+    H -- Desktop --> I[Watch live output\nstreamed in app]
+    H -- Mobile --> J[Fire & forget\n⏳ wait...]
+    J --> K[📬 Telegram notification\njob done / failed]
+    K --> L[Open app\nreview output]
+    I --> L
+    L --> M[View git diff\nin app]
+    M --> N{Happy?}
+    N -- Yes --> O[Commit & Push\nfrom the UI]
+    N -- No --> D
+    O --> P([✅ Shipped])
+```
+
+### System Architecture
+
+```mermaid
+flowchart LR
+    subgraph Mobile["📱 Mobile / Remote"]
+        MB[Browser UI\nvia Cloudflare Tunnel]
+    end
+
+    subgraph Desktop["🖥️ Desktop"]
+        FE[React 19 Frontend\nTauri WebView]
+    end
+
+    subgraph Core["Synq Core — Rust / Tauri"]
+        HTTP[Axum HTTP Server\n:7734]
+        CMD[Tauri Commands]
+        DB[(SQLite\nWAL mode)]
+        SSE[SSE Stream\nreal-time sync]
+        ENC[AES-256-GCM\nkey storage]
+    end
+
+    subgraph Execution["Execution Layer"]
+        CC[Claude Code CLI]
+        CX[Codex CLI]
+        OC[OpenCode CLI]
+        GH[GitHub Copilot CLI]
+        WT[Git Worktrees\nisolated branches]
+    end
+
+    subgraph Notify["Notifications"]
+        TG[Telegram Bot API]
+        CF[Cloudflare Tunnel\ncloudflared]
+    end
+
+    MB -- HTTPS --> CF --> HTTP
+    FE <--> CMD
+    CMD <--> DB
+    CMD --> CC & CX & OC & GH
+    CC & CX & OC & GH --> WT
+    HTTP <--> DB
+    HTTP --> SSE --> MB
+    CMD --> TG
+    CMD --> ENC
+```
+
+### Task Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : Task created
+
+    pending --> in_progress : Run prompt
+
+    in_progress --> done : Job succeeded\n+ commit pushed
+    in_progress --> pending : Re-queue / retry
+
+    done --> [*]
+    pending --> skipped : Skipped manually
+    pending --> carried_over : Carry forward to next day
+
+    skipped --> [*]
+    carried_over --> pending : New day, fresh start
+```
+
+### Prompt Pipeline (Two-Step)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant App as Synq App
+    participant AI as AI CLI Tool
+    participant Git as Git / Repo
+
+    User->>App: Write raw prompt
+    User->>App: Click "Improve with AI"
+    App->>AI: improve prompt request
+    AI-->>App: polished prompt
+    User->>App: Click "Run Prompt"
+    App->>Git: create worktree (isolated branch)
+    App->>AI: execute prompt in worktree
+    AI-->>App: stream live output (SSE)
+    App-->>User: show output / Telegram notification
+    User->>App: review git diff
+    User->>App: commit & push
+    App->>Git: git commit + push
+```
+
 ## Prerequisites
 
 ### Required

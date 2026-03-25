@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   getTasks,
+  getTask,
   createTask,
   updateTaskStatus,
   deleteTask,
@@ -82,6 +83,18 @@ describe('getTasks (browser mode)', () => {
     expect(url).toContain('/api/tasks');
     expect((opts.headers as Record<string, string>)['Content-Type']).toBe('application/json');
     expect(result).toEqual([]);
+  });
+});
+
+describe('getTask (browser mode)', () => {
+  it('GETs /api/tasks/:id', async () => {
+    const task = { id: 'task-123', title: 'Single task' };
+    mockFetchJson(task);
+    const result = await getTask('task-123');
+    const [url, opts] = lastFetchCall();
+    expect(url).toContain('/api/tasks/task-123');
+    expect((opts.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(result).toEqual(task);
   });
 });
 

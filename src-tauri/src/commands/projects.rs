@@ -8,6 +8,12 @@ pub fn get_projects(db: State<'_, DbConnection>) -> Result<Vec<queries::Project>
     queries::get_projects(&conn).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_trashed_projects(db: State<'_, DbConnection>) -> Result<Vec<queries::Project>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::get_trashed_projects(&conn).map_err(|e| e.to_string())
+}
+
 #[derive(Deserialize)]
 pub struct CreateProjectInput {
     pub name: String,
@@ -27,6 +33,18 @@ pub fn create_project(
 pub fn delete_project(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::delete_project(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn restore_project(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::restore_project(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn hard_delete_project(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::hard_delete_project(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

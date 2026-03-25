@@ -120,6 +120,30 @@ describe('settingsStore ai_provider persistence', () => {
     expect(mockInvoke).toHaveBeenCalledWith('set_setting', { key: 'ai_provider', value: 'copilot_cli' });
     expect(useSettingsStore.getState().settings?.ai_provider).toBe('copilot_cli');
   });
+
+  it('fetchSettings keeps named tunnel fields from backend', async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockResolvedValue({
+      theme: 'dark',
+      timezone_offset: 7,
+      session1_kickstart: '09:00',
+      planning_end: '11:00',
+      session2_start: '14:00',
+      warn_before_min: 15,
+      autostart: false,
+      claude_model: 'claude-sonnet-4-6',
+      work_days: [1, 2, 3, 4, 5],
+      show_in_tray: true,
+      active_ai_provider: 'claude',
+      ai_provider: 'claude',
+      tunnel_name: 'daily-planner',
+      tunnel_hostname: 'planner.example.com',
+    });
+    const { useSettingsStore } = await import('../stores/settingsStore');
+    await useSettingsStore.getState().fetchSettings();
+    expect(useSettingsStore.getState().settings?.tunnel_name).toBe('daily-planner');
+    expect(useSettingsStore.getState().settings?.tunnel_hostname).toBe('planner.example.com');
+  });
 });
 
 describe('settingsStore setTheme', () => {
@@ -341,10 +365,13 @@ describe('projectStore', () => {
   it('deleteProject removes item from local store', async () => {
     const { useProjectStore } = await import('../stores/projectStore');
     useProjectStore.setState({
-      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: null, created_at: '' }],
+      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: null, deleted_at: null, created_at: '' }],
     });
     const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockResolvedValue(undefined);
+    mockInvoke
+      .mockResolvedValueOnce(undefined) // delete_project
+      .mockResolvedValueOnce([]) // get_projects
+      .mockResolvedValueOnce([]); // get_trashed_projects
     await useProjectStore.getState().deleteProject('p1');
     expect(useProjectStore.getState().projects).toHaveLength(0);
     expect(mockInvoke).toHaveBeenCalledWith('delete_project', { id: 'p1' });
@@ -364,7 +391,7 @@ describe('projectStore', () => {
     mockInvoke.mockResolvedValue(undefined);
     const { useProjectStore } = await import('../stores/projectStore');
     useProjectStore.setState({
-      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: null, created_at: '' }],
+      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: null, deleted_at: null, created_at: '' }],
     });
     await useProjectStore.getState().setProjectPrompt('p1', 'New prompt');
     expect(mockInvoke).toHaveBeenCalledWith('set_project_prompt', { id: 'p1', prompt: 'New prompt' });
@@ -377,7 +404,7 @@ describe('projectStore', () => {
     mockInvoke.mockResolvedValue(undefined);
     const { useProjectStore } = await import('../stores/projectStore');
     useProjectStore.setState({
-      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: 'old', created_at: '' }],
+      projects: [{ id: 'p1', name: 'App', path: '/app', prompt: 'old', deleted_at: null, created_at: '' }],
     });
     await useProjectStore.getState().setProjectPrompt('p1', '');
     expect(useProjectStore.getState().projectPrompt).toBeNull();

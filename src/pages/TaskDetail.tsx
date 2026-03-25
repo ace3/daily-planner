@@ -3,24 +3,25 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Play, Sparkles, Copy, Check, Loader2,
   ChevronDown, ChevronUp, Terminal, GitBranch, RotateCcw,
-  Clock, AlertCircle, GitCommit, Send, Pencil,
+  Clock, AlertCircle, GitCommit, Send, Pencil, FileText,
 } from 'lucide-react';
 import { useMobileStore } from '../stores/mobileStore';
 import { useProjectStore } from '../stores/projectStore';
+import { usePromptImproveStore, type ImproveRun } from '../stores/promptImproveStore';
 import type { Task, TaskType, TaskPriority } from '../types/task';
 import type { PromptJob } from '../types/job';
 import {
-  getTasks,
+  getTask,
   updateTask,
   updateTaskStatus,
   updateTaskPrompt,
-  improvePromptWithClaude,
   runTaskPrompt,
   cancelPromptRun,
   getJobsByTask,
-  getProjectGitDiff,
-  commitProject,
-  pushProject,
+  gitDiff as fetchGitDiff,
+  gitStageAll,
+  gitCommit,
+  gitPush,
 } from '../lib/tauri';
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,8 @@ function DiffViewer({ diff }: { diff: string }) {
   );
 }
 
+const EMPTY_RUNS: ImproveRun[] = [];
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -101,10 +104,14 @@ export const TaskDetail: React.FC = () => {
   const navigate = useNavigate();
   const { mobileMode: m } = useMobileStore();
   const { projects } = useProjectStore();
+  const startImprove = usePromptImproveStore((s) => s.startImprove);
+  const improveRunsRaw = usePromptImproveStore((s) => (id ? s.runsByTask[id] : undefined));
+  const improveRuns = improveRunsRaw ?? EMPTY_RUNS;
 
   // Task state
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Editable metadata
   const [editTitle, setEditTitle] = useState('');
@@ -118,7 +125,6 @@ export const TaskDetail: React.FC = () => {
   const [rawPrompt, setRawPrompt] = useState('');
   const [improvedPrompt, setImprovedPrompt] = useState('');
   const [editingImproved, setEditingImproved] = useState(false);
-  const [improving, setImproving] = useState(false);
   const [provider, setProvider] = useState('claude');
   const [running, setRunning] = useState(false);
 
@@ -151,8 +157,9 @@ export const TaskDetail: React.FC = () => {
   const loadTask = useCallback(async () => {
     if (!id) return;
     try {
-      const all = await getTasks();
-      const found = all.find((t) => t.id === id) ?? null;
+      setLoadError(null);
+      const found = await getTask(id);
+      console.log('[TaskDetail] getTask result:', found ? `id=${found.id} title="${found.title}"` : 'null');
       setTask(found);
       if (found) {
         setEditTitle(found.title);
@@ -162,9 +169,12 @@ export const TaskDetail: React.FC = () => {
         setRawPrompt(found.raw_prompt ?? '');
         setImprovedPrompt(found.improved_prompt ?? '');
         if (found.provider) setProvider(found.provider);
+      } else {
+        setLoadError(`Task with id "${id}" not found`);
       }
     } catch (e) {
       console.error('Failed to load task:', e);
+      setLoadError(String(e));
     } finally {
       setLoading(false);
     }
@@ -240,25 +250,58 @@ export const TaskDetail: React.FC = () => {
     }
   };
 
+  const handleUseTitleAsPrompt = async () => {
+    if (!task) return;
+    const parts = [editTitle.trim()];
+    if (editNotes.trim()) parts.push(editNotes.trim());
+    const prompt = parts.join('\n\n');
+    setRawPrompt(prompt);
+    try {
+      await updateTaskPrompt(task.id, prompt, undefined);
+    } catch (e) {
+      console.error('Failed to save prompt:', e);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Improve with AI
   // ---------------------------------------------------------------------------
   const handleImprove = async () => {
     if (!rawPrompt.trim() || !task) return;
-    setImproving(true);
     try {
       const project = projects.find((p) => p.id === task.project_id);
-      const projectPath = project?.path;
-      const improved = await improvePromptWithClaude(rawPrompt, projectPath, provider, task.project_id ?? undefined);
-      setImprovedPrompt(improved);
-      setEditingImproved(false);
-      await updateTaskPrompt(task.id, rawPrompt, improved);
+      await startImprove({
+        taskId: task.id,
+        prompt: rawPrompt,
+        provider,
+        projectPath: project?.path,
+        context: {
+          title: editTitle,
+          notes: editNotes,
+          taskType: editType,
+          projectId: task.project_id,
+          project,
+        },
+      });
     } catch (e) {
       console.error('Improve failed:', e);
-    } finally {
-      setImproving(false);
     }
   };
+
+  const improvingRuns = improveRuns.filter((run) => run.status === 'running');
+  const latestCompletedImprove = [...improveRuns]
+    .filter((run) => run.status === 'completed' && !!run.improvedPrompt)
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0];
+  const latestFailedImprove = [...improveRuns]
+    .filter((run) => run.status === 'failed')
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0];
+
+  useEffect(() => {
+    if (!latestCompletedImprove?.improvedPrompt) return;
+    setImprovedPrompt(latestCompletedImprove.improvedPrompt);
+    setEditingImproved(false);
+    loadTask();
+  }, [latestCompletedImprove?.id, latestCompletedImprove?.improvedPrompt, loadTask]);
 
   // ---------------------------------------------------------------------------
   // Run prompt
@@ -296,12 +339,18 @@ export const TaskDetail: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Git diff
   // ---------------------------------------------------------------------------
+  const getProjectPath = (): string | undefined => {
+    if (!task?.project_id) return undefined;
+    return projects.find((p) => p.id === task.project_id)?.path;
+  };
+
   const handleLoadDiff = async () => {
-    if (!task?.project_id) return;
+    const projectPath = getProjectPath();
+    if (!projectPath) return;
     setLoadingDiff(true);
     try {
-      const result = await getProjectGitDiff(task.project_id);
-      setGitDiff(result.diff);
+      const diff = await fetchGitDiff(projectPath);
+      setGitDiff(diff);
       setShowDiff(true);
     } catch (e) {
       console.error('Git diff failed:', e);
@@ -314,18 +363,18 @@ export const TaskDetail: React.FC = () => {
   // Commit
   // ---------------------------------------------------------------------------
   const handleCommit = async () => {
-    if (!task?.project_id || !commitMsg.trim()) return;
+    const projectPath = getProjectPath();
+    if (!projectPath || !commitMsg.trim()) return;
     setCommitting(true);
     setGitActionMsg('');
     try {
-      const result = await commitProject(task.project_id, commitMsg.trim());
-      setGitActionMsg(result.success ? 'Committed successfully.' : `Commit failed: ${result.output}`);
-      if (result.success) {
-        setCommitMsg('');
-        setShowCommit(false);
-        setGitDiff('');
-        setShowDiff(false);
-      }
+      await gitStageAll(projectPath);
+      await gitCommit(projectPath, commitMsg.trim());
+      setGitActionMsg('Committed successfully.');
+      setCommitMsg('');
+      setShowCommit(false);
+      setGitDiff('');
+      setShowDiff(false);
     } catch (e) {
       setGitActionMsg(`Error: ${e}`);
     } finally {
@@ -337,12 +386,13 @@ export const TaskDetail: React.FC = () => {
   // Push
   // ---------------------------------------------------------------------------
   const handlePush = async () => {
-    if (!task?.project_id) return;
+    const projectPath = getProjectPath();
+    if (!projectPath) return;
     setPushing(true);
     setGitActionMsg('');
     try {
-      const result = await pushProject(task.project_id);
-      setGitActionMsg(result.success ? 'Pushed successfully.' : `Push failed: ${result.output}`);
+      await gitPush(projectPath);
+      setGitActionMsg('Pushed successfully.');
     } catch (e) {
       setGitActionMsg(`Error: ${e}`);
     } finally {
@@ -376,7 +426,8 @@ export const TaskDetail: React.FC = () => {
       <div className="flex flex-col items-center justify-center h-full gap-4 dark:text-gray-500">
         <AlertCircle size={32} />
         <p>Task not found.</p>
-        <button onClick={() => navigate(-1)} className="text-blue-400 hover:underline">Go back</button>
+        {loadError && <p className="text-xs text-red-400 max-w-md text-center">{loadError}</p>}
+        <button onClick={() => navigate(-1)} className="text-blue-400 hover:underline min-h-[44px]">Go back</button>
       </div>
     );
   }
@@ -508,18 +559,27 @@ export const TaskDetail: React.FC = () => {
         </div>
 
         {/* Save button */}
-        <button
-          onClick={handleSaveMeta}
-          disabled={savingMeta}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg dark:bg-[#21262D] dark:hover:bg-[#30363D] disabled:opacity-50 text-sm min-h-[44px] font-medium"
-        >
-          {savingMeta ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : metaSaved ? (
-            <Check size={14} className="text-green-400" />
-          ) : null}
-          {metaSaved ? 'Saved!' : 'Save Changes'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSaveMeta}
+            disabled={savingMeta}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg dark:bg-[#21262D] dark:hover:bg-[#30363D] disabled:opacity-50 text-sm min-h-[44px] font-medium"
+          >
+            {savingMeta ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : metaSaved ? (
+              <Check size={14} className="text-green-400" />
+            ) : null}
+            {metaSaved ? 'Saved!' : 'Save Changes'}
+          </button>
+          <button
+            onClick={handleUseTitleAsPrompt}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg dark:bg-[#21262D] dark:hover:bg-[#30363D] text-sm min-h-[44px] font-medium dark:text-blue-400 hover:dark:text-blue-300"
+          >
+            <FileText size={14} />
+            Use Title as Prompt
+          </button>
+        </div>
       </div>
 
       {/* ------------------------------------------------------------------ */}
@@ -546,11 +606,11 @@ export const TaskDetail: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={handleImprove}
-            disabled={improving || !rawPrompt.trim()}
+            disabled={!rawPrompt.trim()}
             className="flex items-center gap-2 px-4 py-2 rounded-lg dark:bg-purple-700 hover:dark:bg-purple-600 disabled:opacity-50 text-white text-sm min-h-[44px]"
           >
-            {improving ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {improving ? 'Improving...' : 'Improve with AI'}
+            {improvingRuns.length > 0 ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {improvingRuns.length > 0 ? `Improving (${improvingRuns.length})...` : 'Improve with AI'}
           </button>
 
           <select
@@ -564,6 +624,16 @@ export const TaskDetail: React.FC = () => {
             <option value="copilot">Copilot</option>
           </select>
         </div>
+        {improvingRuns.length > 0 && (
+          <div className="text-xs dark:text-blue-400">
+            {improvingRuns.length} improvement process{improvingRuns.length > 1 ? 'es' : ''} running in background.
+          </div>
+        )}
+        {latestFailedImprove?.error && (
+          <div className="text-xs text-red-400 dark:text-red-400 whitespace-pre-wrap">
+            Improve failed: {latestFailedImprove.error}
+          </div>
+        )}
 
         {/* Improved prompt display */}
         {improvedPrompt && (

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch, RotateCcw } from 'lucide-react';
 import { GitPanel } from '../components/projects/GitPanel';
 import { useProjectStore } from '../stores/projectStore';
 import { openFolderDialog } from '../lib/tauri';
@@ -9,7 +10,19 @@ import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../components/ui/Toast';
 
 export const ProjectsPage: React.FC = () => {
-  const { projects, loading, fetchProjects, createProject, deleteProject, setProjectPrompt } = useProjectStore();
+  const navigate = useNavigate();
+  const {
+    projects,
+    trashedProjects,
+    loading,
+    fetchProjects,
+    fetchTrashedProjects,
+    createProject,
+    deleteProject,
+    restoreProject,
+    hardDeleteProject,
+    setProjectPrompt,
+  } = useProjectStore();
   const [draft, setDraft] = useState({
     selectedPath: '',
     projectName: '',
@@ -18,12 +31,14 @@ export const ProjectsPage: React.FC = () => {
   });
   const [adding, setAdding] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<string | null>(null);
   const [promptSaving, setPromptSaving] = useState<string | null>(null);
   const [expandedGit, setExpandedGit] = useState<string | null>(null);
   const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
 
   useEffect(() => {
     fetchProjects();
+    fetchTrashedProjects();
   }, []);
 
   // Initialize prompt drafts from fetched projects
@@ -142,6 +157,15 @@ export const ProjectsPage: React.FC = () => {
         {projects.map((project, i) => (
           <div key={project.id}>
             <div
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(`/projects/${project.id}`)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  navigate(`/projects/${project.id}`);
+                }
+              }}
               className={`flex items-center gap-3 px-4 py-3 ${i < projects.length - 1 || expandedGit === project.id || expandedPrompt === project.id ? 'border-b border-gray-100 dark:border-[#21262D]' : ''}`}
             >
               <FolderOpen size={15} className="text-blue-400 shrink-0" />
@@ -150,26 +174,33 @@ export const ProjectsPage: React.FC = () => {
                 <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
               </div>
               <button
-                onClick={() => setExpandedGit((prev) => (prev === project.id ? null : project.id))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedGit((prev) => (prev === project.id ? null : project.id));
+                }}
                 className="text-gray-400 hover:text-blue-400 dark:text-[#484F58] dark:hover:text-blue-400 transition-colors p-1 cursor-pointer"
                 title="Git panel"
               >
                 <GitBranch size={14} />
               </button>
               <button
-                onClick={() =>
+                onClick={(e) => {
+                  e.stopPropagation();
                   setDraft((prev) => ({
                     ...prev,
                     expandedPrompt: prev.expandedPrompt === project.id ? null : project.id,
-                  }))
-                }
+                  }));
+                }}
                 className="text-gray-400 hover:text-gray-600 dark:text-[#484F58] dark:hover:text-[#8B949E] transition-colors p-1 cursor-pointer"
                 title="Edit project prompt"
               >
                 {expandedPrompt === project.id ? <ChevronUp size={14} /> : <MessageSquare size={14} />}
               </button>
               <button
-                onClick={() => setDeleteTarget(project.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeleteTarget(project.id);
+                }}
                 className="text-gray-400 hover:text-red-400 transition-colors p-1 cursor-pointer"
                 title="Remove project"
               >
@@ -222,17 +253,74 @@ export const ProjectsPage: React.FC = () => {
         ))}
       </div>
 
+      {/* Trash section */}
+      <div className={sectionClass}>
+        <div className="px-4 py-3 border-b border-gray-100 dark:border-[#21262D]">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-[#8B949E]">
+            Trash
+          </h3>
+        </div>
+        {trashedProjects.length === 0 ? (
+          <div className="p-4 text-sm text-gray-400 dark:text-[#484F58]">Trash is empty.</div>
+        ) : (
+          trashedProjects.map((project, i) => (
+            <div
+              key={project.id}
+              className={`flex items-center gap-3 px-4 py-3 ${i < trashedProjects.length - 1 ? 'border-b border-gray-100 dark:border-[#21262D]' : ''}`}
+            >
+              <FolderOpen size={15} className="text-gray-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-700 dark:text-[#C9D1D9] truncate">{project.name}</div>
+                <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
+              </div>
+              <button
+                onClick={async () => {
+                  await restoreProject(project.id);
+                  toast.success('Project restored');
+                }}
+                className="text-gray-400 hover:text-blue-400 transition-colors p-1 cursor-pointer"
+                title="Restore project"
+              >
+                <RotateCcw size={14} />
+              </button>
+              <button
+                onClick={() => setHardDeleteTarget(project.id)}
+                className="text-gray-400 hover:text-red-400 transition-colors p-1 cursor-pointer"
+                title="Delete permanently"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
       <ConfirmModal
         open={!!deleteTarget}
-        title="Remove Project"
-        description="Remove this project? Tasks linked to it will be unlinked but not deleted."
-        confirmLabel="Remove"
+        title="Move Project To Trash"
+        description="Move this project to trash? You can restore it later from the Trash section."
+        confirmLabel="Move To Trash"
         variant="warning"
         onConfirm={async () => {
           if (deleteTarget) await deleteProject(deleteTarget);
+          toast.success('Project moved to trash');
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        open={!!hardDeleteTarget}
+        title="Delete Project Permanently"
+        description="Delete this project permanently? All tasks and prompt jobs linked to it will be deleted forever."
+        confirmLabel="Delete Permanently"
+        variant="danger"
+        onConfirm={async () => {
+          if (hardDeleteTarget) await hardDeleteProject(hardDeleteTarget);
+          toast.success('Project deleted permanently');
+          setHardDeleteTarget(null);
+        }}
+        onCancel={() => setHardDeleteTarget(null)}
       />
     </div>
   );

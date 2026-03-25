@@ -230,14 +230,19 @@ export const ProjectDetail: React.FC = () => {
     }
   };
 
+  const [showCompleted, setShowCompleted] = useState(false);
+
   // ---------------------------------------------------------------------------
   // Filtered tasks
   // ---------------------------------------------------------------------------
 
   const filteredTasks = tasks.filter((t) => {
-    if (filter === 'all') return true;
+    if (filter === 'all') return t.status !== 'done';
+    if (filter === 'done') return t.status === 'done';
     return t.status === filter;
   });
+
+  const completedTasks = tasks.filter((t) => t.status === 'done');
 
   const filterTabs: { key: FilterType; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -296,7 +301,9 @@ export const ProjectDetail: React.FC = () => {
       {/* Filter tabs */}
       <div className="flex gap-1 overflow-x-auto pb-0.5">
         {filterTabs.map(({ key, label }) => {
-          const count = key === 'all' ? tasks.length : tasks.filter((t) => t.status === key).length;
+          const count = key === 'all'
+            ? tasks.filter((t) => t.status !== 'done').length
+            : tasks.filter((t) => t.status === key).length;
           return (
             <button
               key={key}
@@ -405,6 +412,60 @@ export const ProjectDetail: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* Completed accordion — only when not on Done filter */}
+      {filter !== 'done' && completedTasks.length > 0 && (
+        <section className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowCompleted((v) => !v)}
+            className={`w-full flex items-center justify-between px-4 dark:text-[#E6EDF3] hover:dark:bg-white/5 transition-colors ${m ? 'h-12' : 'h-11'}`}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={15} className="text-emerald-500" />
+              <span className="font-medium text-sm">Completed</span>
+              <span className="text-xs dark:text-gray-500">{completedTasks.length}</span>
+            </div>
+            {showCompleted ? <ChevronUp size={15} className="dark:text-gray-400" /> : <ChevronDown size={15} className="dark:text-gray-400" />}
+          </button>
+
+          {showCompleted && (
+            <div className="border-t border-white/5 divide-y dark:divide-white/5">
+              {completedTasks.map((task) => (
+                <div key={task.id} className="flex items-center gap-3 px-4 py-2.5 group">
+                  <button
+                    onClick={() => handleToggle(task.id, task.status)}
+                    className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
+                    aria-label="Toggle status"
+                  >
+                    <CheckCircle2 size={16} className="text-emerald-500" />
+                  </button>
+                  <button
+                    onClick={() => navigate(`/tasks/${task.id}`)}
+                    className="flex-1 min-w-0 text-left text-sm line-through dark:text-gray-500 truncate"
+                  >
+                    {task.title}
+                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium hidden sm:inline ${priorityClass(task.priority)}`}>
+                      {priorityLabel(task.priority)}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded hidden sm:inline ${taskTypeBadge(task.task_type)}`}>
+                      {task.task_type}
+                    </span>
+                    <button
+                      onClick={() => handleDelete(task.id)}
+                      className="w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-600 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                      aria-label="Delete task"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Git Panel */}
       <section className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">

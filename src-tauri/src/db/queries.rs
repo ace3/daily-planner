@@ -91,6 +91,7 @@ pub struct Project {
     pub name: String,
     pub path: String,
     pub prompt: Option<String>,
+    pub deleted_at: Option<String>,
     pub created_at: String,
 }
 
@@ -110,6 +111,11 @@ const TASK_COLUMNS: &str = "id, title, notes, task_type, priority, status,
     job_status, job_id, provider, carried_from, position,
     created_at, updated_at, completed_at, project_id,
     worktree_path, worktree_branch, worktree_status";
+const TASK_COLUMNS_T: &str = "t.id, t.title, t.notes, t.task_type, t.priority, t.status,
+    t.estimated_min, t.actual_min, t.raw_prompt, t.improved_prompt, t.prompt_output,
+    t.job_status, t.job_id, t.provider, t.carried_from, t.position,
+    t.created_at, t.updated_at, t.completed_at, t.project_id,
+    t.worktree_path, t.worktree_branch, t.worktree_status";
 
 fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
     Ok(Task {
@@ -140,7 +146,13 @@ fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
 }
 
 pub fn get_tasks_by_project(conn: &Connection, project_id: &str) -> Result<Vec<Task>> {
-    let sql = format!("SELECT {} FROM tasks WHERE project_id = ?1 ORDER BY position, created_at", TASK_COLUMNS);
+    let sql = format!(
+        "SELECT {} FROM tasks t
+         INNER JOIN projects p ON p.id = t.project_id
+         WHERE t.project_id = ?1 AND p.deleted_at IS NULL
+         ORDER BY t.position, t.created_at",
+        TASK_COLUMNS_T
+    );
     let mut stmt = conn.prepare(&sql)?;
     let tasks = stmt.query_map(params![project_id], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
@@ -156,7 +168,19 @@ pub fn get_standalone_tasks(conn: &Connection) -> Result<Vec<Task>> {
 }
 
 pub fn get_tasks_by_date_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<Task>> {
-    let sql = format!("SELECT {} FROM tasks WHERE date(created_at) >= ?1 AND date(created_at) <= ?2 ORDER BY created_at DESC, position", TASK_COLUMNS);
+    let sql = format!(
+        "SELECT {} FROM tasks t
+         WHERE date(t.created_at) >= ?1
+           AND date(t.created_at) <= ?2
+           AND (
+             t.project_id IS NULL OR EXISTS (
+               SELECT 1 FROM projects p
+               WHERE p.id = t.project_id AND p.deleted_at IS NULL
+             )
+           )
+         ORDER BY t.created_at DESC, t.position",
+        TASK_COLUMNS_T
+    );
     let mut stmt = conn.prepare(&sql)?;
     let tasks = stmt.query_map(params![from, to], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
@@ -749,6 +773,23 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
+pub fn get_all_tasks_active(conn: &Connection) -> Result<Vec<Task>> {
+    let sql = format!(
+        "SELECT {} FROM tasks t
+         WHERE t.project_id IS NULL
+            OR EXISTS (
+                SELECT 1 FROM projects p
+                WHERE p.id = t.project_id AND p.deleted_at IS NULL
+            )
+         ORDER BY t.created_at",
+        TASK_COLUMNS_T
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let tasks = stmt.query_map([], |row| row_to_task(row))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(tasks)
+}
+
 pub fn get_all_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, category, template, variables, is_builtin, use_count, created_at
@@ -813,8 +854,12 @@ pub fn get_all_settings_non_sensitive(conn: &Connection) -> Result<Vec<SettingRo
 // ---- PROJECT QUERIES ----
 
 pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, path, prompt, created_at FROM projects ORDER BY name")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, path, prompt, deleted_at, created_at
+         FROM projects
+         WHERE deleted_at IS NULL
+         ORDER BY name",
+    )?;
     let projects = stmt
         .query_map([], |row| {
             Ok(Project {
@@ -822,7 +867,30 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
                 name: row.get(1)?,
                 path: row.get(2)?,
                 prompt: row.get(3)?,
-                created_at: row.get(4)?,
+                deleted_at: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(projects)
+}
+
+pub fn get_trashed_projects(conn: &Connection) -> Result<Vec<Project>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, path, prompt, deleted_at, created_at
+         FROM projects
+         WHERE deleted_at IS NOT NULL
+         ORDER BY deleted_at DESC, name",
+    )?;
+    let projects = stmt
+        .query_map([], |row| {
+            Ok(Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                path: row.get(2)?,
+                prompt: row.get(3)?,
+                deleted_at: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>>>()?;
@@ -831,7 +899,7 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
 
 pub fn get_project_prompt(conn: &Connection, project_id: &str) -> Result<Option<String>> {
     let result = conn.query_row(
-        "SELECT prompt FROM projects WHERE id = ?1",
+        "SELECT prompt FROM projects WHERE id = ?1 AND deleted_at IS NULL",
         params![project_id],
         |row| row.get::<_, Option<String>>(0),
     );
@@ -844,7 +912,7 @@ pub fn get_project_prompt(conn: &Connection, project_id: &str) -> Result<Option<
 
 pub fn set_project_prompt(conn: &Connection, project_id: &str, prompt: &str) -> Result<()> {
     conn.execute(
-        "UPDATE projects SET prompt = ?1 WHERE id = ?2",
+        "UPDATE projects SET prompt = ?1 WHERE id = ?2 AND deleted_at IS NULL",
         params![prompt, project_id],
     )?;
     Ok(())
@@ -860,11 +928,29 @@ pub fn create_project(conn: &Connection, name: &str, path: &str) -> Result<Strin
 }
 
 pub fn delete_project(conn: &Connection, id: &str) -> Result<()> {
-    // Nullify project_id on tasks before deleting
     conn.execute(
-        "UPDATE tasks SET project_id = NULL WHERE project_id = ?1",
+        "UPDATE projects SET deleted_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
     )?;
+    Ok(())
+}
+
+pub fn restore_project(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE projects SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL",
+        params![id],
+    )?;
+    Ok(())
+}
+
+pub fn hard_delete_project(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM prompt_jobs
+         WHERE project_id = ?1
+            OR task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
+        params![id],
+    )?;
+    conn.execute("DELETE FROM tasks WHERE project_id = ?1", params![id])?;
     conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -1099,5 +1185,97 @@ mod tests {
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let tasks = get_tasks_by_date_range(&conn, &today, &today).unwrap();
         assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_get_all_tasks_includes_project_tasks() {
+        let conn = setup_test_db();
+        // Create a standalone task
+        let _s = create_task(&conn, "Standalone", "other", 2, None, None).unwrap();
+        // Create a project and a task in that project
+        let pid = create_project(&conn, "Proj", "/tmp/p").unwrap();
+        let _p = create_task(&conn, "Project task", "prompt", 1, None, Some(&pid)).unwrap();
+
+        // get_all_tasks must return both
+        let all = get_all_tasks(&conn).unwrap();
+        assert_eq!(all.len(), 2, "get_all_tasks should return standalone + project tasks");
+
+        // get_standalone_tasks must return only the standalone one
+        let standalone = get_standalone_tasks(&conn).unwrap();
+        assert_eq!(standalone.len(), 1);
+        assert_eq!(standalone[0].title, "Standalone");
+
+        // get_tasks_by_project must return only the project one
+        let proj_tasks = get_tasks_by_project(&conn, &pid).unwrap();
+        assert_eq!(proj_tasks.len(), 1);
+        assert_eq!(proj_tasks[0].title, "Project task");
+    }
+
+    #[test]
+    fn test_soft_delete_restore_project_and_tasks_visibility() {
+        let conn = setup_test_db();
+        let pid = create_project(&conn, "Trash Me", "/tmp/trash-me").unwrap();
+        let tid = create_task(&conn, "Keep for history", "prompt", 2, None, Some(&pid)).unwrap();
+
+        let active_before = get_projects(&conn).unwrap();
+        assert_eq!(active_before.len(), 1);
+        assert_eq!(get_tasks_by_project(&conn, &pid).unwrap().len(), 1);
+
+        delete_project(&conn, &pid).unwrap();
+
+        let active_after_delete = get_projects(&conn).unwrap();
+        assert!(active_after_delete.is_empty());
+        let trashed = get_trashed_projects(&conn).unwrap();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].id, pid);
+
+        // Tasks remain linked but hidden from active-project fetch
+        assert!(get_tasks_by_project(&conn, &trashed[0].id).unwrap().is_empty());
+        assert!(get_task_by_id(&conn, &tid).unwrap().is_some());
+
+        restore_project(&conn, &trashed[0].id).unwrap();
+        let active_after_restore = get_projects(&conn).unwrap();
+        assert_eq!(active_after_restore.len(), 1);
+        assert_eq!(get_trashed_projects(&conn).unwrap().len(), 0);
+        assert_eq!(get_tasks_by_project(&conn, &active_after_restore[0].id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_hard_delete_project_removes_tasks_and_jobs() {
+        let conn = setup_test_db();
+        let pid = create_project(&conn, "Hard Delete", "/tmp/hard-delete").unwrap();
+        let tid = create_task(&conn, "Task to remove", "prompt", 1, None, Some(&pid)).unwrap();
+        let jid = create_prompt_job(
+            &conn,
+            &tid,
+            Some(&pid),
+            "claude",
+            "run this",
+            None,
+            None,
+        )
+        .unwrap();
+
+        delete_project(&conn, &pid).unwrap();
+        hard_delete_project(&conn, &pid).unwrap();
+
+        assert!(get_projects(&conn).unwrap().is_empty());
+        assert!(get_trashed_projects(&conn).unwrap().is_empty());
+        assert!(get_task_by_id(&conn, &tid).unwrap().is_none());
+        assert!(get_prompt_job(&conn, &jid).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_all_tasks_active_excludes_tasks_from_trashed_projects() {
+        let conn = setup_test_db();
+        let _standalone = create_task(&conn, "Standalone", "other", 2, None, None).unwrap();
+        let pid = create_project(&conn, "Hidden Project", "/tmp/hidden-project").unwrap();
+        let _proj_task = create_task(&conn, "Project task", "prompt", 2, None, Some(&pid)).unwrap();
+
+        assert_eq!(get_all_tasks_active(&conn).unwrap().len(), 2);
+        delete_project(&conn, &pid).unwrap();
+        let active = get_all_tasks_active(&conn).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].title, "Standalone");
     }
 }

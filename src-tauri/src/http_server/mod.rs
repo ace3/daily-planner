@@ -194,7 +194,7 @@ async fn get_tasks(
 ) -> Result<Json<Vec<queries::Task>>, ApiError> {
     check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let conn = s.db.lock().map_err(internal)?;
-    let tasks = queries::get_standalone_tasks(&*conn).map_err(internal)?;
+    let tasks = queries::get_all_tasks_active(&*conn).map_err(internal)?;
     Ok(Json(tasks))
 }
 
@@ -678,6 +678,21 @@ async fn get_projects(
 }
 
 // ---------------------------------------------------------------------------
+// Route: GET /api/projects/trash
+// ---------------------------------------------------------------------------
+
+async fn get_trashed_projects(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<Vec<queries::Project>>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let projects = queries::get_trashed_projects(&*conn).map_err(internal)?;
+    Ok(Json(projects))
+}
+
+// ---------------------------------------------------------------------------
 // Route: POST /api/projects
 // ---------------------------------------------------------------------------
 
@@ -712,6 +727,40 @@ async fn delete_project(
     check_auth(&s.db, &headers)?;
     let conn = s.db.lock().map_err(internal)?;
     queries::delete_project(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/projects/:id/restore
+// ---------------------------------------------------------------------------
+
+async fn restore_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::restore_project(&*conn, &id).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: DELETE /api/projects/:id/hard
+// ---------------------------------------------------------------------------
+
+async fn hard_delete_project(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let conn = s.db.lock().map_err(internal)?;
+    queries::hard_delete_project(&*conn, &id).map_err(internal)?;
     drop(conn);
     let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -1328,7 +1377,7 @@ async fn prompt_run(
 
 fn get_project_by_id(conn: &Connection, id: &str) -> Option<queries::Project> {
     conn.query_row(
-        "SELECT id, name, path, prompt, created_at FROM projects WHERE id = ?1",
+        "SELECT id, name, path, prompt, deleted_at, created_at FROM projects WHERE id = ?1",
         rusqlite::params![id],
         |row| {
             Ok(queries::Project {
@@ -1336,7 +1385,8 @@ fn get_project_by_id(conn: &Connection, id: &str) -> Option<queries::Project> {
                 name: row.get(1)?,
                 path: row.get(2)?,
                 prompt: row.get(3)?,
-                created_at: row.get(4)?,
+                deleted_at: row.get(4)?,
+                created_at: row.get(5)?,
             })
         },
     )
@@ -1684,7 +1734,10 @@ pub async fn start(
         .route("/api/reports/:date/reflection", post(save_report_reflection))
         // Projects
         .route("/api/projects", get(get_projects).post(create_project))
+        .route("/api/projects/trash", get(get_trashed_projects))
         .route("/api/projects/:id", delete(delete_project))
+        .route("/api/projects/:id/restore", post(restore_project))
+        .route("/api/projects/:id/hard", delete(hard_delete_project))
         .route("/api/projects/:id/prompt", get(get_project_prompt).put(set_project_prompt))
         .route("/api/projects/:id/tasks", get(get_project_tasks))
         .route("/api/projects/:id/git/status", get(get_project_git_status))

@@ -93,37 +93,6 @@ const ActiveJobRow: React.FC<ActiveJobRowProps> = ({ job, projectName, onCancel,
   </div>
 );
 
-interface ProjectCardProps {
-  name: string;
-  taskCount: number;
-  activeJobCount: number;
-  createdAt: string;
-  onClick: () => void;
-  mobile: boolean;
-}
-
-const ProjectCard: React.FC<ProjectCardProps> = ({ name, taskCount, activeJobCount, createdAt, onClick, mobile }) => (
-  <button
-    onClick={onClick}
-    className={`text-left dark:bg-[#161B22] border border-white/5 rounded-xl p-4 hover:border-blue-500/40 hover:dark:bg-[#1C2128] transition-all active:scale-[0.98] ${mobile ? 'min-h-[80px]' : ''}`}
-  >
-    <div className="flex items-start justify-between gap-2">
-      <p className={`font-medium dark:text-[#E6EDF3] leading-snug ${mobile ? 'text-sm' : 'text-sm'}`}>{name}</p>
-      <div className="flex items-center gap-1 shrink-0">
-        {activeJobCount > 0 && (
-          <span className="flex items-center gap-1 text-xs bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            {activeJobCount}
-          </span>
-        )}
-        <span className="text-xs dark:bg-[#21262D] dark:text-gray-400 px-2 py-0.5 rounded-full">
-          {taskCount}
-        </span>
-      </div>
-    </div>
-    <p className="text-xs dark:text-gray-500 mt-2">{relativeTime(createdAt)}</p>
-  </button>
-);
 
 interface TaskRowProps {
   task: Task;
@@ -174,7 +143,7 @@ export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const [standaloneTasks, setStandaloneTasks] = useState<Task[]>([]);
-  const [projectTaskCounts, setProjectTaskCounts] = useState<Record<string, number>>({});
+  const [projectTasks, setProjectTasks] = useState<Record<string, Task[]>>({});
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -187,22 +156,22 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
-  const loadProjectTaskCounts = useCallback(async (projectIds: string[]) => {
+  const loadProjectTasks = useCallback(async (projectIds: string[]) => {
     if (projectIds.length === 0) return;
     try {
       const entries = await Promise.all(
         projectIds.map(async (id) => {
           try {
             const tasks = await getTasksByProject(id);
-            return [id, tasks.length] as [string, number];
+            return [id, tasks] as [string, Task[]];
           } catch {
-            return [id, 0] as [string, number];
+            return [id, []] as [string, Task[]];
           }
         })
       );
-      setProjectTaskCounts(Object.fromEntries(entries));
+      setProjectTasks(Object.fromEntries(entries));
     } catch (e) {
-      console.error('Failed to load project task counts:', e);
+      console.error('Failed to load project tasks:', e);
     }
   }, []);
 
@@ -212,10 +181,10 @@ export const Dashboard: React.FC = () => {
     loadStandaloneTasks();
   }, []);
 
-  // Load task counts once projects are available
+  // Load project tasks once projects are available
   useEffect(() => {
     if (projects.length > 0) {
-      loadProjectTaskCounts(projects.map((p) => p.id));
+      loadProjectTasks(projects.map((p) => p.id));
     }
   }, [projects]);
 
@@ -262,6 +231,39 @@ export const Dashboard: React.FC = () => {
       setStandaloneTasks((prev) => prev.filter((t) => t.id !== id));
     } catch (e) {
       console.error('Failed to delete task:', e);
+    }
+  };
+
+  const handleToggleProjectTask = async (id: string, current: string) => {
+    const next = current === 'done' ? 'pending' : 'done';
+    try {
+      await updateTaskStatus(id, next);
+      setProjectTasks((prev) => {
+        const updated = { ...prev };
+        for (const pid of Object.keys(updated)) {
+          updated[pid] = updated[pid].map((t) =>
+            t.id === id ? { ...t, status: next as Task['status'] } : t
+          );
+        }
+        return updated;
+      });
+    } catch (e) {
+      console.error('Failed to update project task status:', e);
+    }
+  };
+
+  const handleDeleteProjectTask = async (id: string) => {
+    try {
+      await deleteTask(id);
+      setProjectTasks((prev) => {
+        const updated = { ...prev };
+        for (const pid of Object.keys(updated)) {
+          updated[pid] = updated[pid].filter((t) => t.id !== id);
+        }
+        return updated;
+      });
+    } catch (e) {
+      console.error('Failed to delete project task:', e);
     }
   };
 
@@ -316,22 +318,54 @@ export const Dashboard: React.FC = () => {
             View All
           </button>
         </div>
-        <div className={`grid ${m ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              name={project.name}
-              taskCount={projectTaskCounts[project.id] ?? 0}
-              activeJobCount={projectActiveJobs[project.id] ?? 0}
-              createdAt={project.created_at}
-              onClick={() => navigate(`/projects/${project.id}`)}
-              mobile={m}
-            />
-          ))}
+        <div className="space-y-3">
+          {projects.map((project) => {
+            const tasks = projectTasks[project.id] ?? [];
+            const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+            return (
+              <div key={project.id} className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => navigate(`/projects/${project.id}`)}
+                  className={`w-full text-left p-4 hover:dark:bg-[#1C2128] transition-all active:scale-[0.99] ${activeTasks.length > 0 ? '' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className={`font-medium dark:text-[#E6EDF3] leading-snug ${m ? 'text-sm' : 'text-sm'}`}>{project.name}</p>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {(projectActiveJobs[project.id] ?? 0) > 0 && (
+                        <span className="flex items-center gap-1 text-xs bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded-full">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                          {projectActiveJobs[project.id]}
+                        </span>
+                      )}
+                      <span className="text-xs dark:bg-[#21262D] dark:text-gray-400 px-2 py-0.5 rounded-full">
+                        {tasks.length}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs dark:text-gray-500 mt-1">{relativeTime(project.created_at)}</p>
+                </button>
+                {activeTasks.length > 0 && (
+                  <div className="px-4 pb-3 border-t border-white/5">
+                    <div className="divide-y dark:divide-white/5">
+                      {activeTasks.map((task) => (
+                        <TaskRow
+                          key={task.id}
+                          task={task}
+                          onToggle={handleToggleProjectTask}
+                          onDelete={handleDeleteProjectTask}
+                          mobile={m}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {/* New Project card */}
           <button
             onClick={() => navigate('/projects')}
-            className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed dark:border-white/10 rounded-xl p-4 dark:text-gray-500 hover:dark:border-blue-500/40 hover:dark:text-blue-400 transition-all ${m ? 'min-h-[80px]' : 'min-h-[80px]'}`}
+            className={`w-full flex flex-col items-center justify-center gap-2 border-2 border-dashed dark:border-white/10 rounded-xl p-4 dark:text-gray-500 hover:dark:border-blue-500/40 hover:dark:text-blue-400 transition-all ${m ? 'min-h-[80px]' : 'min-h-[80px]'}`}
           >
             <Plus size={18} />
             <span className="text-xs font-medium">New Project</span>

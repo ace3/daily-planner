@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, Component, type ErrorInfo, type ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
@@ -22,6 +22,27 @@ import { useMobileStore } from './stores/mobileStore';
 import { extractAndStoreToken, isWebBrowser } from './lib/http';
 import { startSseClient, stopSseClient } from './lib/eventSource';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('[ErrorBoundary]', error, info.componentStack); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-6 text-red-400">
+          <h2 className="text-lg font-bold mb-2">Something went wrong</h2>
+          <pre className="text-xs whitespace-pre-wrap">{this.state.error.message}</pre>
+          <pre className="text-xs whitespace-pre-wrap mt-2 dark:text-gray-500">{this.state.error.stack}</pre>
+          <button onClick={() => this.setState({ error: null })} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const AppInner: React.FC = () => {
   const { fetchSettings, settings } = useSettingsStore();
@@ -103,17 +124,21 @@ const AppInner: React.FC = () => {
       {!mobileMode && <Sidebar />}
       <div ref={mainContentRef} className={`flex flex-col flex-1 min-w-0 ${mobileMode ? 'min-h-0 pb-[72px]' : ''}`}>
         <TopBar />
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/:id" element={<ProjectDetail />} />
-          <Route path="/tasks/:id" element={<TaskDetail />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/remote-access" element={<RemoteAccessPage />} />
-        </Routes>
+        <div className="flex-1 min-h-0 overflow-auto" data-scrollable>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/templates" element={<TemplatesPage />} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/projects" element={<ProjectsPage />} />
+              <Route path="/projects/:id" element={<ProjectDetail />} />
+              <Route path="/tasks/:id" element={<TaskDetail />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/remote-access" element={<RemoteAccessPage />} />
+            </Routes>
+          </ErrorBoundary>
+        </div>
       </div>
       {mobileMode && <Sidebar />}
 
