@@ -101,10 +101,14 @@ interface TaskRowProps {
   mobile: boolean;
 }
 
-const TaskRow: React.FC<TaskRowProps> = ({ task, onToggle, onDelete, mobile }) => (
+interface TaskRowInternalProps extends TaskRowProps {
+  onNavigate: (id: string) => void;
+}
+
+const TaskRow: React.FC<TaskRowInternalProps> = ({ task, onToggle, onDelete, onNavigate, mobile }) => (
   <div className="flex items-center gap-3 py-2 group">
     <button
-      onClick={() => onToggle(task.id, task.status)}
+      onClick={(e) => { e.stopPropagation(); onToggle(task.id, task.status); }}
       className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
       aria-label="Toggle status"
     >
@@ -114,15 +118,16 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onToggle, onDelete, mobile }) =
         <Circle size={16} className="dark:text-gray-500" />
       )}
     </button>
-    <span
-      className={`flex-1 min-w-0 truncate ${mobile ? 'text-sm' : 'text-sm'} dark:text-[#E6EDF3] ${task.status === 'done' ? 'line-through dark:text-gray-500' : ''}`}
+    <button
+      onClick={() => onNavigate(task.id)}
+      className={`flex-1 min-w-0 text-left truncate ${mobile ? 'text-sm' : 'text-sm'} dark:text-[#E6EDF3] hover:dark:text-blue-400 transition-colors ${task.status === 'done' ? 'line-through dark:text-gray-500 hover:dark:text-blue-400' : ''}`}
     >
       {task.title}
-    </span>
+    </button>
     <div className="flex items-center gap-1">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(task.status)}`} />
       <button
-        onClick={() => onDelete(task.id)}
+        onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
         className="w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-600 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
         aria-label="Delete task"
       >
@@ -353,6 +358,7 @@ export const Dashboard: React.FC = () => {
                           task={task}
                           onToggle={handleToggleProjectTask}
                           onDelete={handleDeleteProjectTask}
+                          onNavigate={(id) => navigate(`/tasks/${id}`)}
                           mobile={m}
                         />
                       ))}
@@ -412,6 +418,7 @@ export const Dashboard: React.FC = () => {
                 task={task}
                 onToggle={handleToggle}
                 onDelete={handleDelete}
+                onNavigate={(id) => navigate(`/tasks/${id}`)}
                 mobile={m}
               />
             ))}

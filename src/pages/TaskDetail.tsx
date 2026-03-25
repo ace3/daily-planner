@@ -125,6 +125,7 @@ export const TaskDetail: React.FC = () => {
   const [rawPrompt, setRawPrompt] = useState('');
   const [improvedPrompt, setImprovedPrompt] = useState('');
   const [editingImproved, setEditingImproved] = useState(false);
+  const [copiedImproved, setCopiedImproved] = useState(false);
   const [provider, setProvider] = useState('claude');
   const [running, setRunning] = useState(false);
 
@@ -641,6 +642,16 @@ export const TaskDetail: React.FC = () => {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-xs dark:text-gray-500 uppercase tracking-wide font-medium">Improved Prompt</span>
               <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(improvedPrompt);
+                    setCopiedImproved(true);
+                    setTimeout(() => setCopiedImproved(false), 2000);
+                  }}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded dark:bg-[#21262D] dark:hover:bg-[#30363D] min-h-[32px]"
+                >
+                  {copiedImproved ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
+                </button>
                 <button
                   onClick={() => setEditingImproved((v) => !v)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded dark:bg-[#21262D] dark:hover:bg-[#30363D] min-h-[32px]"
