@@ -28,7 +28,14 @@ jobs:
           echo "Cargo.toml=${CARGO}"
 
           if [[ "${PKG}" != "${TAURI}" || "${TAURI}" != "${CARGO}" ]]; then
-            echo "Version mismatch across manifests"
+            echo "::error::Version mismatch across manifests"
+            exit 1
+          fi
+
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "git tag=${TAG}"
+          if [[ "${PKG}" != "${TAG}" ]]; then
+            echo "::error::Tag v${TAG} does not match manifest version ${PKG}"
             exit 1
           fi
 

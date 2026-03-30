@@ -84,13 +84,31 @@ pub fn run() {
                 // Determine dist/ path for static file serving.
                 // 1. current_dir() works when invoked via `cargo tauri dev` from project root.
                 // 2. Fallback: walk up from the exe (target/debug/bin → project root).
-                let dist_path = std::env::current_dir()
+                let dist_path = std::env::current_exe()
                     .ok()
-                    .map(|d| d.join("dist"))
-                    .filter(|p| p.join("index.html").exists())
+                    .and_then(|exe| {
+                        // macOS .app bundle: exe is at Synq.app/Contents/MacOS/Synq
+                        // Resources are at Synq.app/Contents/Resources/
+                        let resources = exe.parent()? // MacOS/
+                            .parent()? // Contents/
+                            .join("Resources");
+                        if resources.join("index.html").exists() {
+                            Some(resources)
+                        } else {
+                            None
+                        }
+                    })
                     .or_else(|| {
+                        // Dev: current_dir() is the project root
+                        std::env::current_dir()
+                            .ok()
+                            .map(|d| d.join("dist"))
+                            .filter(|p| p.join("index.html").exists())
+                    })
+                    .or_else(|| {
+                        // Dev fallback: walk up from exe (target/debug/bin → project root)
                         std::env::current_exe().ok().and_then(|mut exe| {
-                            for _ in 0..4 { exe.pop(); } // binary→debug→target→src-tauri→root
+                            for _ in 0..4 { exe.pop(); }
                             exe.push("dist");
                             if exe.join("index.html").exists() { Some(exe) } else { None }
                         })
