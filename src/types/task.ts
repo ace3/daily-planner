@@ -1,12 +1,21 @@
 export type TaskType = 'research' | 'prompt' | 'meeting' | 'review' | 'other';
-export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'skipped' | 'carried_over';
+export type TaskStatus = 'todo' | 'improved' | 'planned' | 'in_progress' | 'review' | 'skipped' | 'carried_over';
 export type TaskPriority = 1 | 2 | 3; // 1=high, 2=medium, 3=low
 export type WorktreeStatus = 'active' | 'merged' | 'abandoned';
 export type JobStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+export type ReviewStatus = 'none' | 'pending' | 'approved' | 'needs_fix';
+export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'copilot';
+
+/** The five kanban column statuses (in display order). */
+export const KANBAN_STATUSES: TaskStatus[] = ['todo', 'improved', 'planned', 'in_progress', 'review'];
+
+/** Side statuses that don't appear as kanban columns. */
+export const SIDE_STATUSES: TaskStatus[] = ['skipped', 'carried_over'];
 
 export interface Task {
   id: string;
   title: string;
+  description: string;
   notes: string;
   task_type: TaskType;
   priority: TaskPriority;
@@ -28,25 +37,39 @@ export interface Task {
   worktree_path: string | null;
   worktree_branch: string | null;
   worktree_status: WorktreeStatus | null;
+  deadline: string | null;
+  plan: string | null;
+  review_output: string | null;
+  review_status: ReviewStatus;
+  git_workflow: boolean;
+  agent: AgentProvider | null;
 }
 
 export interface CreateTaskInput {
   title: string;
+  description?: string;
   task_type?: TaskType;
   priority?: TaskPriority;
   estimated_min?: number;
   project_id?: string;
+  deadline?: string;
+  agent?: AgentProvider;
+  git_workflow?: boolean;
 }
 
 export interface UpdateTaskInput {
   id: string;
   title?: string;
+  description?: string;
   notes?: string;
   task_type?: TaskType;
   priority?: TaskPriority;
   estimated_min?: number;
   project_id?: string;
   clear_project?: boolean;
+  deadline?: string | null;
+  agent?: AgentProvider | null;
+  git_workflow?: boolean;
 }
 
 export interface PromptTemplate {

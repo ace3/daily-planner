@@ -11,6 +11,7 @@ import { ProjectDetail } from './pages/ProjectDetail';
 import { RemoteAccessPage } from './pages/RemoteAccessPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { TaskDetail } from './pages/TaskDetail';
+import { Login } from './pages/Login';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTaskStore } from './stores/taskStore';
@@ -19,6 +20,7 @@ import { useProviderStore } from './stores/providerStore';
 import { useSyncStore } from './stores/syncStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useMobileStore } from './stores/mobileStore';
+import { useAuthStore } from './stores/authStore';
 import { extractAndStoreToken, isWebBrowser } from './lib/http';
 import { startSseClient, stopSseClient } from './lib/eventSource';
 import { ChevronUp, ChevronDown } from 'lucide-react';
@@ -51,6 +53,7 @@ const AppInner: React.FC = () => {
   const { checkAvailability } = useProviderStore();
   const { mobileMode } = useMobileStore();
   const { syncAll } = useSyncStore();
+  const { isAuthenticated, isChecking, checkAuth } = useAuthStore();
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   const scrollBy = useCallback((amount: number) => {
@@ -67,9 +70,12 @@ const AppInner: React.FC = () => {
 
   useKeyboardShortcuts();
 
-  // Extract ?token= from URL on first load (browser mode only)
+  // Check auth session on mount (web browser only)
   useEffect(() => {
-    extractAndStoreToken();
+    if (isWebBrowser()) {
+      extractAndStoreToken();
+      checkAuth();
+    }
   }, []);
 
   // Start SSE client in browser mode for real-time updates
@@ -114,6 +120,20 @@ const AppInner: React.FC = () => {
     if (!settings) return;
     fetchTasks();
   }, [settings]);
+
+  // In web browser mode, gate on auth; in Tauri desktop skip auth UI
+  if (isWebBrowser()) {
+    if (isChecking) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-[#F5F5F7] dark:bg-[#0F1117]">
+          <div className="w-8 h-8 rounded-full border-2 border-[#0071E3] border-t-transparent animate-spin" />
+        </div>
+      );
+    }
+    if (!isAuthenticated) {
+      return <Login onSuccess={() => checkAuth()} />;
+    }
+  }
 
   return (
     <div

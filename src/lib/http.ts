@@ -59,7 +59,7 @@ export async function httpGet<T>(path: string, params?: Record<string, string>):
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
     });
   }
-  const res = await fetch(url.toString(), { headers: getAuthHeaders() });
+  const res = await fetch(url.toString(), { headers: getAuthHeaders(), credentials: 'include' });
   await checkResponse(res);
   return res.json();
 }
@@ -69,6 +69,7 @@ export async function httpPost<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(url.toString(), {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   await checkResponse(res);
@@ -81,6 +82,7 @@ export async function httpPatch<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(url.toString(), {
     method: 'PATCH',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   await checkResponse(res);
@@ -93,6 +95,7 @@ export async function httpPut<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(url.toString(), {
     method: 'PUT',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   await checkResponse(res);
@@ -105,6 +108,7 @@ export async function httpDelete<T>(path: string): Promise<T> {
   const res = await fetch(url.toString(), {
     method: 'DELETE',
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
   await checkResponse(res);
   const text = await res.text();

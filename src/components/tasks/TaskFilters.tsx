@@ -16,9 +16,9 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
 }) => {
   const statuses: Array<{ value: TaskStatus | 'all'; label: string }> = [
     { value: 'all', label: 'All' },
-    { value: 'pending', label: 'Pending' },
+    { value: 'todo', label: 'To-Do' },
     { value: 'in_progress', label: 'Active' },
-    { value: 'done', label: 'Done' },
+    { value: 'review', label: 'Review' },
     { value: 'skipped', label: 'Skipped' },
   ];
 

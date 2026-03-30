@@ -1,6 +1,8 @@
+mod auth;
 mod commands;
-mod db;
-mod http_server;
+pub mod db;
+pub mod http_server;
+pub mod mcp_server;
 mod tray;
 mod tunnel;
 
@@ -57,6 +59,15 @@ pub fn run() {
                 }
             }
 
+            // Read HTTP port for browser launch
+            let http_port: u16 = {
+                let conn = db.0.lock().expect("DB lock");
+                db::queries::get_setting(&conn, "http_server_port")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(7734u16)
+            };
+
             app.manage(db);
 
             // Job registry shared by Tauri commands AND the HTTP server
@@ -89,6 +100,17 @@ pub fn run() {
                     http_server::start(http_db_path, http_registry, dist_path).await;
                 });
             }
+
+            // Auto-launch browser after server starts (headless mode — no desktop window)
+            tauri::async_runtime::spawn(async move {
+                // Give the HTTP server a moment to bind its port
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                let url = format!("http://localhost:{}", http_port);
+                eprintln!("[headless] Opening browser: {}", url);
+                if let Err(e) = open::that(&url) {
+                    eprintln!("[headless] Failed to open browser: {}", e);
+                }
+            });
 
             // Start auto-backup scheduler
             {
@@ -131,9 +153,13 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
+            commands::claude::generate_plan,
             commands::claude::run_prompt,
             commands::claude::create_and_run_job,
             commands::claude::cancel_prompt_run,
+            commands::claude::review_task,
+            commands::claude::approve_task_review,
+            commands::claude::fix_from_review,
             commands::claude::is_git_worktree,
             commands::claude::check_cli_availability,
             commands::copilot::invoke_copilot_cli,

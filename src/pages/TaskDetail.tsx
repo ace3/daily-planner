@@ -16,6 +16,10 @@ import {
   updateTaskStatus,
   updateTaskPrompt,
   runTaskPrompt,
+  generatePlan,
+  reviewTask,
+  approveTaskReview,
+  fixFromReview,
   cancelPromptRun,
   getJobsByTask,
   gitDiff as fetchGitDiff,
@@ -23,6 +27,7 @@ import {
   gitCommit,
   gitPush,
 } from '../lib/tauri';
+import { ReviewPanel } from '../components/ReviewPanel';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,11 +35,13 @@ import {
 
 function statusColors(status: string): string {
   switch (status) {
-    case 'done': return 'bg-green-500/20 text-green-400';
+    case 'review': return 'bg-green-500/20 text-green-400';
     case 'in_progress': return 'bg-blue-500/20 text-blue-400';
+    case 'planned': return 'bg-cyan-500/20 text-cyan-400';
+    case 'improved': return 'bg-purple-500/20 text-purple-400';
     case 'skipped': return 'bg-gray-500/20 text-gray-400';
     case 'carried_over': return 'bg-orange-500/20 text-orange-400';
-    default: return 'bg-yellow-500/20 text-yellow-400';
+    default: return 'bg-yellow-500/20 text-yellow-400'; // todo
   }
 }
 
@@ -145,6 +152,16 @@ export const TaskDetail: React.FC = () => {
   const [committing, setCommitting] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [gitActionMsg, setGitActionMsg] = useState('');
+
+  // Plan
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  // Review
+  const [reviewing, setReviewing] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Copy output
   const [copied, setCopied] = useState(false);
@@ -286,6 +303,73 @@ export const TaskDetail: React.FC = () => {
       });
     } catch (e) {
       console.error('Improve failed:', e);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Generate plan
+  // ---------------------------------------------------------------------------
+  const handleGeneratePlan = async () => {
+    if (!task) return;
+    const promptToUse = improvedPrompt.trim() || rawPrompt.trim();
+    if (!promptToUse) return;
+    setPlanLoading(true);
+    setPlanError(null);
+    try {
+      const project = projects.find((p) => p.id === task.project_id);
+      await generatePlan(task.id, task.title, promptToUse, project?.path, provider, task.project_id ?? undefined);
+      await loadTask();
+    } catch (e) {
+      setPlanError(String(e));
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Review handlers
+  // ---------------------------------------------------------------------------
+  const handleRequestReview = async () => {
+    if (!task) return;
+    setReviewing(true);
+    setReviewError(null);
+    try {
+      await reviewTask(task.id, provider);
+      await loadTask();
+    } catch (e) {
+      setReviewError(String(e));
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!task) return;
+    setApproving(true);
+    setReviewError(null);
+    try {
+      await approveTaskReview(task.id);
+      await loadTask();
+    } catch (e) {
+      setReviewError(String(e));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleFixFromReview = async () => {
+    if (!task) return;
+    setFixing(true);
+    setReviewError(null);
+    try {
+      const project = projects.find((p) => p.id === task.project_id);
+      await fixFromReview(task.id, provider, project?.path);
+      await loadTask();
+      await loadJobs();
+    } catch (e) {
+      setReviewError(String(e));
+    } finally {
+      setFixing(false);
     }
   };
 
@@ -551,10 +635,13 @@ export const TaskDetail: React.FC = () => {
               }}
               className="w-full px-3 py-2 rounded-lg dark:bg-[#0D1117] dark:text-[#E6EDF3] dark:border-[#30363D] border text-sm min-h-[44px]"
             >
-              <option value="pending">Pending</option>
+              <option value="todo">To Do</option>
+              <option value="improved">Improved</option>
+              <option value="planned">Planned</option>
               <option value="in_progress">In Progress</option>
-              <option value="done">Done</option>
+              <option value="review">Review</option>
               <option value="skipped">Skipped</option>
+              <option value="carried_over">Carried Over</option>
             </select>
           </div>
         </div>
@@ -603,7 +690,7 @@ export const TaskDetail: React.FC = () => {
           />
         </div>
 
-        {/* Controls row: Improve + Provider */}
+        {/* Controls row: Improve + Generate Plan + Provider */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={handleImprove}
@@ -612,6 +699,15 @@ export const TaskDetail: React.FC = () => {
           >
             {improvingRuns.length > 0 ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {improvingRuns.length > 0 ? `Improving (${improvingRuns.length})...` : 'Improve with AI'}
+          </button>
+
+          <button
+            onClick={handleGeneratePlan}
+            disabled={planLoading || (!rawPrompt.trim() && !improvedPrompt.trim())}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg dark:bg-cyan-700 hover:dark:bg-cyan-600 disabled:opacity-50 text-white text-sm min-h-[44px]"
+          >
+            {planLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+            {planLoading ? 'Planning...' : 'Generate Plan'}
           </button>
 
           <select
@@ -684,6 +780,29 @@ export const TaskDetail: React.FC = () => {
                 {improvedPrompt}
               </pre>
             )}
+          </div>
+        )}
+
+        {/* Plan error */}
+        {planError && (
+          <div className="text-xs text-red-400 whitespace-pre-wrap">Plan failed: {planError}</div>
+        )}
+
+        {/* Plan display */}
+        {task.plan && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs dark:text-gray-500 uppercase tracking-wide font-medium">Execution Plan</span>
+              <button
+                onClick={() => navigator.clipboard.writeText(task.plan ?? '')}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded dark:bg-[#21262D] dark:hover:bg-[#30363D] min-h-[32px]"
+              >
+                <Copy size={12} /> Copy
+              </button>
+            </div>
+            <pre className="p-3 rounded-lg dark:bg-[#0D1117] text-xs font-mono dark:text-[#E6EDF3] whitespace-pre-wrap max-h-[300px] overflow-y-auto border dark:border-[#30363D] leading-5">
+              {task.plan}
+            </pre>
           </div>
         )}
 
@@ -844,6 +963,24 @@ export const TaskDetail: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Review Panel (visible when status = review or review_output exists)  */}
+      {/* ------------------------------------------------------------------ */}
+      {(task.status === 'review' || task.review_output) && (
+        <ReviewPanel
+          taskId={task.id}
+          reviewOutput={task.review_output}
+          reviewStatus={task.review_status}
+          onReviewRequested={handleRequestReview}
+          onApproved={handleApprove}
+          onFixRequested={handleFixFromReview}
+          reviewing={reviewing}
+          approving={approving}
+          fixing={fixing}
+          error={reviewError}
+        />
       )}
 
       {/* ------------------------------------------------------------------ */}

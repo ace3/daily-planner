@@ -161,9 +161,21 @@ export const deletePromptTemplate = (id: string): Promise<boolean> =>
 // Settings
 // ---------------------------------------------------------------------------
 
+/** Parse fields that the HTTP API returns as raw JSON strings but the Tauri command returns as typed values. */
+function normalizeHttpSettings(raw: Record<string, unknown>): AppSettings {
+  return {
+    ...raw,
+    work_days: Array.isArray(raw.work_days)
+      ? raw.work_days
+      : typeof raw.work_days === 'string'
+        ? JSON.parse(raw.work_days)
+        : [1, 2, 3, 4, 5],
+  } as AppSettings;
+}
+
 export const getSettings = (): Promise<AppSettings> =>
   isWebBrowser()
-    ? httpGet<AppSettings>('/api/settings')
+    ? httpGet<Record<string, unknown>>('/api/settings').then(normalizeHttpSettings)
     : tauriInvoke<AppSettings>('get_settings', {});
 
 export const getSetting = (key: string): Promise<string | null> =>
@@ -179,6 +191,37 @@ export const setSetting = (key: string, value: string): Promise<void> =>
 // ---------------------------------------------------------------------------
 // CLI / AI providers
 // ---------------------------------------------------------------------------
+
+export const generatePlan = (
+  taskId: string,
+  taskTitle: string,
+  prompt: string,
+  projectPath?: string,
+  provider?: string,
+  projectId?: string,
+): Promise<string> =>
+  isWebBrowser()
+    ? httpPost<{ plan: string }>(`/api/tasks/${taskId}/generate-plan`, { provider }).then((r) => r.plan)
+    : tauriInvoke<string>('generate_plan', { taskId, taskTitle, prompt, projectPath, provider, projectId });
+
+export const reviewTask = (taskId: string, provider?: string): Promise<string> =>
+  isWebBrowser()
+    ? httpPost<{ review: string }>(`/api/tasks/${taskId}/review`, { provider }).then((r) => r.review)
+    : tauriInvoke<string>('review_task', { taskId, provider });
+
+export const approveTaskReview = (taskId: string): Promise<void> =>
+  isWebBrowser()
+    ? httpPost<void>(`/api/tasks/${taskId}/review/approve`, {})
+    : tauriInvoke<void>('approve_task_review', { taskId });
+
+export const fixFromReview = (
+  taskId: string,
+  provider?: string,
+  projectPath?: string,
+): Promise<string> =>
+  isWebBrowser()
+    ? httpPost<{ job_id: string }>(`/api/tasks/${taskId}/fix-review`, { provider, projectPath }).then((r) => r.job_id)
+    : tauriInvoke<string>('fix_from_review', { taskId, provider, projectPath });
 
 export const improvePromptWithClaude = (
   prompt: string,
@@ -223,7 +266,7 @@ export const checkCopilotCliAvailability = (): Promise<{ available: boolean }> =
 
 export const detectAiProviders = (): Promise<AiProvider[]> =>
   isWebBrowser()
-    ? Promise.resolve([])
+    ? httpGet<AiProvider[]>('/api/ai-providers')
     : tauriInvoke<AiProvider[]>('detect_ai_providers', {});
 
 export const isGitWorktree = (projectPath: string): Promise<boolean> =>

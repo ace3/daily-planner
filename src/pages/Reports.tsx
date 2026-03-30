@@ -37,8 +37,8 @@ export const Reports: React.FC = () => {
   const handleAiReflection = async () => {
     if (!report) return;
     setGeneratingReflection(true);
-    const doneTasks = tasks.filter((t) => t.status === 'done').map((t) => t.title).join('\n');
-    const pendingTasks = tasks.filter((t) => t.status === 'pending').map((t) => t.title).join('\n');
+    const doneTasks = tasks.filter((t) => t.status === 'review').map((t) => t.title).join('\n');
+    const pendingTasks = tasks.filter((t) => t.status === 'todo').map((t) => t.title).join('\n');
     const prompt = `You are a daily planning assistant. Generate a concise end-of-day reflection (3-4 sentences) based on today's work:
 
 Completed tasks:

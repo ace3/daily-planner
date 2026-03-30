@@ -1,9 +1,11 @@
 use anyhow::Context;
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHasher};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -69,6 +71,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 13 {
         apply_v13(conn)?;
+    }
+    if current < 14 {
+        apply_v14(conn)?;
     }
 
     eprintln!(
@@ -769,6 +774,95 @@ fn apply_v13(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v14(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 14, "V4 revamp: users, sessions, kanban statuses, task fields", |tx| {
+        // 1. Create users table
+        tx.execute_batch("
+            CREATE TABLE IF NOT EXISTS users (
+                id                   TEXT PRIMARY KEY,
+                username             TEXT NOT NULL UNIQUE,
+                password_hash        TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 1,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        ").context("Create users table")?;
+
+        // 2. Create sessions table
+        tx.execute_batch("
+            CREATE TABLE IF NOT EXISTS sessions (
+                id         TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token      TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+        ").context("Create sessions table")?;
+
+        // 3. Insert default admin user with argon2-hashed "password" password.
+        //    The hash is generated using argon2id with default params.
+        //    Password: "password"
+        let salt = SaltString::from_b64("c3lucS1kZWZhdWx0LXNhbHQ")
+            .map_err(|e| anyhow::anyhow!("Failed to create salt: {}", e))?;
+        let argon2 = Argon2::default();
+        let hash = argon2
+            .hash_password(b"password", &salt)
+            .map_err(|e| anyhow::anyhow!("Failed to hash default password: {}", e))?
+            .to_string();
+
+        tx.execute(
+            "INSERT OR IGNORE INTO users (id, username, password_hash, must_change_password) \
+             VALUES ('default-admin', 'admin', ?1, 1)",
+            params![hash],
+        ).context("Insert default admin user")?;
+
+        // 4. Add new task columns for kanban workflow
+        if !column_exists(tx, "tasks", "description")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT '';")
+                .context("Add tasks.description")?;
+        }
+        if !column_exists(tx, "tasks", "deadline")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN deadline TEXT DEFAULT NULL;")
+                .context("Add tasks.deadline")?;
+        }
+        if !column_exists(tx, "tasks", "plan")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT DEFAULT NULL;")
+                .context("Add tasks.plan")?;
+        }
+        if !column_exists(tx, "tasks", "review_output")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN review_output TEXT DEFAULT NULL;")
+                .context("Add tasks.review_output")?;
+        }
+        if !column_exists(tx, "tasks", "review_status")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN review_status TEXT NOT NULL DEFAULT 'none';")
+                .context("Add tasks.review_status")?;
+        }
+        if !column_exists(tx, "tasks", "git_workflow")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN git_workflow INTEGER NOT NULL DEFAULT 0;")
+                .context("Add tasks.git_workflow")?;
+        }
+        if !column_exists(tx, "tasks", "agent")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN agent TEXT DEFAULT NULL;")
+                .context("Add tasks.agent")?;
+        }
+
+        // 5. Remap task statuses: pending→todo, done→review
+        tx.execute("UPDATE tasks SET status = 'todo' WHERE status = 'pending'", [])
+            .context("Remap pending→todo")?;
+        tx.execute("UPDATE tasks SET status = 'review' WHERE status = 'done'", [])
+            .context("Remap done→review")?;
+
+        // 6. Add index for deadline queries
+        tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);")
+            .context("Create idx_tasks_deadline")?;
+
+        Ok(())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -905,6 +999,8 @@ mod tests {
             "projects",
             "schema_version",
             "prompt_jobs",
+            "users",
+            "sessions",
         ] {
             assert!(table_exists(&conn, tbl).unwrap(), "Table '{}' missing", tbl);
         }
@@ -923,6 +1019,35 @@ mod tests {
         assert!(column_exists(&conn, "tasks", "job_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
         assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
+
+        // v14 columns
+        assert!(column_exists(&conn, "tasks", "description").unwrap());
+        assert!(column_exists(&conn, "tasks", "deadline").unwrap());
+        assert!(column_exists(&conn, "tasks", "plan").unwrap());
+        assert!(column_exists(&conn, "tasks", "review_output").unwrap());
+        assert!(column_exists(&conn, "tasks", "review_status").unwrap());
+        assert!(column_exists(&conn, "tasks", "git_workflow").unwrap());
+        assert!(column_exists(&conn, "tasks", "agent").unwrap());
+
+        // v14 users table has default admin
+        let admin_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE username='admin'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(admin_count, 1, "Default admin user must exist");
+
+        // Admin must require password change
+        let must_change: i64 = conn
+            .query_row(
+                "SELECT must_change_password FROM users WHERE username='admin'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(must_change, 1, "Admin must require password change on first login");
 
         // Schema version recorded correctly.
         let v: i64 = conn
@@ -1009,6 +1134,22 @@ mod tests {
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
         assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
 
+        // v14: status remapping — legacy 'done' task should now be 'review'
+        let status: String = conn
+            .query_row("SELECT status FROM tasks WHERE id='legacy-1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "review", "Legacy 'done' status must be remapped to 'review'");
+
+        // v14: users and sessions tables
+        assert!(table_exists(&conn, "users").unwrap());
+        assert!(table_exists(&conn, "sessions").unwrap());
+        assert!(column_exists(&conn, "tasks", "description").unwrap());
+        assert!(column_exists(&conn, "tasks", "deadline").unwrap());
+        assert!(column_exists(&conn, "tasks", "plan").unwrap());
+        assert!(column_exists(&conn, "tasks", "agent").unwrap());
+
         let v: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
@@ -1066,11 +1207,11 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
             .unwrap();
 
-        // Insert user data using v12 schema (no date/session_slot).
+        // Insert user data using v14 schema (status is now 'todo' not 'pending').
         conn.execute(
             "INSERT INTO tasks (id, title, task_type, priority, \
              status, position, created_at, updated_at) \
-             VALUES ('t1','My Task','prompt',1,'pending',0,\
+             VALUES ('t1','My Task','prompt',1,'todo',0,\
              datetime('now'),datetime('now'))",
             [],
         )

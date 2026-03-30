@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { checkCliAvailability, checkCopilotCliAvailability, detectAiProviders } from '../lib/tauri';
+import { detectAiProviders } from '../lib/tauri';
 
 interface ProviderState {
   claudeAvailable: boolean;
@@ -17,17 +17,13 @@ export const useProviderStore = create<ProviderState>((set) => ({
 
   checkAvailability: async () => {
     try {
-      const [status, copilotStatus, providers] = await Promise.all([
-        checkCliAvailability(),
-        checkCopilotCliAvailability(),
-        detectAiProviders(),
-      ]);
-      const codexProvider = providers.find((p) => p.id === 'codex');
+      const providers = await detectAiProviders();
+      const has = (id: string) => providers.some((p) => p.id === id && p.available);
       set({
-        claudeAvailable: status.claude_available,
-        opencodeAvailable: status.opencode_available,
-        codexAvailable: codexProvider?.available ?? false,
-        copilotAvailable: copilotStatus.available,
+        claudeAvailable: has('claude'),
+        opencodeAvailable: has('opencode'),
+        codexAvailable: has('codex'),
+        copilotAvailable: has('copilot'),
       });
     } catch {
       set({ claudeAvailable: false, opencodeAvailable: false, codexAvailable: false, copilotAvailable: false });

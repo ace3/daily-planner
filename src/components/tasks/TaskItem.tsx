@@ -55,7 +55,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const { mobileMode: m } = useMobileStore();
-  const isDone = task.status === 'done';
+  const isDone = task.status === 'review';
   const isSkipped = task.status === 'skipped';
   const isCarried = task.status === 'carried_over';
 
@@ -76,7 +76,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         <div className="flex items-center gap-3 p-3">
           {/* Status toggle — big tap target */}
           <button
-            onClick={() => onStatusChange(task.id, isDone ? 'pending' : 'done')}
+            onClick={() => onStatusChange(task.id, isDone ? 'todo' : 'review')}
             className="shrink-0 cursor-pointer text-gray-400 dark:text-[#484F58] hover:text-emerald-400 transition-colors p-1 min-w-[44px] min-h-[44px] flex items-center justify-center"
           >
             {isDone ? (
@@ -204,7 +204,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
         {/* Status toggle */}
         <button
-          onClick={() => onStatusChange(task.id, isDone ? 'pending' : 'done')}
+          onClick={() => onStatusChange(task.id, isDone ? 'todo' : 'review')}
           className="mt-0.5 shrink-0 cursor-pointer text-gray-400 dark:text-[#484F58] hover:text-emerald-400 transition-colors"
         >
           {isDone ? (

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Task {
     pub id: String,
     pub title: String,
+    pub description: String,
     pub notes: String,
     pub task_type: String,
     pub priority: i64,
@@ -26,6 +27,12 @@ pub struct Task {
     pub worktree_path: Option<String>,
     pub worktree_branch: Option<String>,
     pub worktree_status: Option<String>,
+    pub deadline: Option<String>,
+    pub plan: Option<String>,
+    pub review_output: Option<String>,
+    pub review_status: String,
+    pub git_workflow: bool,
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -106,42 +113,51 @@ pub struct Device {
 // ---- TASK QUERIES ----
 
 /// Column list for all task SELECT queries — must match row_to_task indices exactly.
-const TASK_COLUMNS: &str = "id, title, notes, task_type, priority, status,
+const TASK_COLUMNS: &str = "id, title, description, notes, task_type, priority, status,
     estimated_min, actual_min, raw_prompt, improved_prompt, prompt_output,
     job_status, job_id, provider, carried_from, position,
     created_at, updated_at, completed_at, project_id,
-    worktree_path, worktree_branch, worktree_status";
-const TASK_COLUMNS_T: &str = "t.id, t.title, t.notes, t.task_type, t.priority, t.status,
+    worktree_path, worktree_branch, worktree_status,
+    deadline, plan, review_output, review_status, git_workflow, agent";
+const TASK_COLUMNS_T: &str = "t.id, t.title, t.description, t.notes, t.task_type, t.priority, t.status,
     t.estimated_min, t.actual_min, t.raw_prompt, t.improved_prompt, t.prompt_output,
     t.job_status, t.job_id, t.provider, t.carried_from, t.position,
     t.created_at, t.updated_at, t.completed_at, t.project_id,
-    t.worktree_path, t.worktree_branch, t.worktree_status";
+    t.worktree_path, t.worktree_branch, t.worktree_status,
+    t.deadline, t.plan, t.review_output, t.review_status, t.git_workflow, t.agent";
 
 fn row_to_task(row: &rusqlite::Row) -> Result<Task> {
     Ok(Task {
         id: row.get(0)?,
         title: row.get(1)?,
-        notes: row.get(2)?,
-        task_type: row.get(3)?,
-        priority: row.get(4)?,
-        status: row.get(5)?,
-        estimated_min: row.get(6)?,
-        actual_min: row.get(7)?,
-        raw_prompt: row.get(8)?,
-        improved_prompt: row.get(9)?,
-        prompt_output: row.get(10)?,
-        job_status: row.get(11)?,
-        job_id: row.get(12)?,
-        provider: row.get(13)?,
-        carried_from: row.get(14)?,
-        position: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
-        completed_at: row.get(18)?,
-        project_id: row.get(19)?,
-        worktree_path: row.get(20)?,
-        worktree_branch: row.get(21)?,
-        worktree_status: row.get(22)?,
+        description: row.get(2)?,
+        notes: row.get(3)?,
+        task_type: row.get(4)?,
+        priority: row.get(5)?,
+        status: row.get(6)?,
+        estimated_min: row.get(7)?,
+        actual_min: row.get(8)?,
+        raw_prompt: row.get(9)?,
+        improved_prompt: row.get(10)?,
+        prompt_output: row.get(11)?,
+        job_status: row.get(12)?,
+        job_id: row.get(13)?,
+        provider: row.get(14)?,
+        carried_from: row.get(15)?,
+        position: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
+        completed_at: row.get(19)?,
+        project_id: row.get(20)?,
+        worktree_path: row.get(21)?,
+        worktree_branch: row.get(22)?,
+        worktree_status: row.get(23)?,
+        deadline: row.get(24)?,
+        plan: row.get(25)?,
+        review_output: row.get(26)?,
+        review_status: row.get(27)?,
+        git_workflow: row.get(28)?,
+        agent: row.get(29)?,
     })
 }
 
@@ -200,10 +216,14 @@ pub fn get_task_by_id(conn: &Connection, id: &str) -> Result<Option<Task>> {
 pub fn create_task(
     conn: &Connection,
     title: &str,
+    description: Option<&str>,
     task_type: &str,
     priority: i64,
     estimated_min: Option<i64>,
     project_id: Option<&str>,
+    deadline: Option<&str>,
+    agent: Option<&str>,
+    git_workflow: bool,
 ) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string().replace("-", "");
     let max_pos: i64 = if let Some(pid) = project_id {
@@ -221,15 +241,16 @@ pub fn create_task(
     };
 
     conn.execute(
-        "INSERT INTO tasks (id, title, task_type, priority, estimated_min, position, project_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, title, task_type, priority, estimated_min, max_pos + 1, project_id],
+        "INSERT INTO tasks (id, title, description, task_type, priority, status, estimated_min, position, project_id, deadline, agent, git_workflow)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'todo', ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![id, title, description.unwrap_or(""), task_type, priority, estimated_min, max_pos + 1, project_id, deadline, agent, git_workflow],
     )?;
     Ok(id)
 }
 
 pub fn update_task_status(conn: &Connection, id: &str, status: &str) -> Result<()> {
-    let completed_at = if status == "done" {
+    // Set completed_at when task reaches review with approved review_status
+    let completed_at = if status == "review" {
         Some(chrono::Utc::now().to_rfc3339())
     } else {
         None
@@ -245,17 +266,27 @@ pub fn update_task(
     conn: &Connection,
     id: &str,
     title: Option<&str>,
+    description: Option<&str>,
     notes: Option<&str>,
     task_type: Option<&str>,
     priority: Option<i64>,
     estimated_min: Option<i64>,
     project_id: Option<&str>,
     clear_project: bool,
+    deadline: Option<Option<&str>>,
+    agent: Option<Option<&str>>,
+    git_workflow: Option<bool>,
 ) -> Result<()> {
     if let Some(t) = title {
         conn.execute(
             "UPDATE tasks SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![t, id],
+        )?;
+    }
+    if let Some(d) = description {
+        conn.execute(
+            "UPDATE tasks SET description = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![d, id],
         )?;
     }
     if let Some(n) = notes {
@@ -293,6 +324,24 @@ pub fn update_task(
             params![pid, id],
         )?;
     }
+    if let Some(dl) = deadline {
+        conn.execute(
+            "UPDATE tasks SET deadline = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![dl, id],
+        )?;
+    }
+    if let Some(ag) = agent {
+        conn.execute(
+            "UPDATE tasks SET agent = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![ag, id],
+        )?;
+    }
+    if let Some(gw) = git_workflow {
+        conn.execute(
+            "UPDATE tasks SET git_workflow = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![gw, id],
+        )?;
+    }
     Ok(())
 }
 
@@ -307,9 +356,9 @@ pub fn carry_task_forward(conn: &Connection, id: &str) -> Result<String> {
 
     let new_id = uuid::Uuid::new_v4().to_string().replace("-", "");
     conn.execute(
-        "INSERT INTO tasks (id, title, notes, task_type, priority, estimated_min, carried_from, project_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![new_id, task.title, task.notes, task.task_type, task.priority, task.estimated_min, id, task.project_id],
+        "INSERT INTO tasks (id, title, description, notes, task_type, priority, status, estimated_min, carried_from, project_id, agent, git_workflow)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'todo', ?7, ?8, ?9, ?10, ?11)",
+        params![new_id, task.title, task.description, task.notes, task.task_type, task.priority, task.estimated_min, id, task.project_id, task.agent, task.git_workflow],
     )?;
     conn.execute(
         "UPDATE tasks SET status = 'carried_over', updated_at = datetime('now') WHERE id = ?1",
@@ -409,6 +458,30 @@ pub fn reorder_tasks(conn: &Connection, task_ids: &[String]) -> Result<()> {
             params![i as i64, id],
         )?;
     }
+    Ok(())
+}
+
+pub fn update_task_plan(conn: &Connection, id: &str, plan: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET plan = ?1, status = 'planned', updated_at = datetime('now') WHERE id = ?2",
+        params![plan, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_task_review(conn: &Connection, id: &str, review_output: &str, review_status: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET review_output = ?1, review_status = ?2, updated_at = datetime('now') WHERE id = ?3",
+        params![review_output, review_status, id],
+    )?;
+    Ok(())
+}
+
+pub fn set_task_improved(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET status = 'improved', updated_at = datetime('now') WHERE id = ?1",
+        params![id],
+    )?;
     Ok(())
 }
 
@@ -1023,12 +1096,12 @@ mod tests {
     #[test]
     fn test_create_and_get_task() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "Test task", "prompt", 2, Some(30), None).unwrap();
+        let id = create_task(&conn, "Test task", None, "prompt", 2, Some(30), None, None, None, false).unwrap();
         let tasks = get_standalone_tasks(&conn).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, id);
         assert_eq!(tasks[0].title, "Test task");
-        assert_eq!(tasks[0].status, "pending");
+        assert_eq!(tasks[0].status, "todo");
         assert_eq!(tasks[0].job_status, "idle");
         assert_eq!(tasks[0].worktree_status, None);
     }
@@ -1037,7 +1110,7 @@ mod tests {
     fn test_create_task_with_project() {
         let conn = setup_test_db();
         let pid = create_project(&conn, "My Project", "/tmp/proj").unwrap();
-        let id = create_task(&conn, "Project task", "prompt", 1, None, Some(&pid)).unwrap();
+        let id = create_task(&conn, "Project task", None, "prompt", 1, None, Some(&pid), None, None, false).unwrap();
         let tasks = get_tasks_by_project(&conn, &pid).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, id);
@@ -1050,17 +1123,17 @@ mod tests {
     #[test]
     fn test_update_task_status() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "Test", "prompt", 2, None, None).unwrap();
-        update_task_status(&conn, &id, "done").unwrap();
+        let id = create_task(&conn, "Test", None, "prompt", 2, None, None, None, None, false).unwrap();
+        update_task_status(&conn, &id, "review").unwrap();
         let task = get_task_by_id(&conn, &id).unwrap().unwrap();
-        assert_eq!(task.status, "done");
+        assert_eq!(task.status, "review");
         assert!(task.completed_at.is_some());
     }
 
     #[test]
     fn test_carry_forward() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "Carry me", "prompt", 1, None, None).unwrap();
+        let id = create_task(&conn, "Carry me", None, "prompt", 1, None, None, None, None, false).unwrap();
         let new_id = carry_task_forward(&conn, &id).unwrap();
         let all = get_standalone_tasks(&conn).unwrap();
         // original is carried_over, new one is pending
@@ -1068,7 +1141,7 @@ mod tests {
         let carried = all.iter().find(|t| t.id == new_id).unwrap();
         assert_eq!(original.status, "carried_over");
         assert_eq!(carried.carried_from.as_deref(), Some(id.as_str()));
-        assert_eq!(carried.status, "pending");
+        assert_eq!(carried.status, "todo");
     }
 
     #[test]
@@ -1082,8 +1155,8 @@ mod tests {
     #[test]
     fn test_generate_report() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "Task 1", "prompt", 1, Some(30), None).unwrap();
-        let id2 = create_task(&conn, "Task 2", "prompt", 2, Some(20), None).unwrap();
+        let id1 = create_task(&conn, "Task 1", None, "prompt", 1, Some(30), None, None, None, false).unwrap();
+        let id2 = create_task(&conn, "Task 2", None, "prompt", 2, Some(20), None, None, None, false).unwrap();
         update_task_status(&conn, &id1, "done").unwrap();
         update_task_status(&conn, &id2, "skipped").unwrap();
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -1095,8 +1168,8 @@ mod tests {
     #[test]
     fn test_reorder_tasks() {
         let conn = setup_test_db();
-        let id1 = create_task(&conn, "Task A", "prompt", 1, None, None).unwrap();
-        let id2 = create_task(&conn, "Task B", "prompt", 2, None, None).unwrap();
+        let id1 = create_task(&conn, "Task A", None, "prompt", 1, None, None, None, None, false).unwrap();
+        let id2 = create_task(&conn, "Task B", None, "prompt", 2, None, None, None, None, false).unwrap();
         reorder_tasks(&conn, &[id2.clone(), id1.clone()]).unwrap();
         let tasks = get_standalone_tasks(&conn).unwrap();
         let t2 = tasks.iter().find(|t| t.id == id2).unwrap();
@@ -1106,7 +1179,7 @@ mod tests {
     #[test]
     fn test_set_task_worktree_metadata() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "Worktree task", "prompt", 2, None, None).unwrap();
+        let id = create_task(&conn, "Worktree task", None, "prompt", 2, None, None, None, None, false).unwrap();
 
         set_task_worktree_metadata(
             &conn,
@@ -1133,7 +1206,7 @@ mod tests {
     #[test]
     fn test_create_prompt_job() {
         let conn = setup_test_db();
-        let task_id = create_task(&conn, "AI task", "prompt", 1, None, None).unwrap();
+        let task_id = create_task(&conn, "AI task", None, "prompt", 1, None, None, None, None, false).unwrap();
         let job_id = create_prompt_job(
             &conn, &task_id, None, "claude", "Do the thing", None, None,
         ).unwrap();
@@ -1153,7 +1226,7 @@ mod tests {
     #[test]
     fn test_get_active_jobs() {
         let conn = setup_test_db();
-        let task_id = create_task(&conn, "AI task 2", "prompt", 1, None, None).unwrap();
+        let task_id = create_task(&conn, "AI task 2", None, "prompt", 1, None, None, None, None, false).unwrap();
         let job_id = create_prompt_job(
             &conn, &task_id, None, "claude", "Prompt text", None, None,
         ).unwrap();
@@ -1171,7 +1244,7 @@ mod tests {
     #[test]
     fn test_save_task_prompt() {
         let conn = setup_test_db();
-        let id = create_task(&conn, "Prompt task", "prompt", 1, None, None).unwrap();
+        let id = create_task(&conn, "Prompt task", None, "prompt", 1, None, None, None, None, false).unwrap();
         save_task_prompt(&conn, &id, Some("raw text"), Some("improved text")).unwrap();
         let task = get_task_by_id(&conn, &id).unwrap().unwrap();
         assert_eq!(task.raw_prompt.as_deref(), Some("raw text"));
@@ -1181,7 +1254,7 @@ mod tests {
     #[test]
     fn test_tasks_by_date_range() {
         let conn = setup_test_db();
-        let _id = create_task(&conn, "Range task", "prompt", 1, None, None).unwrap();
+        let _id = create_task(&conn, "Range task", None, "prompt", 1, None, None, None, None, false).unwrap();
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let tasks = get_tasks_by_date_range(&conn, &today, &today).unwrap();
         assert_eq!(tasks.len(), 1);
@@ -1191,10 +1264,10 @@ mod tests {
     fn test_get_all_tasks_includes_project_tasks() {
         let conn = setup_test_db();
         // Create a standalone task
-        let _s = create_task(&conn, "Standalone", "other", 2, None, None).unwrap();
+        let _s = create_task(&conn, "Standalone", None, "other", 2, None, None, None, None, false).unwrap();
         // Create a project and a task in that project
         let pid = create_project(&conn, "Proj", "/tmp/p").unwrap();
-        let _p = create_task(&conn, "Project task", "prompt", 1, None, Some(&pid)).unwrap();
+        let _p = create_task(&conn, "Project task", None, "prompt", 1, None, Some(&pid), None, None, false).unwrap();
 
         // get_all_tasks must return both
         let all = get_all_tasks(&conn).unwrap();
@@ -1215,7 +1288,7 @@ mod tests {
     fn test_soft_delete_restore_project_and_tasks_visibility() {
         let conn = setup_test_db();
         let pid = create_project(&conn, "Trash Me", "/tmp/trash-me").unwrap();
-        let tid = create_task(&conn, "Keep for history", "prompt", 2, None, Some(&pid)).unwrap();
+        let tid = create_task(&conn, "Keep for history", None, "prompt", 2, None, Some(&pid), None, None, false).unwrap();
 
         let active_before = get_projects(&conn).unwrap();
         assert_eq!(active_before.len(), 1);
@@ -1244,7 +1317,7 @@ mod tests {
     fn test_hard_delete_project_removes_tasks_and_jobs() {
         let conn = setup_test_db();
         let pid = create_project(&conn, "Hard Delete", "/tmp/hard-delete").unwrap();
-        let tid = create_task(&conn, "Task to remove", "prompt", 1, None, Some(&pid)).unwrap();
+        let tid = create_task(&conn, "Task to remove", None, "prompt", 1, None, Some(&pid), None, None, false).unwrap();
         let jid = create_prompt_job(
             &conn,
             &tid,
@@ -1268,9 +1341,9 @@ mod tests {
     #[test]
     fn test_get_all_tasks_active_excludes_tasks_from_trashed_projects() {
         let conn = setup_test_db();
-        let _standalone = create_task(&conn, "Standalone", "other", 2, None, None).unwrap();
+        let _standalone = create_task(&conn, "Standalone", None, "other", 2, None, None, None, None, false).unwrap();
         let pid = create_project(&conn, "Hidden Project", "/tmp/hidden-project").unwrap();
-        let _proj_task = create_task(&conn, "Project task", "prompt", 2, None, Some(&pid)).unwrap();
+        let _proj_task = create_task(&conn, "Project task", None, "prompt", 2, None, Some(&pid), None, None, false).unwrap();
 
         assert_eq!(get_all_tasks_active(&conn).unwrap().len(), 2);
         delete_project(&conn, &pid).unwrap();

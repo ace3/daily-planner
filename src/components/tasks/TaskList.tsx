@@ -124,8 +124,8 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
     toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
-  const doneTasks = tasks.filter((t) => t.status === 'done');
-  const pendingTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
+  const doneTasks = tasks.filter((t) => t.status === 'review');
+  const pendingTasks = tasks.filter((t) => t.status !== 'review' && t.status !== 'carried_over');
 
   // Group pending tasks by project
   const tasksByProject = new Map<string | null, Task[]>();

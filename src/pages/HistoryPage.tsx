@@ -9,16 +9,16 @@ import { Button } from '../components/ui/Button';
 import type { Task } from '../types/task';
 
 const STATUS_COLORS: Record<string, string> = {
-  done: 'text-green-400',
-  pending: 'text-yellow-400',
+  review: 'text-green-400',
+  todo: 'text-yellow-400',
   in_progress: 'text-blue-400',
   skipped: 'text-gray-500',
   carried_over: 'text-purple-400',
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  done: 'Done',
-  pending: 'Pending',
+  review: 'Review',
+  todo: 'To-Do',
   in_progress: 'In Progress',
   skipped: 'Skipped',
   carried_over: 'Carried Over',
@@ -232,7 +232,7 @@ export const HistoryPage: React.FC = () => {
       )}
 
       {tasksByDate.map(([date, dateTasks]) => {
-        const doneCount = dateTasks.filter((t) => t.status === 'done').length;
+        const doneCount = dateTasks.filter((t) => t.status === 'review').length;
         return (
           <div key={date} className="space-y-2">
             <div className="flex items-center gap-2">

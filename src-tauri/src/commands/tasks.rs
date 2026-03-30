@@ -10,22 +10,30 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[derive(Deserialize)]
 pub struct CreateTaskInput {
     pub title: String,
+    pub description: Option<String>,
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
     pub project_id: Option<String>,
+    pub deadline: Option<String>,
+    pub agent: Option<String>,
+    pub git_workflow: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateTaskInput {
     pub id: String,
     pub title: Option<String>,
+    pub description: Option<String>,
     pub notes: Option<String>,
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
     pub project_id: Option<String>,
     pub clear_project: Option<bool>,
+    pub deadline: Option<Option<String>>,
+    pub agent: Option<Option<String>>,
+    pub git_workflow: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -398,10 +406,14 @@ pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Resul
     queries::create_task(
         &conn,
         &input.title,
+        input.description.as_deref(),
         &input.task_type.unwrap_or_else(|| "prompt".to_string()),
         input.priority.unwrap_or(2),
         input.estimated_min,
         input.project_id.as_deref(),
+        input.deadline.as_deref(),
+        input.agent.as_deref(),
+        input.git_workflow.unwrap_or(false),
     )
     .map_err(|e| e.to_string())
 }
@@ -413,12 +425,16 @@ pub fn update_task(input: UpdateTaskInput, db: State<'_, DbConnection>) -> Resul
         &conn,
         &input.id,
         input.title.as_deref(),
+        input.description.as_deref(),
         input.notes.as_deref(),
         input.task_type.as_deref(),
         input.priority,
         input.estimated_min,
         input.project_id.as_deref(),
         input.clear_project.unwrap_or(false),
+        input.deadline.as_ref().map(|d| d.as_deref()),
+        input.agent.as_ref().map(|a| a.as_deref()),
+        input.git_workflow,
     )
     .map_err(|e| e.to_string())
 }

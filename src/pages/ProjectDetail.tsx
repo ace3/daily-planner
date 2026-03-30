@@ -33,11 +33,11 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type FilterType = 'all' | 'pending' | 'in_progress' | 'done';
+type FilterType = 'all' | 'todo' | 'in_progress' | 'review';
 
 function statusDotClass(status: string): string {
   switch (status) {
-    case 'done': return 'bg-emerald-500';
+    case 'review': return 'bg-emerald-500';
     case 'in_progress': return 'bg-blue-500';
     case 'skipped': return 'bg-gray-500';
     default: return 'bg-gray-400 dark:bg-gray-600';
@@ -173,7 +173,7 @@ export const ProjectDetail: React.FC = () => {
   };
 
   const handleToggle = async (taskId: string, current: string) => {
-    const next = current === 'done' ? 'pending' : 'done';
+    const next = current === 'review' ? 'todo' : 'review';
     try {
       await updateTaskStatus(taskId, next);
       setTasks((prev) =>
@@ -237,18 +237,18 @@ export const ProjectDetail: React.FC = () => {
   // ---------------------------------------------------------------------------
 
   const filteredTasks = tasks.filter((t) => {
-    if (filter === 'all') return t.status !== 'done';
-    if (filter === 'done') return t.status === 'done';
+    if (filter === 'all') return t.status !== 'review';
+    if (filter === 'review') return t.status === 'review';
     return t.status === filter;
   });
 
-  const completedTasks = tasks.filter((t) => t.status === 'done');
+  const completedTasks = tasks.filter((t) => t.status === 'review');
 
   const filterTabs: { key: FilterType; label: string }[] = [
     { key: 'all', label: 'All' },
-    { key: 'pending', label: 'Pending' },
+    { key: 'todo', label: 'To-Do' },
     { key: 'in_progress', label: 'In Progress' },
-    { key: 'done', label: 'Done' },
+    { key: 'review', label: 'Review' },
   ];
 
   // ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ export const ProjectDetail: React.FC = () => {
       <div className="flex gap-1 overflow-x-auto pb-0.5">
         {filterTabs.map(({ key, label }) => {
           const count = key === 'all'
-            ? tasks.filter((t) => t.status !== 'done').length
+            ? tasks.filter((t) => t.status !== 'review').length
             : tasks.filter((t) => t.status === key).length;
           return (
             <button
@@ -362,7 +362,7 @@ export const ProjectDetail: React.FC = () => {
                   className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
                   aria-label="Toggle status"
                 >
-                  {task.status === 'done' ? (
+                  {task.status === 'review' ? (
                     <CheckCircle2 size={16} className="text-emerald-500" />
                   ) : task.status === 'in_progress' ? (
                     <Circle size={16} className="text-blue-400" />
@@ -374,7 +374,7 @@ export const ProjectDetail: React.FC = () => {
                 {/* Title */}
                 <button
                   onClick={() => navigate(`/tasks/${task.id}`)}
-                  className={`flex-1 min-w-0 text-left text-sm dark:text-[#E6EDF3] truncate ${task.status === 'done' ? 'line-through dark:text-gray-500' : ''}`}
+                  className={`flex-1 min-w-0 text-left text-sm dark:text-[#E6EDF3] truncate ${task.status === 'review' ? 'line-through dark:text-gray-500' : ''}`}
                 >
                   {task.title}
                 </button>
@@ -414,7 +414,7 @@ export const ProjectDetail: React.FC = () => {
       </section>
 
       {/* Completed accordion — only when not on Done filter */}
-      {filter !== 'done' && completedTasks.length > 0 && (
+      {filter !== 'review' && completedTasks.length > 0 && (
         <section className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">
           <button
             onClick={() => setShowCompleted((v) => !v)}

@@ -28,13 +28,24 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, children, si
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-white border border-gray-200 dark:bg-[#161B22] dark:border-[#30363D] rounded-xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto`}>
+      {/* Frosted glass overlay */}
+      <div
+        className="absolute inset-0 bg-black/25 backdrop-blur-[8px]"
+        onClick={onClose}
+      />
+
+      {/* Modal card */}
+      <div
+        className={`relative bg-white dark:bg-[#2C2C2E] border border-[#E8E8ED] dark:border-[#3A3A3C] rounded-[14px] shadow-mac-modal w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto mac-modal-animate`}
+      >
         {title && (
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-[#30363D]">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">{title}</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-[#8B949E] dark:hover:text-[#E6EDF3] transition-colors cursor-pointer p-1 rounded">
-              <X size={16} />
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8E8ED] dark:border-[#3A3A3C]">
+            <h2 className="text-[15px] font-semibold text-[#1D1D1F] dark:text-[#F5F5F7]">{title}</h2>
+            <button
+              onClick={onClose}
+              className="text-[#AEAEB2] hover:text-[#6E6E73] dark:text-[#6E6E73] dark:hover:text-[#AEAEB2] transition-colors duration-150 cursor-pointer p-1.5 rounded-[6px] hover:bg-[#F5F5F7] dark:hover:bg-[#3A3A3C]"
+            >
+              <X size={16} strokeWidth={1.5} />
             </button>
           </div>
         )}
