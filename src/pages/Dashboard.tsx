@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTaskStore } from '../stores/taskStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMobileStore } from '../stores/mobileStore';
+import { useProjectStore } from '../stores/projectStore';
 import { SessionTimer } from '../components/session/SessionTimer';
 import { SessionWarning } from '../components/session/SessionWarning';
 import { TaskList } from '../components/tasks/TaskList';
@@ -11,16 +12,34 @@ import { useSessionStore } from '../stores/sessionStore';
 import { getLocalDate } from '../lib/time';
 import { formatCountdown } from '../lib/time';
 import { format } from 'date-fns';
-import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronUp, FolderOpen, BarChart3, Zap, CheckCircle2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import * as api from '../lib/tauri';
+import { useNavigate } from 'react-router-dom';
+
+interface AppSummary {
+  total: number;
+  done: number;
+  active: number;
+  skipped: number;
+}
 
 export const Dashboard: React.FC = () => {
   const { fetchTasks, tasks, activeDate } = useTaskStore();
   const { settings } = useSettingsStore();
+  const { projects } = useProjectStore();
   const { mobileMode } = useMobileStore();
   const { sessionInfo } = useSessionStore();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [appSummary, setAppSummary] = useState<AppSummary>({
+    total: 0,
+    done: 0,
+    active: 0,
+    skipped: 0,
+  });
 
   useSessionTimer();
   usePhaseListener();
@@ -37,6 +56,32 @@ export const Dashboard: React.FC = () => {
   const completedToday = tasks.filter((t) => t.status === 'done').length;
   const totalToday = tasks.filter((t) => t.status !== 'carried_over').length;
   const completionPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
+
+  useEffect(() => {
+    let mounted = true;
+    setSummaryLoading(true);
+
+    api.getTasksRange('1970-01-01', today)
+      .then((allTasks) => {
+        if (!mounted) return;
+        const total = allTasks.filter((t) => t.status !== 'carried_over').length;
+        const done = allTasks.filter((t) => t.status === 'done').length;
+        const active = allTasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length;
+        const skipped = allTasks.filter((t) => t.status === 'skipped').length;
+        setAppSummary({ total, done, active, skipped });
+      })
+      .finally(() => {
+        if (mounted) setSummaryLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [today, tasks.length]);
+
+  const appCompletionPct = appSummary.total > 0
+    ? Math.round((appSummary.done / appSummary.total) * 100)
+    : 0;
 
   // Mobile: ultra-compact layout — tasks first, timer collapsed
   if (mobileMode) {
@@ -75,6 +120,45 @@ export const Dashboard: React.FC = () => {
 
         {/* Session warning banner */}
         <SessionWarning />
+
+        {/* Whole-app summary */}
+        <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-gray-500 dark:text-[#8B949E] uppercase tracking-wide">
+              App Summary
+            </div>
+            {summaryLoading && <span className="text-xs text-gray-400 dark:text-[#484F58]">Updating...</span>}
+          </div>
+        <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-2">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Total Tasks</div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-[#E6EDF3]">{appSummary.total}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-2">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Projects</div>
+              <div className="text-lg font-semibold text-blue-400">{projects.length}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-2">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Done</div>
+              <div className="text-lg font-semibold text-emerald-400">{appSummary.done}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-2">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Completion</div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-[#E6EDF3]">{appCompletionPct}%</div>
+            </div>
+          </div>
+          <div className="text-xs text-gray-500 dark:text-[#8B949E]">
+            Active {appSummary.active} · Skipped {appSummary.skipped}
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FolderOpen size={14} />}
+            onClick={() => navigate('/projects')}
+          >
+            Go to Projects
+          </Button>
+        </div>
 
         {/* Collapsible session status — tap to expand full timer */}
         <button
@@ -178,6 +262,64 @@ export const Dashboard: React.FC = () => {
 
       {/* Session warning banner */}
       <SessionWarning />
+
+      {/* Whole-app summary + shortcuts */}
+      <div className="rounded-xl border border-gray-200 dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Whole App Summary</h2>
+            <p className="text-xs text-gray-500 dark:text-[#8B949E] mt-0.5">
+              Tasks and progress across all tracked dates
+            </p>
+          </div>
+          {summaryLoading && <span className="text-xs text-gray-400 dark:text-[#484F58]">Updating...</span>}
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-3">
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-[#8B949E]">
+              <BarChart3 size={12} />
+              Total Tasks
+            </div>
+            <div className="mt-1 text-xl font-semibold text-gray-900 dark:text-[#E6EDF3]">{appSummary.total}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-3">
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-[#8B949E]">
+              <CheckCircle2 size={12} />
+              Done
+            </div>
+            <div className="mt-1 text-xl font-semibold text-emerald-400">{appSummary.done}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-3">
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-[#8B949E]">
+              <Zap size={12} />
+              Active
+            </div>
+            <div className="mt-1 text-xl font-semibold text-amber-400">{appSummary.active}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 dark:border-[#21262D] p-3">
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-[#8B949E]">
+              <FolderOpen size={12} />
+              Projects
+            </div>
+            <div className="mt-1 text-xl font-semibold text-blue-400">{projects.length}</div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-xs text-gray-500 dark:text-[#8B949E]">
+            Completion rate: <span className="font-semibold text-gray-900 dark:text-[#E6EDF3]">{appCompletionPct}%</span>
+            {' · '}
+            Skipped: <span className="font-semibold text-gray-900 dark:text-[#E6EDF3]">{appSummary.skipped}</span>
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FolderOpen size={14} />}
+            onClick={() => navigate('/projects')}
+          >
+            Open Projects
+          </Button>
+        </div>
+      </div>
 
       {/* Bento grid: timer + tasks */}
       <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-4">
