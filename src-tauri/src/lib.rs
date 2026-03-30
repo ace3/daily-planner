@@ -88,12 +88,12 @@ pub fn run() {
                     .ok()
                     .and_then(|exe| {
                         // macOS .app bundle: exe is at Synq.app/Contents/MacOS/Synq
-                        // Resources are at Synq.app/Contents/Resources/
-                        let resources = exe.parent()? // MacOS/
+                        // Tauri puts resources at Contents/Resources/_up_/dist/
+                        let bundle_dist = exe.parent()? // MacOS/
                             .parent()? // Contents/
-                            .join("Resources");
-                        if resources.join("index.html").exists() {
-                            Some(resources)
+                            .join("Resources/_up_/dist");
+                        if bundle_dist.join("index.html").exists() {
+                            Some(bundle_dist)
                         } else {
                             None
                         }
