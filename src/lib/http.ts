@@ -138,3 +138,48 @@ export function getSseUrl(path: string): string {
   if (token) url.searchParams.set('token', token);
   return url.toString();
 }
+
+/** POST to an SSE endpoint and collect all streamed lines into a single string. */
+export async function httpPostSse(path: string, body: unknown, onChunk?: (partial: string) => void): Promise<string> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  await checkResponse(res);
+  if (!res.body) throw new Error('SSE stream unavailable');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventType = '';
+  let dataLine = '';
+  const collected: string[] = [];
+
+  const processEvent = () => {
+    if (!dataLine) return;
+    if (eventType === 'error') throw new Error(dataLine);
+    if (eventType === 'line' || eventType === '') {
+      collected.push(dataLine);
+      onChunk?.(collected.join('\n'));
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      if (line.startsWith('event:')) eventType = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLine = line.slice(5).trim();
+      else if (line === '') { processEvent(); eventType = ''; dataLine = ''; }
+    }
+  }
+  if (dataLine) processEvent();
+  return collected.join('\n').trim();
+}

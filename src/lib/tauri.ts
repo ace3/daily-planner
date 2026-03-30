@@ -17,7 +17,7 @@ import type { Project, CreateProjectInput } from '../types/project';
 import type { PromptJob } from '../types/job';
 import { invoke } from '@tauri-apps/api/core';
 import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
-import { isWebBrowser, httpGet, httpPost, httpPatch, httpPut, httpDelete } from './http';
+import { isWebBrowser, httpGet, httpPost, httpPostSse, httpPatch, httpPut, httpDelete } from './http';
 
 // Thin wrappers — static imports allow vi.mock() to intercept correctly in tests
 function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -228,9 +228,10 @@ export const improvePromptWithClaude = (
   provider?: string,
   projectId?: string,
   jobId?: string,
+  onChunk?: (partial: string) => void,
 ): Promise<string> =>
   isWebBrowser()
-    ? Promise.reject(new Error('Use SSE streaming in browser mode'))
+    ? httpPostSse('/api/prompt/improve', { prompt, provider, project_path: projectPath, project_id: projectId }, onChunk)
     : tauriInvoke<string>('improve_prompt_with_claude', { prompt, projectPath, provider, projectId, jobId });
 
 export const invokeCopilotCli = (
@@ -250,7 +251,7 @@ export const runPrompt = (
   jobId?: string,
 ): Promise<void> =>
   isWebBrowser()
-    ? Promise.reject(new Error('Use SSE streaming in browser mode'))
+    ? httpPostSse('/api/prompt/run', { prompt, provider, project_path: projectPath, job_id: jobId }).then(() => {})
     : tauriInvoke<void>('run_prompt', { prompt, projectPath, provider, jobId });
 
 export const checkCliAvailability = (): Promise<{ claude_available: boolean; opencode_available: boolean }> =>

@@ -115,4 +115,29 @@ describe('promptImproveStore', () => {
     const doneRuns = usePromptImproveStore.getState().runsByTask['task-3'];
     expect(doneRuns.filter((r) => r.status === 'completed')).toHaveLength(2);
   });
+
+  it('always delegates to improvePromptWithClaude (which handles browser SSE internally)', async () => {
+    vi.mocked(improvePromptWithClaude).mockResolvedValue('Objective\nContext\nRequirements');
+    vi.mocked(updateTaskPrompt).mockResolvedValue(undefined);
+
+    await usePromptImproveStore.getState().startImprove({
+      taskId: 'task-browser',
+      prompt: 'improve this',
+      provider: 'codex',
+      projectPath: '/tmp/project',
+      context: {
+        title: 'Browser improve',
+        notes: '',
+        taskType: 'feature',
+        projectId: 'project-2',
+      },
+    });
+
+    await flush();
+
+    const runs = usePromptImproveStore.getState().runsByTask['task-browser'];
+    expect(runs[0].status).toBe('completed');
+    expect(runs[0].improvedPrompt).toBe('Objective\nContext\nRequirements');
+    expect(improvePromptWithClaude).toHaveBeenCalled();
+  });
 });

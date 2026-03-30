@@ -36,8 +36,8 @@ export interface PromptJob {
   pipelineError?: string;
 }
 
-// Tracks active browser-mode SSE connections by job_id
-const browserJobSources = new Map<string, EventSource>();
+// Tracks active browser-mode fetch AbortControllers by job_id
+const browserJobAborts = new Map<string, AbortController>();
 
 interface PromptQueueState {
   queue: PromptJob[];
@@ -144,6 +144,9 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       const base = localStorage.getItem('synq-server-url') || window.location.origin;
       const url = new URL('/api/prompt/run', base);
 
+      const abortController = new AbortController();
+      browserJobAborts.set(id, abortController);
+
       fetch(url.toString(), {
         method: 'POST',
         headers: {
@@ -156,6 +159,7 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
           provider: job.provider,
           job_id: id,
         }),
+        signal: abortController.signal,
       }).then(async (res) => {
         if (!res.ok || !res.body) {
           get().finishJob(id, false);
@@ -207,8 +211,12 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
         if (currentJob && currentJob.status === 'running') {
           get().finishJob(id, true);
         }
-      }).catch(() => {
+      }).catch((err) => {
+        // Ignore abort errors — they're expected on cancel
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         get().finishJob(id, false);
+      }).finally(() => {
+        browserJobAborts.delete(id);
       });
     } else {
       // Desktop mode: use Tauri invoke
@@ -299,7 +307,12 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
       set((state) => ({ queue: state.queue.filter((j) => j.id !== id) }));
     } else if (job.status === 'running') {
       if (isWebBrowser()) {
-        // In browser mode, just mark as cancelled (no server-side cancellation yet)
+        // Abort the in-flight fetch/SSE stream
+        const controller = browserJobAborts.get(id);
+        if (controller) {
+          controller.abort();
+          browserJobAborts.delete(id);
+        }
         get().finishJob(id, false);
       } else {
         await invoke<void>('cancel_prompt_run', { jobId: id }).catch(() => {});
@@ -542,7 +555,3 @@ if (!isWebBrowser()) {
     });
   })();
 }
-
-// Suppress unused variable warning — browserJobSources is reserved for future
-// server-side cancellation support in browser mode.
-void browserJobSources;

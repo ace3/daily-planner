@@ -1819,6 +1819,38 @@ async fn get_job_http(
 }
 
 // ---------------------------------------------------------------------------
+// Route: POST /api/jobs/:id/cancel
+// ---------------------------------------------------------------------------
+
+async fn cancel_job_http(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+
+    // Kill child process if running
+    let pid = {
+        let reg = s.job_registry.lock().map_err(internal)?;
+        reg.get(&id).copied()
+    };
+    if let Some(pid) = pid {
+        let _ = tokio::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status()
+            .await;
+    }
+
+    // Update DB status to cancelled
+    let conn = s.db.lock().map_err(internal)?;
+    queries::update_prompt_job_status(&conn, &id, "cancelled", None, Some("Cancelled by user"))
+        .map_err(internal)?;
+
+    let _ = s.event_tx.send(ServerEvent::JobStatusChanged { job_id: id });
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
 // Route: POST /api/tasks/:id/run  — create a prompt job record
 // ---------------------------------------------------------------------------
 
@@ -2495,6 +2527,7 @@ pub async fn start(
         // Jobs
         .route("/api/jobs", get(get_jobs_http))
         .route("/api/jobs/:id", get(get_job_http))
+        .route("/api/jobs/:id/cancel", post(cancel_job_http))
         // Devices
         .route("/api/devices", get(list_devices_handler).post(register_device_handler))
         .route("/api/devices/:id", delete(delete_device_handler))

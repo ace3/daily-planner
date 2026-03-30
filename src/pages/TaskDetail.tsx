@@ -8,6 +8,7 @@ import {
 import { useMobileStore } from '../stores/mobileStore';
 import { useProjectStore } from '../stores/projectStore';
 import { usePromptImproveStore, type ImproveRun } from '../stores/promptImproveStore';
+import { usePlanGenerateStore } from '../stores/planGenerateStore';
 import type { Task, TaskType, TaskPriority } from '../types/task';
 import type { PromptJob } from '../types/job';
 import {
@@ -16,7 +17,6 @@ import {
   updateTaskStatus,
   updateTaskPrompt,
   runTaskPrompt,
-  generatePlan,
   reviewTask,
   approveTaskReview,
   fixFromReview,
@@ -115,6 +115,9 @@ export const TaskDetail: React.FC = () => {
   const startImprove = usePromptImproveStore((s) => s.startImprove);
   const improveRunsRaw = usePromptImproveStore((s) => (id ? s.runsByTask[id] : undefined));
   const improveRuns = improveRunsRaw ?? EMPTY_RUNS;
+  const startPlan = usePlanGenerateStore((s) => s.startPlan);
+  const planRunsRaw = usePlanGenerateStore((s) => (id ? s.runsByTask[id] : undefined));
+  const planRuns = planRunsRaw ?? [];
 
   // Task state
   const [task, setTask] = useState<Task | null>(null);
@@ -154,9 +157,13 @@ export const TaskDetail: React.FC = () => {
   const [pushing, setPushing] = useState(false);
   const [gitActionMsg, setGitActionMsg] = useState('');
 
-  // Plan
-  const [planLoading, setPlanLoading] = useState(false);
-  const [planError, setPlanError] = useState<string | null>(null);
+  // Plan (derived from store)
+  const planningRuns = planRuns.filter((r) => r.status === 'running');
+  const planLoading = planningRuns.length > 0;
+  const latestFailedPlan = [...planRuns]
+    .filter((r) => r.status === 'failed')
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0];
+  const planError = latestFailedPlan?.error ?? null;
 
   // Review
   const [reviewing, setReviewing] = useState(false);
@@ -314,16 +321,18 @@ export const TaskDetail: React.FC = () => {
     if (!task) return;
     const promptToUse = improvedPrompt.trim() || rawPrompt.trim();
     if (!promptToUse) return;
-    setPlanLoading(true);
-    setPlanError(null);
+    const project = projects.find((p) => p.id === task.project_id);
     try {
-      const project = projects.find((p) => p.id === task.project_id);
-      await generatePlan(task.id, task.title, promptToUse, project?.path, provider, task.project_id ?? undefined);
-      await loadTask();
+      await startPlan({
+        taskId: task.id,
+        taskTitle: task.title,
+        prompt: promptToUse,
+        projectPath: project?.path,
+        provider,
+        projectId: task.project_id ?? undefined,
+      });
     } catch (e) {
-      setPlanError(String(e));
-    } finally {
-      setPlanLoading(false);
+      console.error('Plan generation failed:', e);
     }
   };
 
@@ -388,6 +397,15 @@ export const TaskDetail: React.FC = () => {
     setEditingImproved(false);
     loadTask();
   }, [latestCompletedImprove?.id, latestCompletedImprove?.improvedPrompt, loadTask]);
+
+  // Reload task when plan generation completes
+  const latestCompletedPlan = [...planRuns]
+    .filter((r) => r.status === 'completed')
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0];
+  useEffect(() => {
+    if (!latestCompletedPlan?.id) return;
+    loadTask();
+  }, [latestCompletedPlan?.id, loadTask]);
 
   // ---------------------------------------------------------------------------
   // Run prompt
@@ -729,13 +747,33 @@ export const TaskDetail: React.FC = () => {
           </select>
         </div>
         {improvingRuns.length > 0 && (
-          <div className="text-xs dark:text-blue-400">
-            {improvingRuns.length} improvement process{improvingRuns.length > 1 ? 'es' : ''} running in background.
+          <div className="space-y-2">
+            <div className="text-xs dark:text-blue-400">
+              {improvingRuns.length} improvement process{improvingRuns.length > 1 ? 'es' : ''} running in background.
+            </div>
+            {improvingRuns.filter((r) => r.partialResult).map((run) => (
+              <div key={run.id} className="relative">
+                <span className="text-xs dark:text-gray-500 uppercase tracking-wide font-medium">Streaming...</span>
+                <pre className="mt-1 text-sm whitespace-pre-wrap dark:bg-[#0D1117] dark:text-[#E6EDF3] border dark:border-[#30363D] rounded-lg p-3 max-h-60 overflow-y-auto opacity-80">
+                  {run.partialResult}
+                </pre>
+              </div>
+            ))}
           </div>
         )}
         {latestFailedImprove?.error && (
           <div className="text-xs text-red-400 dark:text-red-400 whitespace-pre-wrap">
             Improve failed: {latestFailedImprove.error}
+          </div>
+        )}
+        {planningRuns.length > 0 && (
+          <div className="text-xs dark:text-cyan-400">
+            {planningRuns.length} plan generation{planningRuns.length > 1 ? 's' : ''} running in background.
+          </div>
+        )}
+        {planError && (
+          <div className="text-xs text-red-400 dark:text-red-400 whitespace-pre-wrap">
+            Plan failed: {planError}
           </div>
         )}
 

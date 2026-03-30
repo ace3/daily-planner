@@ -929,12 +929,14 @@ pub async fn create_and_run_job(
     Ok(job_id)
 }
 
-/// Cancel a running prompt job by sending SIGTERM to its child process.
+/// Cancel a prompt job — kills the process if running, and updates DB status to "cancelled".
 #[tauri::command]
 pub async fn cancel_prompt_run(
     job_id: String,
     job_registry: State<'_, JobRegistry>,
+    db: State<'_, DbConnection>,
 ) -> Result<(), String> {
+    // Kill the child process if it has a PID (i.e. already running)
     let pid = {
         let reg = job_registry.0.lock().map_err(|e| e.to_string())?;
         reg.get(&job_id).copied()
@@ -945,6 +947,12 @@ pub async fn cancel_prompt_run(
             .status()
             .await;
     }
+
+    // Always update DB status to "cancelled" (handles both queued and running jobs)
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::update_prompt_job_status(&conn, &job_id, "cancelled", None, Some("Cancelled by user"))
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 

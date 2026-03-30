@@ -8,8 +8,8 @@ import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { RemoteAccessPage } from './pages/RemoteAccessPage';
-import { HistoryPage } from './pages/HistoryPage';
 import { TaskDetail } from './pages/TaskDetail';
+import { QueuePage } from './pages/QueuePage';
 import { Login } from './pages/Login';
 import { ToastContainer } from './components/ui/Toast';
 import { useSettingsStore } from './stores/settingsStore';
@@ -147,8 +147,8 @@ const AppInner: React.FC = () => {
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/queue" element={<QueuePage />} />
               <Route path="/templates" element={<TemplatesPage />} />
-              <Route path="/history" element={<HistoryPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:id" element={<ProjectDetail />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />

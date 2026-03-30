@@ -14,6 +14,7 @@ export interface ImproveRun {
   startedAt: number;
   finishedAt?: number;
   status: ImproveRunStatus;
+  partialResult?: string;
   improvedPrompt?: string;
   error?: string;
 }
@@ -79,6 +80,16 @@ export const usePromptImproveStore = create<PromptImproveState>((set) => ({
       }),
     }));
 
+    const updateRun = (patch: Partial<ImproveRun>) =>
+      set((state) => ({
+        runsByTask: {
+          ...state.runsByTask,
+          [taskId]: (state.runsByTask[taskId] ?? []).map((run) =>
+            run.id === runId ? { ...run, ...patch } : run
+          ),
+        },
+      }));
+
     (async () => {
       try {
         const improveInstruction = buildImprovementPrompt(normalizedPrompt, {
@@ -87,12 +98,17 @@ export const usePromptImproveStore = create<PromptImproveState>((set) => ({
           project: context.project,
         });
 
-        let improved = await improvePromptWithClaude(
-          improveInstruction,
-          projectPath,
-          provider,
-          context.projectId ?? undefined,
-        );
+        const runImprove = (input: string) =>
+          improvePromptWithClaude(
+            input,
+            projectPath,
+            provider,
+            context.projectId ?? undefined,
+            undefined,
+            (partial) => updateRun({ partialResult: partial }),
+          );
+
+        let improved = await runImprove(improveInstruction);
 
         // Guardrail: retry once with an explicit correction if model returns execution/progress output.
         const looksLikeExecutionReport =
@@ -109,50 +125,27 @@ export const usePromptImproveStore = create<PromptImproveState>((set) => ({
             'Invalid previous output (for correction):',
             improved,
           ].join('\n');
-          improved = await improvePromptWithClaude(
-            retryPrompt,
-            projectPath,
-            provider,
-            context.projectId ?? undefined,
-          );
+          improved = await runImprove(retryPrompt);
         }
 
         const finalImproved = improved.trim();
         await updateTaskPrompt(taskId, normalizedPrompt, finalImproved);
 
-        set((state) => ({
-          runsByTask: {
-            ...state.runsByTask,
-            [taskId]: (state.runsByTask[taskId] ?? []).map((run) =>
-              run.id === runId
-                ? {
-                    ...run,
-                    status: 'completed',
-                    improvedPrompt: finalImproved,
-                    finishedAt: Date.now(),
-                  }
-                : run
-            ),
-          },
-        }));
+        updateRun({
+          status: 'completed',
+          improvedPrompt: finalImproved,
+          partialResult: undefined,
+          finishedAt: Date.now(),
+        });
         toast.success(`Prompt improvement completed (${provider})`);
       } catch (e) {
         const message = String(e);
-        set((state) => ({
-          runsByTask: {
-            ...state.runsByTask,
-            [taskId]: (state.runsByTask[taskId] ?? []).map((run) =>
-              run.id === runId
-                ? {
-                    ...run,
-                    status: 'failed',
-                    error: message,
-                    finishedAt: Date.now(),
-                  }
-                : run
-            ),
-          },
-        }));
+        updateRun({
+          status: 'failed',
+          error: message,
+          partialResult: undefined,
+          finishedAt: Date.now(),
+        });
         toast.error(`Prompt improvement failed: ${message}`);
       }
     })();
@@ -160,4 +153,3 @@ export const usePromptImproveStore = create<PromptImproveState>((set) => ({
     return runId;
   },
 }));
-
