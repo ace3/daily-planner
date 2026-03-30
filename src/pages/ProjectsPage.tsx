@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch } from 'lucide-react';
 import { GitPanel } from '../components/projects/GitPanel';
 import { useProjectStore } from '../stores/projectStore';
-import { openFolderDialog } from '../lib/tauri';
+import { checkProjectPath, openFolderDialog } from '../lib/tauri';
+import { deriveProjectName, isTauriRuntime, normalizeProjectPath, validateProjectPathLocally } from '../lib/projectPath';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
@@ -21,7 +22,11 @@ export const ProjectsPage: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [promptSaving, setPromptSaving] = useState<string | null>(null);
   const [expandedGit, setExpandedGit] = useState<string | null>(null);
+  const [checkingPath, setCheckingPath] = useState(false);
+  const [pathValidation, setPathValidation] = useState<{ valid: boolean; message: string } | null>(null);
   const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
+  const tauriRuntime = isTauriRuntime();
+  const addDisabled = !selectedPath.trim() || checkingPath || (!!pathValidation && !pathValidation.valid);
 
   useEffect(() => {
     fetchProjects();
@@ -47,23 +52,78 @@ export const ProjectsPage: React.FC = () => {
   }, [projects, setDraft]);
 
   const handleBrowse = async () => {
+    if (!tauriRuntime) {
+      toast.info('Browse is only available in the desktop app. Enter the path manually.');
+      return;
+    }
     const path = await openFolderDialog();
     if (path) {
-      setDraft((prev) => ({ ...prev, selectedPath: path }));
+      const normalized = normalizeProjectPath(path);
+      setDraft((prev) => ({ ...prev, selectedPath: normalized }));
+      setPathValidation(null);
       if (!projectName) {
-        const parts = path.replace(/\\/g, '/').split('/');
-        setDraft((prev) => ({ ...prev, projectName: parts[parts.length - 1] || path }));
+        setDraft((prev) => ({ ...prev, projectName: deriveProjectName(normalized) }));
       }
+    }
+  };
+
+  const runPathCheck = async (showSuccessToast = false): Promise<boolean> => {
+    const localValidation = validateProjectPathLocally(selectedPath);
+    if (!localValidation.isValid) {
+      setPathValidation({ valid: false, message: localValidation.message });
+      toast.error(localValidation.message);
+      return false;
+    }
+
+    if (!tauriRuntime) {
+      const message = 'Path format looks valid. Folder existence can only be verified in the desktop app.';
+      setPathValidation({ valid: true, message });
+      if (showSuccessToast) toast.info(message);
+      setDraft((prev) => ({ ...prev, selectedPath: localValidation.normalizedPath }));
+      return true;
+    }
+
+    setCheckingPath(true);
+    try {
+      const result = await checkProjectPath(localValidation.normalizedPath);
+      setPathValidation({ valid: result.is_valid, message: result.message });
+      if (!result.is_valid) {
+        toast.error(result.message);
+        return false;
+      }
+      setDraft((prev) => ({ ...prev, selectedPath: result.normalized_path }));
+      if (!projectName.trim()) {
+        setDraft((prev) => ({ ...prev, projectName: deriveProjectName(result.normalized_path) }));
+      }
+      if (showSuccessToast) toast.success(result.message);
+      return true;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to validate the project path';
+      setPathValidation({ valid: false, message });
+      toast.error(message);
+      return false;
+    } finally {
+      setCheckingPath(false);
     }
   };
 
   const handleAdd = async () => {
     if (!selectedPath) return;
-    const name = projectName.trim() || selectedPath.split('/').pop() || selectedPath;
+    const validPath = await runPathCheck(false);
+    if (!validPath) return;
+
+    const normalizedPath = normalizeProjectPath(selectedPath);
+    const name = projectName.trim() || deriveProjectName(normalizedPath) || normalizedPath;
     setAdding(true);
     try {
-      await createProject({ name, path: selectedPath });
+      await createProject({ name, path: normalizedPath });
       setDraft((prev) => ({ ...prev, selectedPath: '', projectName: '' }));
+      setPathValidation(null);
+      toast.success('Project added');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add project';
+      toast.error(message);
     } finally {
       setAdding(false);
     }
@@ -98,14 +158,46 @@ export const ProjectsPage: React.FC = () => {
         <div className="flex gap-2">
           <input
             value={selectedPath}
-            readOnly
-            placeholder="Select a folder..."
+            onChange={(e) => {
+              setDraft((prev) => ({ ...prev, selectedPath: e.target.value }));
+              setPathValidation(null);
+            }}
+            placeholder={tauriRuntime ? 'Select a folder or paste an absolute path...' : 'Paste an absolute path...'}
             className={inputClass}
           />
-          <Button variant="ghost" size="sm" icon={<FolderSearch size={14} />} onClick={handleBrowse}>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FolderSearch size={14} />}
+            onClick={handleBrowse}
+            disabled={!tauriRuntime}
+            title={!tauriRuntime ? 'Browse is only available in the desktop app' : 'Browse'}
+          >
             Browse
           </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => runPathCheck(true)}
+            loading={checkingPath}
+            disabled={!selectedPath.trim()}
+            title="Validate path"
+          >
+            Check Path
+          </Button>
         </div>
+
+        {!tauriRuntime && (
+          <p className="text-xs text-amber-500 dark:text-amber-400">
+            Web mode: the Browse button is unavailable. Paste the absolute path manually, then run Check Path.
+          </p>
+        )}
+
+        {pathValidation && (
+          <p className={`text-xs ${pathValidation.valid ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
+            {pathValidation.message}
+          </p>
+        )}
 
         {selectedPath && (
           <Input
@@ -123,7 +215,7 @@ export const ProjectsPage: React.FC = () => {
             icon={<Plus size={14} />}
             onClick={handleAdd}
             loading={adding}
-            disabled={!selectedPath}
+            disabled={addDisabled}
           >
             Add Project
           </Button>

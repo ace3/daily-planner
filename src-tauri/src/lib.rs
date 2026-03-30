@@ -153,6 +153,7 @@ pub fn run() {
             commands::data_management::restore_data,
             commands::data_management::reset_app_data,
             commands::projects::get_projects,
+            commands::projects::check_project_path,
             commands::projects::create_project,
             commands::projects::delete_project,
             commands::projects::get_project_prompt,

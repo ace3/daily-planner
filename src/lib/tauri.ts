@@ -84,8 +84,19 @@ export const createProject = (input: CreateProjectInput) => invoke<string>('crea
 export const deleteProject = (id: string) => invoke<void>('delete_project', { id });
 export const getProjectPrompt = (id: string) => invoke<string | null>('get_project_prompt', { id });
 export const setProjectPrompt = (id: string, prompt: string) => invoke<void>('set_project_prompt', { id, prompt });
+export interface ProjectPathCheckResult {
+  is_valid: boolean;
+  normalized_path: string;
+  exists: boolean;
+  is_directory: boolean;
+  message: string;
+}
+export const checkProjectPath = (path: string) =>
+  invoke<ProjectPathCheckResult>('check_project_path', { path });
 export const openFolderDialog = (): Promise<string | null> =>
-  open({ directory: true, multiple: false }).then((r) => (typeof r === 'string' ? r : null));
+  (typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ === 'undefined'
+    ? Promise.resolve(null)
+    : open({ directory: true, multiple: false }).then((r) => (typeof r === 'string' ? r : null)));
 
 // Global / project prompts
 export const getGlobalPrompt = () => invoke<string | null>('get_global_prompt', {});
