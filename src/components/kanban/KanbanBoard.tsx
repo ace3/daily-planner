@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -21,15 +21,21 @@ import KanbanFilters, { KanbanFilters as KanbanFiltersType } from './KanbanFilte
 
 interface KanbanBoardProps {
   tasks: Task[];
+  lockedProjectId?: string;
 }
 
-const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
+const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => {
   const navigate = useNavigate();
   const { updateTaskStatus, reorderTasks } = useTaskStore();
   const { projects } = useProjectStore();
 
   const [filters, setFilters] = useState<KanbanFiltersType>({});
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [boardTasks, setBoardTasks] = useState<Task[]>(tasks);
+
+  useEffect(() => {
+    setBoardTasks(tasks);
+  }, [tasks]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -37,8 +43,9 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
 
   // Apply filters
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
+    return boardTasks.filter((t) => {
       if (!KANBAN_STATUSES.includes(t.status as TaskStatus)) return false;
+      if (lockedProjectId && t.project_id !== lockedProjectId) return false;
       if (filters.projectId && t.project_id !== filters.projectId) return false;
       if (filters.priority && t.priority !== filters.priority) return false;
       if (filters.agent && t.agent !== filters.agent) return false;
@@ -48,7 +55,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
       }
       return true;
     });
-  }, [tasks, filters]);
+  }, [boardTasks, filters, lockedProjectId]);
 
   // Tasks grouped by status, sorted by position
   const tasksByStatus = useMemo(() => {
@@ -69,7 +76,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
   }, [filteredTasks]);
 
   function findTaskById(id: string): Task | undefined {
-    return tasks.find((t) => t.id === id);
+    return boardTasks.find((t) => t.id === id);
   }
 
   function findColumnOfTask(id: string): TaskStatus | undefined {
@@ -101,11 +108,11 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
 
     // Optimistically move the task to the new column in local store
     // The actual persistence happens on DragEnd
-    useTaskStore.setState((state) => ({
-      tasks: state.tasks.map((t) =>
+    setBoardTasks((prev) =>
+      prev.map((t) =>
         t.id === activeId ? { ...t, status: overColumn } : t
-      ),
-    }));
+      )
+    );
   }
 
   async function handleDragEnd(event: DragEndEvent) {
@@ -128,6 +135,11 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
       // Cross-column drop — status update
       try {
         await updateTaskStatus(activeId, overColumn);
+        setBoardTasks((prev) =>
+          prev.map((t) =>
+            t.id === activeId ? { ...t, status: overColumn } : t
+          )
+        );
       } catch (e) {
         console.error('Failed to update task status:', e);
       }
@@ -141,6 +153,15 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
     if (oldIndex === newIndex) return;
 
     const reordered = arrayMove(colTasks, oldIndex, newIndex);
+    setBoardTasks((prev) => {
+      const order = new Map(reordered.map((t, i) => [t.id, i]));
+      return [...prev].sort((a, b) => {
+        const ao = order.get(a.id);
+        const bo = order.get(b.id);
+        if (ao === undefined || bo === undefined) return 0;
+        return ao - bo;
+      });
+    });
     try {
       await reorderTasks(reordered.map((t) => t.id));
     } catch (e) {
@@ -149,10 +170,14 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks }) => {
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ backgroundColor: '#F5F5F7' }}>
+    <div className="flex h-full flex-col bg-[#F5F5F7] dark:bg-[#0F1117]">
       {/* Filter bar */}
       <div className="px-4 shrink-0">
-        <KanbanFilters projects={projects} onFilterChange={setFilters} />
+        <KanbanFilters
+          projects={projects}
+          onFilterChange={setFilters}
+          showProjectFilter={!lockedProjectId}
+        />
       </div>
 
       {/* Board — horizontal scroll */}

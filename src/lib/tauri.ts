@@ -337,6 +337,31 @@ export const setProjectPrompt = (id: string, prompt: string): Promise<void> =>
     ? httpPut<void>(`/api/projects/${id}/prompt`, { prompt })
     : tauriInvoke<void>('set_project_prompt', { id, prompt });
 
+export interface ProjectPathValidation {
+  exists: boolean;
+  is_directory: boolean;
+  normalized_path: string;
+}
+
+function validateProjectPathInBrowser(path: string): ProjectPathValidation {
+  const normalized = path.trim().replace(/\\/g, '/');
+  const looksAbsolute =
+    normalized.startsWith('/') ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.startsWith('~');
+  return {
+    exists: normalized.length > 0 && looksAbsolute,
+    is_directory: normalized.length > 0 && looksAbsolute,
+    normalized_path: normalized,
+  };
+}
+
+export const validateProjectPath = (path: string): Promise<ProjectPathValidation> =>
+  isWebBrowser()
+    ? httpPost<ProjectPathValidation>('/api/projects/validate-path', { path })
+        .catch(() => validateProjectPathInBrowser(path))
+    : tauriInvoke<ProjectPathValidation>('validate_project_path', { path });
+
 export const openFolderDialog = (): Promise<string | null> =>
   isWebBrowser()
     ? Promise.resolve(null)

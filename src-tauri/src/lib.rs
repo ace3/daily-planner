@@ -179,6 +179,7 @@ pub fn run() {
             commands::projects::hard_delete_project,
             commands::projects::get_project_prompt,
             commands::projects::set_project_prompt,
+            commands::projects::validate_project_path,
             commands::jobs::get_active_jobs,
             commands::jobs::get_recent_jobs,
             commands::jobs::get_job,

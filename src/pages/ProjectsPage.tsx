@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch, RotateCcw } from 'lucide-react';
 import { GitPanel } from '../components/projects/GitPanel';
 import { useProjectStore } from '../stores/projectStore';
-import { openFolderDialog } from '../lib/tauri';
+import { openFolderDialog, validateProjectPath } from '../lib/tauri';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
@@ -22,6 +22,7 @@ export const ProjectsPage: React.FC = () => {
     restoreProject,
     hardDeleteProject,
     setProjectPrompt,
+    setSelectedProject,
   } = useProjectStore();
   const [draft, setDraft] = useState({
     selectedPath: '',
@@ -34,7 +35,14 @@ export const ProjectsPage: React.FC = () => {
   const [hardDeleteTarget, setHardDeleteTarget] = useState<string | null>(null);
   const [promptSaving, setPromptSaving] = useState<string | null>(null);
   const [expandedGit, setExpandedGit] = useState<string | null>(null);
+  const [pathError, setPathError] = useState<string | null>(null);
+  const [validatingPath, setValidatingPath] = useState(false);
   const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
+
+  const derivePathName = (path: string): string => {
+    const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+    return parts[parts.length - 1] || '';
+  };
 
   useEffect(() => {
     fetchProjects();
@@ -61,23 +69,64 @@ export const ProjectsPage: React.FC = () => {
   }, [projects, setDraft]);
 
   const handleBrowse = async () => {
-    const path = await openFolderDialog();
-    if (path) {
-      setDraft((prev) => ({ ...prev, selectedPath: path }));
-      if (!projectName) {
-        const parts = path.replace(/\\/g, '/').split('/');
-        setDraft((prev) => ({ ...prev, projectName: parts[parts.length - 1] || path }));
+    try {
+      const path = await openFolderDialog();
+      if (path) {
+        setPathError(null);
+        setDraft((prev) => ({ ...prev, selectedPath: path }));
+        setDraft((prev) => {
+          const previousDerived = derivePathName(prev.selectedPath);
+          const nextDerived = derivePathName(path);
+          const shouldUpdateName =
+            !prev.projectName.trim() || prev.projectName === previousDerived;
+          return shouldUpdateName ? { ...prev, projectName: nextDerived } : prev;
+        });
       }
+    } catch {
+      toast.error('Could not open folder browser.');
+    }
+  };
+
+  const validatePath = async (): Promise<string | null> => {
+    const trimmedPath = selectedPath.trim();
+    if (!trimmedPath) {
+      setPathError('Project path is required.');
+      return null;
+    }
+
+    setValidatingPath(true);
+    setPathError(null);
+    try {
+      const result = await validateProjectPath(trimmedPath);
+      const normalizedPath = result.normalized_path?.trim() || trimmedPath;
+      if (!result.exists) {
+        setPathError('Path does not exist.');
+        return null;
+      }
+      if (!result.is_directory) {
+        setPathError('Path must be a folder.');
+        return null;
+      }
+      setDraft((prev) => ({ ...prev, selectedPath: normalizedPath }));
+      return normalizedPath;
+    } catch {
+      setPathError('Failed to validate path.');
+      return null;
+    } finally {
+      setValidatingPath(false);
     }
   };
 
   const handleAdd = async () => {
-    if (!selectedPath) return;
-    const name = projectName.trim() || selectedPath.split('/').pop() || selectedPath;
+    const normalizedPath = await validatePath();
+    if (!normalizedPath) return;
+    const fallbackName = normalizedPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || normalizedPath;
+    const name = projectName.trim() || fallbackName;
     setAdding(true);
     try {
-      await createProject({ name, path: selectedPath });
+      await createProject({ name, path: normalizedPath });
       setDraft((prev) => ({ ...prev, selectedPath: '', projectName: '' }));
+      setPathError(null);
     } finally {
       setAdding(false);
     }
@@ -112,7 +161,21 @@ export const ProjectsPage: React.FC = () => {
         <div className="flex gap-2">
           <input
             value={selectedPath}
-            readOnly
+            onChange={(e) => {
+              const next = e.target.value;
+              setPathError(null);
+              setDraft((prev) => {
+                const updates: typeof prev = { ...prev, selectedPath: next };
+                const previousDerived = derivePathName(prev.selectedPath);
+                const nextDerived = derivePathName(next);
+                const shouldUpdateName =
+                  !prev.projectName.trim() || prev.projectName === previousDerived;
+                if (shouldUpdateName) {
+                  updates.projectName = nextDerived;
+                }
+                return updates;
+              });
+            }}
             placeholder="Select a folder..."
             className={inputClass}
           />
@@ -120,6 +183,9 @@ export const ProjectsPage: React.FC = () => {
             Browse
           </Button>
         </div>
+        {pathError && (
+          <p className="text-xs text-red-400">{pathError}</p>
+        )}
 
         {selectedPath && (
           <Input
@@ -137,7 +203,7 @@ export const ProjectsPage: React.FC = () => {
             icon={<Plus size={14} />}
             onClick={handleAdd}
             loading={adding}
-            disabled={!selectedPath}
+            disabled={!selectedPath.trim() || validatingPath}
           >
             Add Project
           </Button>
@@ -159,10 +225,14 @@ export const ProjectsPage: React.FC = () => {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => navigate(`/projects/${project.id}`)}
+              onClick={() => {
+                setSelectedProject(project);
+                navigate(`/projects/${project.id}`);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
+                  setSelectedProject(project);
                   navigate(`/projects/${project.id}`);
                 }
               }}

@@ -920,6 +920,11 @@ struct CreateProjectBody {
     path: String,
 }
 
+#[derive(Deserialize)]
+struct ValidateProjectPathBody {
+    path: String,
+}
+
 async fn create_project(
     State(s): State<ServerState>,
     headers: HeaderMap,
@@ -931,6 +936,17 @@ async fn create_project(
     drop(conn);
     let _ = s.event_tx.send(ServerEvent::ProjectsChanged);
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+async fn validate_project_path_http(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ValidateProjectPathBody>,
+) -> Result<Json<crate::commands::projects::ProjectPathValidation>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    Ok(Json(crate::commands::projects::validate_project_path_internal(
+        &body.path,
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -2339,6 +2355,7 @@ pub async fn start(
         .route("/api/reports/:date/reflection", post(save_report_reflection))
         // Projects
         .route("/api/projects", get(get_projects).post(create_project))
+        .route("/api/projects/validate-path", post(validate_project_path_http))
         .route("/api/projects/trash", get(get_trashed_projects))
         .route("/api/projects/:id", delete(delete_project))
         .route("/api/projects/:id/restore", post(restore_project))

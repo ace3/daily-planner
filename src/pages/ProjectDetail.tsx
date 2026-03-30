@@ -1,575 +1,123 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, GitBranch, Plus, AlertCircle } from 'lucide-react';
 import { useProjectStore } from '../stores/projectStore';
 import { useMobileStore } from '../stores/mobileStore';
-import { Task, CreateTaskInput } from '../types/task';
-import {
-  getTasksByProject,
-  gitStatus,
-  gitDiff,
-  gitStageAll,
-  gitCommit,
-  gitPush,
-  createTask,
-  updateTaskStatus,
-  deleteTask,
-} from '../lib/tauri';
-import {
-  ArrowLeft,
-  Plus,
-  GitBranch,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
-  Circle,
-  Loader2,
-  X,
-  GitCommit,
-  Upload,
-  AlertCircle,
-} from 'lucide-react';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-type FilterType = 'all' | 'todo' | 'in_progress' | 'review';
-
-function statusDotClass(status: string): string {
-  switch (status) {
-    case 'review': return 'bg-emerald-500';
-    case 'in_progress': return 'bg-blue-500';
-    case 'skipped': return 'bg-gray-500';
-    default: return 'bg-gray-400 dark:bg-gray-600';
-  }
-}
-
-function priorityLabel(p: number): string {
-  if (p === 1) return 'High';
-  if (p === 2) return 'Med';
-  return 'Low';
-}
-
-function priorityClass(p: number): string {
-  if (p === 1) return 'text-red-400 bg-red-900/30';
-  if (p === 2) return 'text-yellow-400 bg-yellow-900/30';
-  return 'text-gray-400 bg-gray-700/40';
-}
-
-function taskTypeBadge(type: string): string {
-  switch (type) {
-    case 'prompt': return 'bg-purple-900/40 text-purple-300';
-    case 'research': return 'bg-blue-900/40 text-blue-300';
-    case 'meeting': return 'bg-orange-900/40 text-orange-300';
-    case 'review': return 'bg-teal-900/40 text-teal-300';
-    default: return 'bg-gray-700/40 text-gray-400';
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ProjectDetail
-// ---------------------------------------------------------------------------
+import { getTasksByProject } from '../lib/tauri';
+import type { Task } from '../types/task';
+import { TaskCreationModal } from '../components/TaskCreationModal';
+import { GitPanel } from '../components/projects/GitPanel';
+import KanbanBoard from '../components/kanban/KanbanBoard';
 
 export const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { projects } = useProjectStore();
-  const { mobileMode: m } = useMobileStore();
+  const { mobileMode } = useMobileStore();
 
-  const project = projects.find((p) => p.id === id);
+  const project = useMemo(
+    () => projects.find((p) => p.id === id),
+    [projects, id]
+  );
 
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [loadingTasks, setLoadingTasks] = useState(false);
-  const [filter, setFilter] = useState<FilterType>('all');
-  const [newTitle, setNewTitle] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  // Git state
-  const [gitBranch, setGitBranch] = useState<string>('');
-  const [gitClean, setGitClean] = useState<boolean>(true);
-  const [gitChangedFiles, setGitChangedFiles] = useState<number>(0);
-  const [diff, setDiff] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showGit, setShowGit] = useState(false);
-  const [loadingGit, setLoadingGit] = useState(false);
-  const [commitMsg, setCommitMsg] = useState('');
-  const [committing, setCommitting] = useState(false);
-  const [pushing, setPushing] = useState(false);
-  const [gitError, setGitError] = useState<string | null>(null);
-  const [gitSuccess, setGitSuccess] = useState<string | null>(null);
-
-  // ---------------------------------------------------------------------------
-  // Load tasks
-  // ---------------------------------------------------------------------------
 
   const loadTasks = useCallback(async () => {
     if (!id) return;
-    setLoadingTasks(true);
+    setLoading(true);
     try {
-      const result = await getTasksByProject(id);
-      setTasks(result);
+      const data = await getTasksByProject(id);
+      setTasks(data);
     } catch (e) {
-      console.error('Failed to load project tasks:', e);
+      console.error('Failed to load project board tasks:', e);
+      setTasks([]);
     } finally {
-      setLoadingTasks(false);
+      setLoading(false);
     }
   }, [id]);
-
-  // ---------------------------------------------------------------------------
-  // Load git status
-  // ---------------------------------------------------------------------------
-
-  const loadGitStatus = useCallback(async () => {
-    if (!project?.path) return;
-    setLoadingGit(true);
-    setGitError(null);
-    try {
-      const status = await gitStatus(project.path);
-      setGitBranch(status.branch);
-      setGitClean(status.files.length === 0);
-      setGitChangedFiles(status.files.length);
-      if (status.files.length > 0) {
-        const d = await gitDiff(project.path);
-        setDiff(d);
-      } else {
-        setDiff('');
-      }
-    } catch (e) {
-      console.error('Failed to load git status:', e);
-      setGitError(String(e));
-    } finally {
-      setLoadingGit(false);
-    }
-  }, [project?.path]);
 
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
 
-  useEffect(() => {
-    if (showGit) {
-      loadGitStatus();
-    }
-  }, [showGit, loadGitStatus]);
-
-  // ---------------------------------------------------------------------------
-  // Task actions
-  // ---------------------------------------------------------------------------
-
-  const handleAddTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const title = newTitle.trim();
-    if (!title || !id) return;
-    setAdding(true);
-    try {
-      const input: CreateTaskInput = { title, task_type: 'other', priority: 2, project_id: id };
-      await createTask(input);
-      setNewTitle('');
-      await loadTasks();
-    } catch (e) {
-      console.error('Failed to create task:', e);
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const handleToggle = async (taskId: string, current: string) => {
-    const next = current === 'review' ? 'todo' : 'review';
-    try {
-      await updateTaskStatus(taskId, next);
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, status: next as Task['status'] } : t))
-      );
-    } catch (e) {
-      console.error('Failed to update task status:', e);
-    }
-  };
-
-  const handleDelete = async (taskId: string) => {
-    try {
-      await deleteTask(taskId);
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
-    } catch (e) {
-      console.error('Failed to delete task:', e);
-    }
-  };
-
-  // ---------------------------------------------------------------------------
-  // Git actions
-  // ---------------------------------------------------------------------------
-
-  const handleCommit = async () => {
-    if (!project?.path || !commitMsg.trim()) return;
-    setCommitting(true);
-    setGitError(null);
-    setGitSuccess(null);
-    try {
-      await gitStageAll(project.path);
-      await gitCommit(project.path, commitMsg.trim());
-      setCommitMsg('');
-      setGitSuccess('Committed successfully.');
-      await loadGitStatus();
-    } catch (e) {
-      setGitError(`Commit failed: ${e}`);
-    } finally {
-      setCommitting(false);
-    }
-  };
-
-  const handlePush = async () => {
-    if (!project?.path) return;
-    setPushing(true);
-    setGitError(null);
-    setGitSuccess(null);
-    try {
-      await gitPush(project.path);
-      setGitSuccess('Pushed successfully.');
-    } catch (e) {
-      setGitError(`Push failed: ${e}`);
-    } finally {
-      setPushing(false);
-    }
-  };
-
-  const [showCompleted, setShowCompleted] = useState(false);
-
-  // ---------------------------------------------------------------------------
-  // Filtered tasks
-  // ---------------------------------------------------------------------------
-
-  const filteredTasks = tasks.filter((t) => {
-    if (filter === 'all') return t.status !== 'review';
-    if (filter === 'review') return t.status === 'review';
-    return t.status === filter;
-  });
-
-  const completedTasks = tasks.filter((t) => t.status === 'review');
-
-  const filterTabs: { key: FilterType; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'todo', label: 'To-Do' },
-    { key: 'in_progress', label: 'In Progress' },
-    { key: 'review', label: 'Review' },
-  ];
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-
   if (!project) {
     return (
-      <div className={`${m ? 'p-3' : 'p-6'} flex flex-col items-center justify-center gap-4 h-full`}>
-        <AlertCircle size={32} className="dark:text-gray-500" />
-        <p className="dark:text-gray-400 text-sm">Project not found.</p>
+      <div className={`${mobileMode ? 'p-3' : 'p-6'} flex h-full flex-col items-center justify-center gap-4`}>
+        <AlertCircle size={32} className="text-gray-500 dark:text-gray-400" />
+        <p className="text-sm text-gray-500 dark:text-gray-400">Project not found.</p>
         <button
           onClick={() => navigate('/projects')}
-          className="text-sm dark:text-blue-400 hover:underline min-h-[44px] flex items-center"
+          className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
         >
-          ← Back to Projects
+          Back to Projects
         </button>
       </div>
     );
   }
 
   return (
-    <div className={`${m ? 'p-3' : 'p-6'} space-y-5 overflow-y-auto h-full`} data-scrollable>
+    <>
+      <TaskCreationModal
+        isOpen={showCreateModal}
+        defaultProjectId={project.id}
+        onClose={() => {
+          setShowCreateModal(false);
+          loadTasks();
+        }}
+      />
 
-      {/* Header */}
-      <div className="space-y-1">
-        <button
-          onClick={() => navigate('/projects')}
-          className={`flex items-center gap-1.5 dark:text-gray-400 hover:dark:text-[#E6EDF3] transition-colors text-sm ${m ? 'min-h-[44px]' : ''}`}
-        >
-          <ArrowLeft size={15} />
-          Back
-        </button>
-        <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className={`font-bold dark:text-[#E6EDF3] leading-tight ${m ? 'text-xl' : 'text-2xl'}`}>
-              {project.name}
-            </h1>
-            <p className="text-xs dark:text-gray-500 mt-0.5 truncate">{project.path}</p>
+      <div className="flex h-full flex-col overflow-hidden bg-[#F5F5F7] dark:bg-[#0F1117]">
+        <div className={`${mobileMode ? 'px-3 py-2' : 'px-4 py-3'} shrink-0 border-b border-gray-200 bg-white dark:bg-[#161B22] dark:border-[#30363D]`}>
+          <button
+            onClick={() => navigate('/projects')}
+            className="mb-2 flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 transition-colors hover:text-gray-800 dark:hover:text-gray-200"
+          >
+            <ArrowLeft size={15} />
+            Back
+          </button>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h1 className={`${mobileMode ? 'text-base' : 'text-lg'} truncate font-semibold text-gray-800 dark:text-[#E6EDF3]`}>
+                {project.name} Board
+              </h1>
+              <p className="truncate text-xs text-gray-500 dark:text-gray-500">{project.path}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => setShowGit((prev) => !prev)}
+                className={`${mobileMode ? 'h-9 px-3' : 'h-8 px-2.5'} inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-[#30363D] dark:bg-[#21262D] dark:text-gray-200 dark:hover:bg-[#30363D]`}
+              >
+                <GitBranch size={13} />
+                Git
+              </button>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className={`${mobileMode ? 'h-9 px-3' : 'h-8 px-2.5'} inline-flex items-center gap-1.5 rounded-lg bg-blue-600 text-sm font-medium text-white transition-colors hover:bg-blue-500`}
+              >
+                <Plus size={14} />
+                New Task
+              </button>
+            </div>
           </div>
-          {gitBranch && (
-            <span className="shrink-0 flex items-center gap-1.5 text-xs dark:bg-[#161B22] border border-white/10 rounded-full px-3 py-1 dark:text-gray-400 mt-1">
-              <GitBranch size={11} />
-              {gitBranch}
-            </span>
+        </div>
+
+        {showGit && (
+          <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 dark:border-[#30363D] dark:bg-[#161B22]">
+            <GitPanel projectPath={project.path} projectId={project.id} />
+          </div>
+        )}
+
+        <div className="flex-1 overflow-hidden">
+          {loading ? (
+            <div className="p-4 text-sm text-gray-500 dark:text-gray-400">Loading board...</div>
+          ) : (
+            <KanbanBoard tasks={tasks} lockedProjectId={project.id} />
           )}
         </div>
       </div>
-
-      {/* Filter tabs */}
-      <div className="flex gap-1 overflow-x-auto pb-0.5">
-        {filterTabs.map(({ key, label }) => {
-          const count = key === 'all'
-            ? tasks.filter((t) => t.status !== 'review').length
-            : tasks.filter((t) => t.status === key).length;
-          return (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={`shrink-0 px-3 rounded-lg text-sm font-medium transition-colors ${m ? 'h-10' : 'h-9'} ${
-                filter === key
-                  ? 'dark:bg-blue-600 text-white'
-                  : 'dark:bg-[#161B22] dark:text-gray-400 hover:dark:text-[#E6EDF3] border border-white/5'
-              }`}
-            >
-              {label}
-              <span className={`ml-1.5 text-xs ${filter === key ? 'opacity-70' : 'dark:text-gray-600'}`}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Add task form */}
-      <form onSubmit={handleAddTask} className="flex gap-2">
-        <input
-          type="text"
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          placeholder="Add a task…"
-          className={`flex-1 rounded-lg px-3 dark:bg-[#161B22] border border-white/10 dark:text-[#E6EDF3] dark:placeholder-gray-600 focus:outline-none focus:border-blue-500/60 text-sm ${m ? 'h-11' : 'h-10'}`}
-        />
-        <button
-          type="submit"
-          disabled={adding || !newTitle.trim()}
-          className={`shrink-0 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5 ${m ? 'h-11' : 'h-10'}`}
-        >
-          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          Add
-        </button>
-      </form>
-
-      {/* Task list */}
-      <section>
-        {loadingTasks ? (
-          <div className="flex justify-center py-8">
-            <Loader2 size={20} className="animate-spin dark:text-gray-500" />
-          </div>
-        ) : filteredTasks.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-8 dark:text-gray-600">
-            <p className="text-sm">No tasks</p>
-          </div>
-        ) : (
-          <div className="divide-y dark:divide-white/5">
-            {filteredTasks.map((task) => (
-              <div key={task.id} className="flex items-center gap-3 py-2.5 group">
-                {/* Status toggle */}
-                <button
-                  onClick={() => handleToggle(task.id, task.status)}
-                  className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
-                  aria-label="Toggle status"
-                >
-                  {task.status === 'review' ? (
-                    <CheckCircle2 size={16} className="text-emerald-500" />
-                  ) : task.status === 'in_progress' ? (
-                    <Circle size={16} className="text-blue-400" />
-                  ) : (
-                    <Circle size={16} className="dark:text-gray-500" />
-                  )}
-                </button>
-
-                {/* Title */}
-                <button
-                  onClick={() => navigate(`/tasks/${task.id}`)}
-                  className={`flex-1 min-w-0 text-left text-sm dark:text-[#E6EDF3] truncate ${task.status === 'review' ? 'line-through dark:text-gray-500' : ''}`}
-                >
-                  {task.title}
-                </button>
-
-                {/* Badges */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Job badge */}
-                  {(task.job_status === 'running' || task.job_status === 'queued') && (
-                    <span className="flex items-center gap-1 text-xs bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded-full">
-                      <Loader2 size={9} className="animate-spin" />
-                      {task.job_status}
-                    </span>
-                  )}
-                  {/* Priority badge */}
-                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium hidden sm:inline ${priorityClass(task.priority)}`}>
-                    {priorityLabel(task.priority)}
-                  </span>
-                  {/* Type badge */}
-                  <span className={`text-xs px-1.5 py-0.5 rounded hidden sm:inline ${taskTypeBadge(task.task_type)}`}>
-                    {task.task_type}
-                  </span>
-                  {/* Status dot */}
-                  <span className={`w-1.5 h-1.5 rounded-full ${statusDotClass(task.status)}`} />
-                  {/* Delete */}
-                  <button
-                    onClick={() => handleDelete(task.id)}
-                    className="w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-600 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                    aria-label="Delete task"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Completed accordion — only when not on Done filter */}
-      {filter !== 'review' && completedTasks.length > 0 && (
-        <section className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">
-          <button
-            onClick={() => setShowCompleted((v) => !v)}
-            className={`w-full flex items-center justify-between px-4 dark:text-[#E6EDF3] hover:dark:bg-white/5 transition-colors ${m ? 'h-12' : 'h-11'}`}
-          >
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={15} className="text-emerald-500" />
-              <span className="font-medium text-sm">Completed</span>
-              <span className="text-xs dark:text-gray-500">{completedTasks.length}</span>
-            </div>
-            {showCompleted ? <ChevronUp size={15} className="dark:text-gray-400" /> : <ChevronDown size={15} className="dark:text-gray-400" />}
-          </button>
-
-          {showCompleted && (
-            <div className="border-t border-white/5 divide-y dark:divide-white/5">
-              {completedTasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-3 px-4 py-2.5 group">
-                  <button
-                    onClick={() => handleToggle(task.id, task.status)}
-                    className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-white/5 transition-colors"
-                    aria-label="Toggle status"
-                  >
-                    <CheckCircle2 size={16} className="text-emerald-500" />
-                  </button>
-                  <button
-                    onClick={() => navigate(`/tasks/${task.id}`)}
-                    className="flex-1 min-w-0 text-left text-sm line-through dark:text-gray-500 truncate"
-                  >
-                    {task.title}
-                  </button>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium hidden sm:inline ${priorityClass(task.priority)}`}>
-                      {priorityLabel(task.priority)}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded hidden sm:inline ${taskTypeBadge(task.task_type)}`}>
-                      {task.task_type}
-                    </span>
-                    <button
-                      onClick={() => handleDelete(task.id)}
-                      className="w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-600 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                      aria-label="Delete task"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Git Panel */}
-      <section className="dark:bg-[#161B22] border border-white/5 rounded-xl overflow-hidden">
-        {/* Collapsible header */}
-        <button
-          onClick={() => setShowGit((v) => !v)}
-          className={`w-full flex items-center justify-between px-4 dark:text-[#E6EDF3] hover:dark:bg-white/5 transition-colors ${m ? 'h-12' : 'h-11'}`}
-        >
-          <div className="flex items-center gap-2">
-            <GitBranch size={15} className="dark:text-gray-400" />
-            <span className="font-medium text-sm">Git</span>
-            {!loadingGit && gitBranch && (
-              <span className="text-xs dark:text-gray-500">{gitBranch}</span>
-            )}
-            {!loadingGit && !gitClean && showGit && (
-              <span className="text-xs bg-yellow-900/40 text-yellow-400 px-1.5 py-0.5 rounded">
-                {gitChangedFiles} changed
-              </span>
-            )}
-            {!loadingGit && gitClean && showGit && (
-              <span className="text-xs bg-emerald-900/40 text-emerald-400 px-1.5 py-0.5 rounded">clean</span>
-            )}
-          </div>
-          {showGit ? <ChevronUp size={15} className="dark:text-gray-400" /> : <ChevronDown size={15} className="dark:text-gray-400" />}
-        </button>
-
-        {/* Expanded content */}
-        {showGit && (
-          <div className="border-t border-white/5 p-4 space-y-4">
-            {loadingGit ? (
-              <div className="flex justify-center py-4">
-                <Loader2 size={18} className="animate-spin dark:text-gray-500" />
-              </div>
-            ) : (
-              <>
-                {/* Error / success messages */}
-                {gitError && (
-                  <div className="flex items-start gap-2 text-xs text-red-400 bg-red-900/20 rounded-lg px-3 py-2">
-                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                    <span>{gitError}</span>
-                  </div>
-                )}
-                {gitSuccess && (
-                  <div className="text-xs text-emerald-400 bg-emerald-900/20 rounded-lg px-3 py-2">
-                    {gitSuccess}
-                  </div>
-                )}
-
-                {/* Diff preview */}
-                {!gitClean && diff && (
-                  <div>
-                    <p className="text-xs dark:text-gray-500 mb-1.5">{gitChangedFiles} changed file{gitChangedFiles !== 1 ? 's' : ''}</p>
-                    <pre className="text-xs font-mono dark:bg-[#0D1117] p-3 rounded-lg overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre">
-                      {diff.split('\n').slice(0, 50).map((line, i) => (
-                        <div key={i} className={
-                          line.startsWith('+') ? 'text-green-400' :
-                          line.startsWith('-') ? 'text-red-400' :
-                          line.startsWith('@@') ? 'text-blue-400' :
-                          'dark:text-gray-400'
-                        }>{line}</div>
-                      ))}
-                    </pre>
-                  </div>
-                )}
-
-                {gitClean && (
-                  <p className="text-sm dark:text-gray-500 text-center py-2">Working tree is clean.</p>
-                )}
-
-                {/* Commit form */}
-                {!gitClean && (
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={commitMsg}
-                      onChange={(e) => setCommitMsg(e.target.value)}
-                      placeholder="Commit message…"
-                      className={`w-full rounded-lg px-3 dark:bg-[#0D1117] border border-white/10 dark:text-[#E6EDF3] dark:placeholder-gray-600 focus:outline-none focus:border-blue-500/60 text-sm ${m ? 'h-11' : 'h-10'}`}
-                    />
-                    <button
-                      onClick={handleCommit}
-                      disabled={committing || !commitMsg.trim()}
-                      className={`w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors ${m ? 'h-11' : 'h-10'}`}
-                    >
-                      {committing ? <Loader2 size={14} className="animate-spin" /> : <GitCommit size={14} />}
-                      Commit All Changes
-                    </button>
-                  </div>
-                )}
-
-                {/* Push button */}
-                <button
-                  onClick={handlePush}
-                  disabled={pushing}
-                  className={`w-full flex items-center justify-center gap-2 rounded-lg dark:bg-[#21262D] hover:dark:bg-[#30363D] disabled:opacity-40 disabled:cursor-not-allowed dark:text-[#E6EDF3] text-sm font-medium transition-colors border border-white/10 ${m ? 'h-11' : 'h-10'}`}
-                >
-                  {pushing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                  Push
-                </button>
-              </>
-            )}
-          </div>
-        )}
-      </section>
-    </div>
+    </>
   );
 };

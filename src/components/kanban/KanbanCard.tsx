@@ -37,7 +37,7 @@ function DeadlineBadge({ deadline }: { deadline: string }) {
     ? 'text-red-500'
     : soon
     ? 'text-amber-500'
-    : 'text-gray-400';
+    : 'text-gray-400 dark:text-gray-500';
 
   return (
     <span className={`text-[11px] font-medium ${cls}`}>
@@ -94,7 +94,7 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
     <div
       onClick={onClick}
       className={`
-        relative bg-white rounded-[10px] p-3 cursor-pointer group
+        relative bg-white dark:bg-[#0F1117] border border-gray-200 dark:border-[#30363D] rounded-[10px] p-3 cursor-pointer group
         shadow-[0_1px_3px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.04)]
         hover:shadow-[0_2px_6px_rgba(0,0,0,0.12),0_4px_12px_rgba(0,0,0,0.08)]
         transition-shadow select-none
@@ -106,7 +106,7 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
         <button
           {...dragHandleProps}
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing p-0.5"
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-300 cursor-grab active:cursor-grabbing p-0.5"
           aria-label="Drag task"
         >
           <GripVertical size={14} />
@@ -121,7 +121,7 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
         >
           ●
         </span>
-        <p className="text-[15px] font-semibold text-gray-800 leading-snug line-clamp-2 flex-1">
+        <p className="text-[15px] font-semibold text-gray-800 dark:text-[#E6EDF3] leading-snug line-clamp-2 flex-1">
           {task.title}
         </p>
         {/* Approved badge */}
@@ -132,7 +132,7 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
 
       {/* Description preview */}
       {task.description && (
-        <p className="text-[13px] text-gray-400 mt-1 leading-snug line-clamp-1">
+        <p className="text-[13px] text-gray-400 dark:text-gray-500 mt-1 leading-snug line-clamp-1">
           {task.description}
         </p>
       )}
@@ -141,7 +141,7 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         {/* Agent badge */}
         {task.agent && (
-          <span className="flex items-center gap-1 text-[11px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">
+          <span className="flex items-center gap-1 text-[11px] bg-gray-100 text-gray-500 dark:bg-[#21262D] dark:text-gray-300 px-1.5 py-0.5 rounded-full">
             <Bot size={10} />
             {agentLabel(task.agent)}
           </span>

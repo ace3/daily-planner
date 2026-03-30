@@ -42,20 +42,20 @@ interface ActiveJobRowProps {
 }
 
 const ActiveJobRow: React.FC<ActiveJobRowProps> = ({ job, projectName, onCancel, mobile }) => (
-  <div className="flex items-center gap-3 dark:bg-[#161B22] rounded-lg px-3 py-2.5 border border-white/5">
+  <div className="flex items-center gap-3 rounded-lg px-3 py-2.5 border border-gray-200 bg-white dark:bg-[#161B22] dark:border-white/5">
     <Loader2 size={14} className="animate-spin text-green-400 shrink-0" />
     <div className="flex-1 min-w-0">
-      <p className={`truncate dark:text-[#E6EDF3] ${mobile ? 'text-sm' : 'text-sm'}`}>
+      <p className={`truncate text-gray-900 dark:text-[#E6EDF3] ${mobile ? 'text-sm' : 'text-sm'}`}>
         {job.prompt?.slice(0, 60) ?? 'Running…'}
       </p>
       <div className="flex items-center gap-2 mt-0.5">
         {projectName && (
-          <span className="text-xs dark:text-gray-500 truncate">{projectName}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-500 truncate">{projectName}</span>
         )}
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${providerBadgeClass(job.provider)}`}>
           {job.provider}
         </span>
-        <span className="text-xs dark:text-gray-500 flex items-center gap-1">
+        <span className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-1">
           <Clock size={10} />
           {elapsedTime(job)}
         </span>
@@ -63,7 +63,7 @@ const ActiveJobRow: React.FC<ActiveJobRowProps> = ({ job, projectName, onCancel,
     </div>
     <button
       onClick={() => onCancel(job.id)}
-      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg dark:hover:bg-red-900/30 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/30 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
       aria-label="Cancel job"
     >
       <X size={14} />
@@ -120,16 +120,16 @@ export const Dashboard: React.FC = () => {
         }}
       />
 
-      <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: '#F5F5F7' }}>
+      <div className="flex flex-col h-full overflow-hidden bg-[#F5F5F7] dark:bg-[#0F1117]">
         {/* Top bar */}
-        <div className={`${m ? 'px-3 py-2' : 'px-4 py-3'} flex items-center justify-between shrink-0 bg-white border-b border-gray-200`}>
+        <div className={`${m ? 'px-3 py-2' : 'px-4 py-3'} flex items-center justify-between shrink-0 bg-white border-b border-gray-200 dark:bg-[#161B22] dark:border-[#30363D]`}>
           <div className="flex items-center gap-3">
-            <h1 className={`font-semibold text-gray-800 ${m ? 'text-base' : 'text-lg'}`}>
+            <h1 className={`font-semibold text-gray-800 dark:text-[#E6EDF3] ${m ? 'text-base' : 'text-lg'}`}>
               Board
             </h1>
             {/* Running jobs indicator */}
             {activeJobs.length > 0 && (
-              <span className="flex items-center gap-1.5 text-xs bg-green-50 text-green-600 border border-green-200 px-2 py-0.5 rounded-full">
+              <span className="flex items-center gap-1.5 text-xs bg-green-50 text-green-600 border border-green-200 px-2 py-0.5 rounded-full dark:bg-green-900/40 dark:text-green-300 dark:border-green-800">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                 {activeJobs.length} running
               </span>
@@ -139,7 +139,7 @@ export const Dashboard: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/projects')}
-              className="text-sm text-blue-600 hover:underline px-2 py-1"
+              className="text-sm text-blue-600 hover:underline px-2 py-1 dark:text-blue-400"
             >
               Projects
             </button>
