@@ -1,9 +1,11 @@
 use anyhow::Context;
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHasher};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 15;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -60,6 +62,21 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 10 {
         apply_v10(conn)?;
+    }
+    if current < 11 {
+        apply_v11(conn)?;
+    }
+    if current < 12 {
+        apply_v12(conn)?;
+    }
+    if current < 13 {
+        apply_v13(conn)?;
+    }
+    if current < 14 {
+        apply_v14(conn)?;
+    }
+    if current < 15 {
+        apply_v15(conn)?;
     }
 
     eprintln!(
@@ -608,6 +625,254 @@ fn apply_v10(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v11(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 11, "Add devices table for device linking", |tx| {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS devices (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL DEFAULT 'Unknown Device',
+                last_seen  TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_devices_created ON devices(created_at);",
+        )
+        .context("v11 DDL failed")
+    })
+}
+
+fn apply_v12(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 12, "V3 refactor: project-centric model", |tx| {
+        // 1. Drop session tables
+        tx.execute_batch("
+            DROP TABLE IF EXISTS focus_sessions;
+            DROP TABLE IF EXISTS daily_sessions;
+        ").context("Drop session tables")?;
+
+        // 2. Recreate tasks table without session_slot/date, with new columns
+        // SQLite requires table recreation for column removal
+        tx.execute_batch("
+            CREATE TABLE tasks_v3 (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                notes           TEXT DEFAULT '',
+                task_type       TEXT NOT NULL DEFAULT 'prompt',
+                priority        INTEGER NOT NULL DEFAULT 2,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                estimated_min   INTEGER DEFAULT NULL,
+                actual_min      INTEGER DEFAULT NULL,
+                raw_prompt      TEXT DEFAULT NULL,
+                improved_prompt TEXT DEFAULT NULL,
+                prompt_output   TEXT DEFAULT NULL,
+                job_status      TEXT NOT NULL DEFAULT 'idle',
+                job_id          TEXT DEFAULT NULL,
+                provider        TEXT DEFAULT NULL,
+                carried_from    TEXT DEFAULT NULL,
+                position        INTEGER NOT NULL DEFAULT 0,
+                project_id      TEXT DEFAULT NULL,
+                worktree_path   TEXT DEFAULT NULL,
+                worktree_branch TEXT DEFAULT NULL,
+                worktree_status TEXT DEFAULT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                completed_at    TEXT DEFAULT NULL
+            );
+        ").context("Create tasks_v3")?;
+
+        // 3. Migrate data from old tasks table
+        tx.execute_batch("
+            INSERT INTO tasks_v3 (id, title, notes, task_type, priority, status,
+                estimated_min, actual_min, raw_prompt, improved_prompt,
+                carried_from, position, project_id,
+                worktree_path, worktree_branch, worktree_status,
+                created_at, updated_at, completed_at)
+            SELECT id, title, notes, task_type, priority, status,
+                estimated_min, actual_min, prompt_used, prompt_result,
+                carried_from, position, project_id,
+                worktree_path, worktree_branch, worktree_status,
+                created_at, updated_at, completed_at
+            FROM tasks;
+
+            DROP TABLE tasks;
+            ALTER TABLE tasks_v3 RENAME TO tasks;
+
+            CREATE INDEX idx_tasks_status ON tasks(status);
+            CREATE INDEX idx_tasks_project ON tasks(project_id);
+            CREATE INDEX idx_tasks_job_status ON tasks(job_status);
+            CREATE INDEX idx_tasks_created ON tasks(created_at);
+        ").context("Migrate tasks data")?;
+
+        // 4. Create prompt_jobs table
+        tx.execute_batch("
+            CREATE TABLE prompt_jobs (
+                id              TEXT PRIMARY KEY,
+                task_id         TEXT NOT NULL,
+                project_id      TEXT DEFAULT NULL,
+                provider        TEXT NOT NULL,
+                prompt          TEXT NOT NULL,
+                output          TEXT DEFAULT NULL,
+                status          TEXT NOT NULL DEFAULT 'queued',
+                exit_code       INTEGER DEFAULT NULL,
+                worktree_path   TEXT DEFAULT NULL,
+                worktree_branch TEXT DEFAULT NULL,
+                error_message   TEXT DEFAULT NULL,
+                started_at      TEXT DEFAULT NULL,
+                finished_at     TEXT DEFAULT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX idx_prompt_jobs_status ON prompt_jobs(status);
+            CREATE INDEX idx_prompt_jobs_task ON prompt_jobs(task_id);
+            CREATE INDEX idx_prompt_jobs_project ON prompt_jobs(project_id);
+        ").context("Create prompt_jobs table")?;
+
+        // 5. Clean up session-related settings
+        tx.execute_batch("
+            DELETE FROM settings WHERE key IN (
+                'session1_kickstart', 'planning_end', 'session2_start',
+                'warn_before_min', 'work_days'
+            );
+        ").context("Clean session settings")?;
+
+        // 6. Update daily_reports - remove session focus columns via recreate
+        tx.execute_batch("
+            CREATE TABLE daily_reports_v3 (
+                id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                date            TEXT NOT NULL UNIQUE,
+                tasks_planned   INTEGER DEFAULT 0,
+                tasks_completed INTEGER DEFAULT 0,
+                tasks_skipped   INTEGER DEFAULT 0,
+                tasks_carried   INTEGER DEFAULT 0,
+                total_focus_min INTEGER DEFAULT 0,
+                ai_reflection   TEXT DEFAULT NULL,
+                markdown_export TEXT DEFAULT NULL,
+                generated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO daily_reports_v3 (id, date, tasks_planned, tasks_completed,
+                tasks_skipped, tasks_carried, total_focus_min,
+                ai_reflection, markdown_export, generated_at)
+            SELECT id, date, tasks_planned, tasks_completed,
+                tasks_skipped, tasks_carried, total_focus_min,
+                ai_reflection, markdown_export, generated_at
+            FROM daily_reports;
+
+            DROP TABLE daily_reports;
+            ALTER TABLE daily_reports_v3 RENAME TO daily_reports;
+        ").context("Migrate daily_reports")?;
+
+        Ok(())
+    })
+}
+
+fn apply_v13(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 13, "Add projects.deleted_at for soft-delete/trash", |tx| {
+        if !column_exists(tx, "projects", "deleted_at")? {
+            tx.execute_batch("ALTER TABLE projects ADD COLUMN deleted_at TEXT DEFAULT NULL;")
+                .context("ALTER TABLE projects ADD COLUMN deleted_at")?;
+        }
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_projects_deleted_at ON projects(deleted_at);",
+        )
+        .context("Create idx_projects_deleted_at")?;
+        Ok(())
+    })
+}
+
+fn apply_v14(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 14, "V4 revamp: users, sessions, kanban statuses, task fields", |tx| {
+        // 1. Create users table
+        tx.execute_batch("
+            CREATE TABLE IF NOT EXISTS users (
+                id                   TEXT PRIMARY KEY,
+                username             TEXT NOT NULL UNIQUE,
+                password_hash        TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 1,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        ").context("Create users table")?;
+
+        // 2. Create sessions table
+        tx.execute_batch("
+            CREATE TABLE IF NOT EXISTS sessions (
+                id         TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token      TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+        ").context("Create sessions table")?;
+
+        // 3. Insert default admin user with argon2-hashed "password" password.
+        //    The hash is generated using argon2id with default params.
+        //    Password: "password"
+        let salt = SaltString::from_b64("c3lucS1kZWZhdWx0LXNhbHQ")
+            .map_err(|e| anyhow::anyhow!("Failed to create salt: {}", e))?;
+        let argon2 = Argon2::default();
+        let hash = argon2
+            .hash_password(b"password", &salt)
+            .map_err(|e| anyhow::anyhow!("Failed to hash default password: {}", e))?
+            .to_string();
+
+        tx.execute(
+            "INSERT OR IGNORE INTO users (id, username, password_hash, must_change_password) \
+             VALUES ('default-admin', 'admin', ?1, 1)",
+            params![hash],
+        ).context("Insert default admin user")?;
+
+        // 4. Add new task columns for kanban workflow
+        if !column_exists(tx, "tasks", "description")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT '';")
+                .context("Add tasks.description")?;
+        }
+        if !column_exists(tx, "tasks", "deadline")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN deadline TEXT DEFAULT NULL;")
+                .context("Add tasks.deadline")?;
+        }
+        if !column_exists(tx, "tasks", "plan")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT DEFAULT NULL;")
+                .context("Add tasks.plan")?;
+        }
+        if !column_exists(tx, "tasks", "review_output")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN review_output TEXT DEFAULT NULL;")
+                .context("Add tasks.review_output")?;
+        }
+        if !column_exists(tx, "tasks", "review_status")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN review_status TEXT NOT NULL DEFAULT 'none';")
+                .context("Add tasks.review_status")?;
+        }
+        if !column_exists(tx, "tasks", "git_workflow")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN git_workflow INTEGER NOT NULL DEFAULT 0;")
+                .context("Add tasks.git_workflow")?;
+        }
+        if !column_exists(tx, "tasks", "agent")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN agent TEXT DEFAULT NULL;")
+                .context("Add tasks.agent")?;
+        }
+
+        // 5. Remap task statuses: pending→todo, done→review
+        tx.execute("UPDATE tasks SET status = 'todo' WHERE status = 'pending'", [])
+            .context("Remap pending→todo")?;
+        tx.execute("UPDATE tasks SET status = 'review' WHERE status = 'done'", [])
+            .context("Remap done→review")?;
+
+        // 6. Add index for deadline queries
+        tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);")
+            .context("Create idx_tasks_deadline")?;
+
+        Ok(())
+    })
+}
+
+fn apply_v15(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 15, "Drop prompt_templates table", |tx| {
+        tx.execute_batch("DROP TABLE IF EXISTS prompt_templates;")
+            .context("v15 DDL failed")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -735,26 +1000,63 @@ mod tests {
         let mut conn = open_test_db();
         run_migrations(&mut conn, None).unwrap();
 
-        // All expected tables exist.
+        // All expected tables exist (focus_sessions and daily_sessions dropped in v12).
         for tbl in &[
             "tasks",
-            "focus_sessions",
-            "daily_sessions",
-            "prompt_templates",
             "daily_reports",
             "settings",
             "projects",
             "schema_version",
+            "prompt_jobs",
+            "users",
+            "sessions",
         ] {
             assert!(table_exists(&conn, tbl).unwrap(), "Table '{}' missing", tbl);
         }
+
+        // Session tables must NOT exist after v12.
+        assert!(!table_exists(&conn, "focus_sessions").unwrap(), "focus_sessions must be dropped");
+        assert!(!table_exists(&conn, "daily_sessions").unwrap(), "daily_sessions must be dropped");
 
         // New columns added.
         assert!(column_exists(&conn, "tasks", "project_id").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_path").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
+        assert!(column_exists(&conn, "tasks", "raw_prompt").unwrap());
+        assert!(column_exists(&conn, "tasks", "improved_prompt").unwrap());
+        assert!(column_exists(&conn, "tasks", "job_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
+
+        // v14 columns
+        assert!(column_exists(&conn, "tasks", "description").unwrap());
+        assert!(column_exists(&conn, "tasks", "deadline").unwrap());
+        assert!(column_exists(&conn, "tasks", "plan").unwrap());
+        assert!(column_exists(&conn, "tasks", "review_output").unwrap());
+        assert!(column_exists(&conn, "tasks", "review_status").unwrap());
+        assert!(column_exists(&conn, "tasks", "git_workflow").unwrap());
+        assert!(column_exists(&conn, "tasks", "agent").unwrap());
+
+        // v14 users table has default admin
+        let admin_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE username='admin'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(admin_count, 1, "Default admin user must exist");
+
+        // Admin must require password change
+        let must_change: i64 = conn
+            .query_row(
+                "SELECT must_change_password FROM users WHERE username='admin'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(must_change, 1, "Admin must require password change on first login");
 
         // Schema version recorded correctly.
         let v: i64 = conn
@@ -762,15 +1064,8 @@ mod tests {
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION as i64);
 
-        // 8 builtin templates seeded (6 original + 2 from v10).
-        let tmpl_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM prompt_templates WHERE is_builtin=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(tmpl_count, 8);
+        // prompt_templates table must NOT exist after v15.
+        assert!(!table_exists(&conn, "prompt_templates").unwrap(), "prompt_templates must be dropped");
 
         // Default settings populated.
         let tz: String = conn
@@ -786,6 +1081,8 @@ mod tests {
         assert!(setting_exists(&conn, "default_model_opencode").unwrap());
         assert!(setting_exists(&conn, "default_model_copilot").unwrap());
         assert!(setting_exists(&conn, "active_ai_provider").unwrap());
+        // session1_kickstart must be deleted by v12
+        assert!(!setting_exists(&conn, "session1_kickstart").unwrap(), "session1_kickstart must be deleted");
     }
 
     // --- 2. Upgrade with existing populated data ---
@@ -837,6 +1134,23 @@ mod tests {
         assert!(column_exists(&conn, "tasks", "worktree_branch").unwrap());
         assert!(column_exists(&conn, "tasks", "worktree_status").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
+
+        // v14: status remapping — legacy 'done' task should now be 'review'
+        let status: String = conn
+            .query_row("SELECT status FROM tasks WHERE id='legacy-1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "review", "Legacy 'done' status must be remapped to 'review'");
+
+        // v14: users and sessions tables
+        assert!(table_exists(&conn, "users").unwrap());
+        assert!(table_exists(&conn, "sessions").unwrap());
+        assert!(column_exists(&conn, "tasks", "description").unwrap());
+        assert!(column_exists(&conn, "tasks", "deadline").unwrap());
+        assert!(column_exists(&conn, "tasks", "plan").unwrap());
+        assert!(column_exists(&conn, "tasks", "agent").unwrap());
 
         let v: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
@@ -895,11 +1209,11 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
             .unwrap();
 
-        // Insert user data.
+        // Insert user data using v14 schema (status is now 'todo' not 'pending').
         conn.execute(
-            "INSERT INTO tasks (id, date, session_slot, title, task_type, priority, \
+            "INSERT INTO tasks (id, title, task_type, priority, \
              status, position, created_at, updated_at) \
-             VALUES ('t1','2026-01-01',1,'My Task','code',1,'pending',0,\
+             VALUES ('t1','My Task','prompt',1,'todo',0,\
              datetime('now'),datetime('now'))",
             [],
         )
@@ -946,6 +1260,7 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION as i64);
         assert!(table_exists(&conn, "projects").unwrap());
         assert!(column_exists(&conn, "projects", "prompt").unwrap());
+        assert!(column_exists(&conn, "projects", "deleted_at").unwrap());
     }
 
     // --- 5b. Edge case: corrupt negative version ---

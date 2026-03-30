@@ -1,8 +1,10 @@
+mod auth;
 mod commands;
-mod db;
-mod http_server;
-mod scheduler;
+pub mod db;
+pub mod http_server;
+pub mod mcp_server;
 mod tray;
+mod tunnel;
 
 use db::{init_db, run_migrations};
 use tauri::Manager;
@@ -20,6 +22,17 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                let display = std::env::var("DISPLAY").ok();
+                let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+                if display.as_deref().unwrap_or("").is_empty()
+                    && wayland.as_deref().unwrap_or("").is_empty()
+                {
+                    eprintln!("[runtime] Linux headless mode detected (no DISPLAY/WAYLAND_DISPLAY). Remote web access is expected.");
+                }
+            }
+
             // Init DB
             let (db, db_path) = init_db(app.handle())?;
             {
@@ -27,29 +40,32 @@ pub fn run() {
                 run_migrations(&mut *conn, Some(&db_path)).expect("Migrations failed");
             }
 
-            // Load settings for scheduler
-            let (tz_offset, kickstart, planning_end, session2_start, warn_min, work_days) = {
+            // Auto-generate HTTP auth token on first launch
+            {
                 let conn = db.0.lock().expect("DB lock");
-                let tz: i64 = db::queries::get_setting(&conn, "timezone_offset")
-                    .unwrap_or_else(|_| "7".to_string())
-                    .parse()
-                    .unwrap_or(7);
-                let k = db::queries::get_setting(&conn, "session1_kickstart")
-                    .unwrap_or_else(|_| "09:00".to_string());
-                let p = db::queries::get_setting(&conn, "planning_end")
-                    .unwrap_or_else(|_| "11:00".to_string());
-                let s2 = db::queries::get_setting(&conn, "session2_start")
-                    .unwrap_or_else(|_| "14:00".to_string());
-                let w: i64 = db::queries::get_setting(&conn, "warn_before_min")
-                    .unwrap_or_else(|_| "15".to_string())
-                    .parse()
-                    .unwrap_or(15);
-                let wd: Vec<i64> = serde_json::from_str(
-                    &db::queries::get_setting(&conn, "work_days")
-                        .unwrap_or_else(|_| "[1,2,3,4,5]".to_string()),
-                )
-                .unwrap_or_else(|_| vec![1, 2, 3, 4, 5]);
-                (tz, k, p, s2, w, wd)
+                let existing = db::queries::get_setting(&conn, "http_auth_token")
+                    .unwrap_or_default();
+                if existing.trim().is_empty() {
+                    let token: String = {
+                        use rand::Rng;
+                        rand::thread_rng()
+                            .sample_iter(&rand::distributions::Alphanumeric)
+                            .take(32)
+                            .map(char::from)
+                            .collect()
+                    };
+                    let _ = db::queries::set_setting(&conn, "http_auth_token", &token);
+                    eprintln!("[http_server] Generated new auth token");
+                }
+            }
+
+            // Read HTTP port for browser launch
+            let http_port: u16 = {
+                let conn = db.0.lock().expect("DB lock");
+                db::queries::get_setting(&conn, "http_server_port")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(7734u16)
             };
 
             app.manage(db);
@@ -59,15 +75,42 @@ pub fn run() {
                 std::sync::Mutex::new(std::collections::HashMap::<String, u32>::new()),
             );
             app.manage(commands::claude::JobRegistry(job_registry_arc.clone()));
+            app.manage(tunnel::TunnelManager::new(db_path.clone()));
 
             // Start embedded HTTP server
             {
                 let http_db_path = db_path.clone();
                 let http_registry = job_registry_arc.clone();
+                // Determine dist/ path for static file serving.
+                // 1. current_dir() works when invoked via `cargo tauri dev` from project root.
+                // 2. Fallback: walk up from the exe (target/debug/bin → project root).
+                let dist_path = std::env::current_dir()
+                    .ok()
+                    .map(|d| d.join("dist"))
+                    .filter(|p| p.join("index.html").exists())
+                    .or_else(|| {
+                        std::env::current_exe().ok().and_then(|mut exe| {
+                            for _ in 0..4 { exe.pop(); } // binary→debug→target→src-tauri→root
+                            exe.push("dist");
+                            if exe.join("index.html").exists() { Some(exe) } else { None }
+                        })
+                    });
+                eprintln!("[http_server] dist path: {:?}", dist_path);
                 tauri::async_runtime::spawn(async move {
-                    http_server::start(http_db_path, http_registry).await;
+                    http_server::start(http_db_path, http_registry, dist_path).await;
                 });
             }
+
+            // Auto-launch browser after server starts (headless mode — no desktop window)
+            tauri::async_runtime::spawn(async move {
+                // Give the HTTP server a moment to bind its port
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                let url = format!("http://localhost:{}", http_port);
+                eprintln!("[headless] Opening browser: {}", url);
+                if let Err(e) = open::that(&url) {
+                    eprintln!("[headless] Failed to open browser: {}", e);
+                }
+            });
 
             // Start auto-backup scheduler
             {
@@ -80,33 +123,6 @@ pub fn run() {
             // Setup tray
             tray::setup_tray(app.handle())?;
 
-            // Setup scheduler
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                match scheduler::setup_scheduler(
-                    app_handle,
-                    tz_offset,
-                    &kickstart,
-                    &planning_end,
-                    &session2_start,
-                    warn_min,
-                    &work_days,
-                )
-                .await
-                {
-                    Ok(sched) => {
-                        if let Err(e) = sched.start().await {
-                            eprintln!("Scheduler start error: {}", e);
-                        }
-                        // Keep scheduler alive
-                        loop {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-                        }
-                    }
-                    Err(e) => eprintln!("Scheduler setup error: {}", e),
-                }
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -117,46 +133,49 @@ pub fn run() {
             commands::git::git_push,
             commands::ai_providers::detect_ai_providers,
             commands::tasks::get_tasks,
+            commands::tasks::get_task,
             commands::tasks::get_tasks_range,
-            commands::tasks::rollover_incomplete_tasks,
             commands::tasks::create_task,
             commands::tasks::update_task,
             commands::tasks::update_task_status,
-            commands::tasks::move_task_to_session,
             commands::tasks::delete_task,
             commands::tasks::carry_task_forward,
             commands::tasks::reorder_tasks,
-            commands::tasks::save_prompt_result,
+            commands::tasks::save_task_prompt,
+            commands::tasks::brainstorm_tasks_from_notes,
             commands::tasks::run_task_as_worktree,
             commands::tasks::cleanup_task_worktree,
-            commands::tasks::start_focus_session,
-            commands::tasks::end_focus_session,
-            commands::tasks::get_prompt_templates,
-            commands::tasks::create_prompt_template,
-            commands::tasks::update_prompt_template,
-            commands::tasks::delete_prompt_template,
             commands::settings::get_settings,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::claude::improve_prompt_with_claude,
+            commands::claude::generate_plan,
             commands::claude::run_prompt,
+            commands::claude::create_and_run_job,
             commands::claude::cancel_prompt_run,
+            commands::claude::review_task,
+            commands::claude::approve_task_review,
+            commands::claude::fix_from_review,
             commands::claude::is_git_worktree,
             commands::claude::check_cli_availability,
             commands::copilot::invoke_copilot_cli,
             commands::copilot::check_copilot_cli_availability,
-            commands::reports::generate_report,
-            commands::reports::get_report,
-            commands::reports::get_reports_range,
-            commands::reports::save_ai_reflection,
             commands::data_management::backup_data,
             commands::data_management::restore_data,
             commands::data_management::reset_app_data,
             commands::projects::get_projects,
+            commands::projects::get_trashed_projects,
             commands::projects::create_project,
             commands::projects::delete_project,
+            commands::projects::restore_project,
+            commands::projects::hard_delete_project,
             commands::projects::get_project_prompt,
             commands::projects::set_project_prompt,
+            commands::projects::validate_project_path,
+            commands::jobs::get_active_jobs,
+            commands::jobs::get_recent_jobs,
+            commands::jobs::get_job,
+            commands::jobs::get_jobs_by_task,
             commands::settings::get_global_prompt,
             commands::settings::set_global_prompt,
             commands::worktree::create_prompt_worktree,
@@ -166,6 +185,11 @@ pub fn run() {
             // HTTP server / remote access
             http_server::get_local_ip,
             http_server::get_http_server_port,
+            // Tunnel
+            tunnel::start_tunnel_cmd,
+            tunnel::stop_tunnel_cmd,
+            tunnel::get_tunnel_status,
+            tunnel::test_telegram_notification,
             // Auto backup
             commands::auto_backup::trigger_backup_now,
             commands::auto_backup::list_backup_sessions,

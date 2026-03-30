@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TaskItem } from './TaskItem';
 import { TaskForm } from './TaskForm';
-import { SessionBadge } from '../session/SessionBadge';
+import { TaskBrainstormModal } from './TaskBrainstormModal';
 import { useTaskStore } from '../../stores/taskStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMobileStore } from '../../stores/mobileStore';
@@ -12,20 +12,21 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { addDays, format } from 'date-fns';
 import { toast } from '../ui/Toast';
 import { FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
-import type { TaskStatus } from '../../types/task';
+import type { BrainstormTaskSuggestion, TaskStatus } from '../../types/task';
 
 interface TaskListProps {
-  slot: number;
   onTaskSelect?: (task: Task) => void;
 }
 
-export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
+export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   const [completedOpen, setCompletedOpen] = useState(false);
+  const [brainstormOpen, setBrainstormOpen] = useState(false);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<TaskStatus | null>(null);
   const { mobileMode: m } = useMobileStore();
   const {
     tasks,
+    fetchTasks,
     createTask,
     updateTaskStatus,
     deleteTask,
@@ -33,17 +34,43 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     updateTask,
     runTaskAsWorktree,
     cleanupTaskWorktree,
-    moveTaskToSession,
-    activeDate,
   } = useTaskStore();
   const { settings } = useSettingsStore();
   const { projects } = useProjectStore();
   const { enqueue } = usePromptQueue();
-  const slotTasks = tasks.filter((t) => t.session_slot === slot);
 
   const handleCreate = async (input: Parameters<typeof createTask>[0]) => {
     await createTask(input);
     toast.success('Task added');
+  };
+
+  const handleCreateBrainstormTasks = async (
+    selectedTasks: BrainstormTaskSuggestion[],
+    projectId: string | null,
+    attachmentSummary: string,
+  ) => {
+    for (const item of selectedTasks) {
+      const title = item.title.trim();
+      if (!title) continue;
+      const id = await createTask({
+        title,
+        priority: item.priority,
+        project_id: projectId ?? undefined,
+      });
+      const checklist = (item.checklist || []).map((entry) => `- [ ] ${entry}`).join('\n');
+      const notes = [
+        item.description?.trim() || '',
+        checklist,
+        attachmentSummary ? `\nImage context:\n${attachmentSummary}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+      if (notes) {
+        await updateTask({ id, notes });
+      }
+    }
+    await fetchTasks();
   };
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -58,7 +85,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       return;
     }
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.status === 'carried_over') {
+    if (!task) {
       setDragOverStatus(null);
       return;
     }
@@ -79,7 +106,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     const tz = settings?.timezone_offset ?? 7;
     const today = getLocalDate(tz);
     const tomorrow = format(addDays(new Date(today + 'T00:00:00'), 1), 'yyyy-MM-dd');
-    await carryTaskForward(id, tomorrow, slot);
+    await carryTaskForward(id, tomorrow);
     toast.success('Task carried to tomorrow');
   };
 
@@ -119,13 +146,8 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
     toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
-  const handleMoveToSession = async (task: Task, targetSlot: number) => {
-    await moveTaskToSession(task.id, targetSlot as 1 | 2);
-    toast.success(`Moved to Session ${targetSlot}`);
-  };
-
-  const doneTasks = slotTasks.filter((t) => t.status === 'done');
-  const pendingTasks = slotTasks.filter((t) => t.status !== 'done' && t.status !== 'carried_over');
+  const doneTasks = tasks.filter((t) => t.status === 'review' || (t.status as string) === 'done');
+  const pendingTasks = tasks.filter((t) => t.status !== 'review' && (t.status as string) !== 'done');
 
   // Group pending tasks by project
   const tasksByProject = new Map<string | null, Task[]>();
@@ -146,13 +168,7 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
   projectGroups.sort((a, b) => a.name.localeCompare(b.name));
 
   const noProjectTasks = tasksByProject.get(null) ?? [];
-  // Only show "No Project" label if there are also project groups
   const showProjectHeaders = projectGroups.length > 0;
-
-  const slotNames: Record<number, string> = {
-    1: '9AM–2PM Planning & Coding',
-    2: '2PM–7PM Afternoon',
-  };
 
   const renderTaskItem = (task: Task) => (
     <TaskItem
@@ -166,7 +182,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
       onSelect={onTaskSelect}
       onRunAsWorktree={handleRunAsWorktree}
       onCleanupWorktree={handleCleanupWorktree}
-      onMoveToSession={handleMoveToSession}
       onDragStart={setDraggingTaskId}
       onDragEnd={() => {
         setDraggingTaskId(null);
@@ -178,26 +193,40 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
   return (
     <div className={m ? 'space-y-4' : 'space-y-3'}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide ${m ? 'text-sm' : 'text-xs'}`}>
-            {slotNames[slot] ?? `Session ${slot}`}
-          </span>
-          <SessionBadge slot={slot} />
-        </div>
+        <span className={`font-semibold text-gray-400 dark:text-[#8B949E] uppercase tracking-wide ${m ? 'text-sm' : 'text-xs'}`}>
+          Tasks
+        </span>
         <span className={`text-gray-400 dark:text-[#484F58] ${m ? 'text-sm' : 'text-xs'}`}>
-          {doneTasks.length}/{slotTasks.filter((t) => t.status !== 'carried_over').length}
+          {doneTasks.length}/{tasks.length}
         </span>
       </div>
 
-      <TaskForm date={activeDate} sessionSlot={slot} onSubmit={handleCreate} compact />
+      <TaskForm onSubmit={handleCreate} compact />
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setBrainstormOpen(true)}
+          className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+        >
+          Generate tasks from notes
+        </button>
+      </div>
+
+      <TaskBrainstormModal
+        open={brainstormOpen}
+        onClose={() => setBrainstormOpen(false)}
+        provider={settings?.active_ai_provider || settings?.ai_provider || 'claude'}
+        projects={projects}
+        onCreateTasks={handleCreateBrainstormTasks}
+      />
 
       {/* Desktop drag-and-drop status lanes */}
       {!m && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {[
             { status: 'in_progress' as TaskStatus, label: 'Active' },
+            { status: 'review' as TaskStatus, label: 'Review' },
             { status: 'done' as TaskStatus, label: 'Done' },
-            { status: 'skipped' as TaskStatus, label: 'Skipped' },
           ].map(({ status, label }) => (
             <div
               key={status}
@@ -287,7 +316,6 @@ export const TaskList: React.FC<TaskListProps> = ({ slot, onTaskSelect }) => {
                   onSelect={onTaskSelect}
                   onRunAsWorktree={handleRunAsWorktree}
                   onCleanupWorktree={handleCleanupWorktree}
-                  onMoveToSession={handleMoveToSession}
                 />
               ))}
             </div>

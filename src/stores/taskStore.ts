@@ -12,36 +12,28 @@ interface TaskState {
   tasks: Task[];
   loading: boolean;
   error: string | null;
-  activeDate: string;
-  setActiveDate: (date: string) => void;
-  fetchTasks: (date: string) => Promise<void>;
+  fetchTasks: () => Promise<void>;
   createTask: (input: CreateTaskInput) => Promise<string>;
   updateTask: (input: UpdateTaskInput) => Promise<void>;
   updateTaskStatus: (id: string, status: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
-  carryTaskForward: (id: string, tomorrowDate: string, sessionSlot: number) => Promise<void>;
+  carryTaskForward: (id: string, tomorrowDate: string) => Promise<void>;
   reorderTasks: (taskIds: string[]) => Promise<void>;
-  savePromptResult: (id: string, promptUsed: string, promptResult: string) => Promise<void>;
+  savePromptResult: (id: string, rawPrompt: string, improvedPrompt: string) => Promise<void>;
   runTaskAsWorktree: (id: string) => Promise<RunTaskWorktreeResult>;
   cleanupTaskWorktree: (id: string) => Promise<CleanupTaskWorktreeResult>;
-  moveTaskToSession: (id: string, targetSession: 1 | 2) => Promise<void>;
-  getTasksBySlot: (slot: number) => Task[];
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: [],
   loading: false,
   error: null,
-  activeDate: '',
 
-  setActiveDate: (date) => set({ activeDate: date }),
-
-  fetchTasks: async (date) => {
+  fetchTasks: async () => {
     set({ loading: true, error: null });
     try {
-      await api.rolloverIncompleteTasks(date);
-      const tasks = await api.getTasks(date);
-      set({ tasks, loading: false, activeDate: date });
+      const tasks = await api.getTasks();
+      set({ tasks, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -49,13 +41,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   createTask: async (input) => {
     const id = await api.createTask(input);
-    await get().fetchTasks(get().activeDate);
+    await get().fetchTasks();
     return id;
   },
 
   updateTask: async (input) => {
     await api.updateTask(input);
-    await get().fetchTasks(get().activeDate);
+    await get().fetchTasks();
   },
 
   updateTaskStatus: async (id, status) => {
@@ -72,44 +64,30 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }));
   },
 
-  carryTaskForward: async (id, tomorrowDate, sessionSlot) => {
-    await api.carryTaskForward(id, tomorrowDate, sessionSlot);
-    await get().fetchTasks(get().activeDate);
+  carryTaskForward: async (id, tomorrowDate) => {
+    await api.carryTaskForward(id, tomorrowDate);
+    await get().fetchTasks();
   },
 
   reorderTasks: async (taskIds) => {
     await api.reorderTasks(taskIds);
-    await get().fetchTasks(get().activeDate);
+    await get().fetchTasks();
   },
 
-  savePromptResult: async (id, promptUsed, promptResult) => {
-    await api.savePromptResult(id, promptUsed, promptResult);
-    await get().fetchTasks(get().activeDate);
+  savePromptResult: async (id, rawPrompt, improvedPrompt) => {
+    await api.savePromptResult(id, rawPrompt, improvedPrompt);
+    await get().fetchTasks();
   },
 
   runTaskAsWorktree: async (id) => {
     const result = await api.runTaskAsWorktree(id);
-    await get().fetchTasks(get().activeDate);
+    await get().fetchTasks();
     return result;
   },
 
   cleanupTaskWorktree: async (id) => {
     const result = await api.cleanupTaskWorktree(id);
-    await get().fetchTasks(get().activeDate);
+    await get().fetchTasks();
     return result;
-  },
-
-  moveTaskToSession: async (id, targetSession) => {
-    await api.moveTaskToSession(id, targetSession);
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id ? { ...t, session_slot: targetSession } : t
-      ),
-    }));
-  },
-
-  getTasksBySlot: (slot) => {
-    const { tasks } = get();
-    return tasks.filter((t) => t.session_slot === slot);
   },
 }));

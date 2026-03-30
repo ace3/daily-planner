@@ -9,8 +9,8 @@ interface MobileState {
   setMoreMenuOpen: (open: boolean) => void;
 }
 
-const STORAGE_KEY = 'vegr-mobile-mode';
-const DESKTOP_SIZE_KEY = 'vegr-desktop-size';
+const STORAGE_KEY = 'synq-mobile-mode';
+const DESKTOP_SIZE_KEY = 'synq-desktop-size';
 
 function isWebBrowser(): boolean {
   return typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ === 'undefined';

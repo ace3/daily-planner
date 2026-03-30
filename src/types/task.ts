@@ -1,21 +1,33 @@
 export type TaskType = 'research' | 'prompt' | 'meeting' | 'review' | 'other';
-export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'skipped' | 'carried_over';
+export type TaskStatus = 'todo' | 'improved' | 'planned' | 'in_progress' | 'review' | 'done';
 export type TaskPriority = 1 | 2 | 3; // 1=high, 2=medium, 3=low
 export type WorktreeStatus = 'active' | 'merged' | 'abandoned';
+export type JobStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+export type ReviewStatus = 'none' | 'pending' | 'approved' | 'needs_fix';
+export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'copilot';
+
+/** The five kanban column statuses (in display order). */
+export const KANBAN_STATUSES: TaskStatus[] = ['todo', 'improved', 'planned', 'in_progress', 'review', 'done'];
+
+/** Side statuses that don't appear as kanban columns. */
+export const SIDE_STATUSES: TaskStatus[] = [];
 
 export interface Task {
   id: string;
-  date: string;
-  session_slot: number;
   title: string;
+  description: string;
   notes: string;
   task_type: TaskType;
   priority: TaskPriority;
   status: TaskStatus;
   estimated_min: number | null;
   actual_min: number | null;
-  prompt_used: string | null;
-  prompt_result: string | null;
+  raw_prompt: string | null;
+  improved_prompt: string | null;
+  prompt_output: string | null;
+  job_status: JobStatus;
+  job_id: string | null;
+  provider: string | null;
   carried_from: string | null;
   position: number;
   created_at: string;
@@ -25,34 +37,39 @@ export interface Task {
   worktree_path: string | null;
   worktree_branch: string | null;
   worktree_status: WorktreeStatus | null;
+  deadline: string | null;
+  plan: string | null;
+  review_output: string | null;
+  review_status: ReviewStatus;
+  git_workflow: boolean;
+  agent: AgentProvider | null;
 }
 
 export interface CreateTaskInput {
-  date: string;
-  session_slot: number;
   title: string;
+  description?: string;
   task_type?: TaskType;
   priority?: TaskPriority;
   estimated_min?: number;
   project_id?: string;
+  deadline?: string;
+  agent?: AgentProvider;
+  git_workflow?: boolean;
 }
 
 export interface UpdateTaskInput {
   id: string;
   title?: string;
+  description?: string;
   notes?: string;
   task_type?: TaskType;
   priority?: TaskPriority;
   estimated_min?: number;
-  session_slot?: number;
   project_id?: string;
   clear_project?: boolean;
-}
-
-export interface PromptTemplate {
-  id: string;
-  name: string;
-  content: string;
+  deadline?: string | null;
+  agent?: AgentProvider | null;
+  git_workflow?: boolean;
 }
 
 export interface RunTaskWorktreeResult {
@@ -94,4 +111,20 @@ export interface MergeWorktreeResult {
 export interface CleanupWorktreeResult {
   success: boolean;
   message: string;
+}
+
+export interface TaskAttachmentInput {
+  source: 'clipboard' | 'path';
+  path?: string;
+  mime?: string;
+  size?: number;
+  data_base64?: string;
+}
+
+export interface BrainstormTaskSuggestion {
+  title: string;
+  description: string;
+  checklist: string[];
+  priority: TaskPriority;
+  project?: string | null;
 }

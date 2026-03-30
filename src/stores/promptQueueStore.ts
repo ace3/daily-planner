@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { toast } from '../components/ui/Toast';
 import { isGitWorktree, createPromptWorktree, runTestsInWorktree, mergeWorktreeBranch, cleanupPromptWorktree } from '../lib/tauri';
+import { isWebBrowser } from '../lib/http';
 import type { WorktreeTestResult } from '../types/task';
 
 export type PromptWorktreeStatus = 'none' | 'creating' | 'ready' | 'tests_running' | 'tests_passed' | 'tests_failed' | 'merging' | 'merged';
@@ -35,16 +36,8 @@ export interface PromptJob {
   pipelineError?: string;
 }
 
-interface JobLogPayload {
-  job_id: string;
-  line: string;
-}
-
-interface JobDonePayload {
-  job_id: string;
-  success: boolean;
-  exit_code: number;
-}
+// Tracks active browser-mode fetch AbortControllers by job_id
+const browserJobAborts = new Map<string, AbortController>();
 
 interface PromptQueueState {
   queue: PromptJob[];
@@ -145,15 +138,98 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
     const job = get().queue.find((j) => j.id === id);
     if (!job) return;
 
-    invoke<void>('run_prompt', {
-      prompt: job.prompt,
-      projectPath: job.projectPath,
-      provider: job.provider,
-      jobId: id,
-    }).catch(() => {
-      // Tauri IPC failure (not CLI failure — CLI exit is handled via event)
-      get().finishJob(id, false);
-    });
+    if (isWebBrowser()) {
+      // Browser mode: POST to /api/prompt/run and stream SSE response
+      const token = localStorage.getItem('synq-auth-token');
+      const base = localStorage.getItem('synq-server-url') || window.location.origin;
+      const url = new URL('/api/prompt/run', base);
+
+      const abortController = new AbortController();
+      browserJobAborts.set(id, abortController);
+
+      fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          prompt: job.prompt,
+          project_path: job.projectPath,
+          provider: job.provider,
+          job_id: id,
+        }),
+        signal: abortController.signal,
+      }).then(async (res) => {
+        if (!res.ok || !res.body) {
+          get().finishJob(id, false);
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          let eventType = '';
+          let dataLine = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataLine = line.slice(5).trim();
+            } else if (line === '') {
+              // Event boundary
+              if (eventType === 'line' && dataLine) {
+                get().appendLog(id, dataLine);
+              } else if (eventType === 'done') {
+                try {
+                  const payload = JSON.parse(dataLine) as { success: boolean };
+                  get().finishJob(id, payload.success);
+                } catch {
+                  get().finishJob(id, true);
+                }
+              } else if (eventType === 'error') {
+                get().appendLog(id, `Error: ${dataLine}`);
+              }
+              eventType = '';
+              dataLine = '';
+            }
+          }
+        }
+
+        // Stream ended without explicit done event
+        const currentJob = get().queue.find((j) => j.id === id);
+        if (currentJob && currentJob.status === 'running') {
+          get().finishJob(id, true);
+        }
+      }).catch((err) => {
+        // Ignore abort errors — they're expected on cancel
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        get().finishJob(id, false);
+      }).finally(() => {
+        browserJobAborts.delete(id);
+      });
+    } else {
+      // Desktop mode: use Tauri invoke
+      invoke<void>('run_prompt', {
+        prompt: job.prompt,
+        projectPath: job.projectPath,
+        provider: job.provider,
+        jobId: id,
+      }).catch(() => {
+        // Tauri IPC failure (not CLI failure — CLI exit is handled via event)
+        get().finishJob(id, false);
+      });
+    }
   },
 
   appendLog: (id, line) => {
@@ -228,11 +304,19 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
     const job = get().queue.find((j) => j.id === id);
     if (!job) return;
     if (job.status === 'pending') {
-      // Remove from queue before it ever starts
       set((state) => ({ queue: state.queue.filter((j) => j.id !== id) }));
     } else if (job.status === 'running') {
-      // Kill the backend process; prompt_job_done event will mark it error/done
-      await invoke<void>('cancel_prompt_run', { jobId: id }).catch(() => {});
+      if (isWebBrowser()) {
+        // Abort the in-flight fetch/SSE stream
+        const controller = browserJobAborts.get(id);
+        if (controller) {
+          controller.abort();
+          browserJobAborts.delete(id);
+        }
+        get().finishJob(id, false);
+      } else {
+        await invoke<void>('cancel_prompt_run', { jobId: id }).catch(() => {});
+      }
     }
   },
 
@@ -445,27 +529,29 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
   },
 }));
 
-interface WorktreeTestLogPayload {
-  job_id: string;
-  line: string;
-}
+// Set up event listeners.
+// In desktop (Tauri) mode: use Tauri native events.
+// In browser mode: SSE is handled per-job in startJob().
+if (!isWebBrowser()) {
+  (async () => {
+    interface JobLogPayload { job_id: string; line: string; }
+    interface JobDonePayload { job_id: string; success: boolean; exit_code: number; }
+    interface WorktreeTestLogPayload { job_id: string; line: string; }
 
-// Set up Tauri event listeners once when the module is first imported.
-// In tests, @tauri-apps/api/event is mocked so this is a safe no-op.
-(async () => {
-  await listen<JobLogPayload>('prompt_job_log', ({ payload }) => {
-    usePromptQueueStore.getState().appendLog(payload.job_id, payload.line);
-  });
-  await listen<JobDonePayload>('prompt_job_done', ({ payload }) => {
-    usePromptQueueStore.getState().finishJob(payload.job_id, payload.success);
-  });
-  await listen<WorktreeTestLogPayload>('worktree_test_log', ({ payload }) => {
-    usePromptQueueStore.setState((state) => ({
-      queue: state.queue.map((j) =>
-        j.id === payload.job_id
-          ? { ...j, testOutput: [...j.testOutput, payload.line] }
-          : j,
-      ),
-    }));
-  });
-})();
+    await listen<JobLogPayload>('prompt_job_log', ({ payload }) => {
+      usePromptQueueStore.getState().appendLog(payload.job_id, payload.line);
+    });
+    await listen<JobDonePayload>('prompt_job_done', ({ payload }) => {
+      usePromptQueueStore.getState().finishJob(payload.job_id, payload.success);
+    });
+    await listen<WorktreeTestLogPayload>('worktree_test_log', ({ payload }) => {
+      usePromptQueueStore.setState((state) => ({
+        queue: state.queue.map((j) =>
+          j.id === payload.job_id
+            ? { ...j, testOutput: [...j.testOutput, payload.line] }
+            : j,
+        ),
+      }));
+    });
+  })();
+}

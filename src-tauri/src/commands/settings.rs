@@ -20,6 +20,10 @@ pub struct AppSettings {
     pub theme: String,
     pub work_days: Vec<i64>,
     pub show_in_tray: bool,
+    pub telegram_bot_token: Option<String>,
+    pub telegram_channel_id: Option<String>,
+    pub tunnel_name: Option<String>,
+    pub tunnel_hostname: Option<String>,
 }
 
 fn normalize_ai_provider(value: Option<&String>) -> String {
@@ -149,6 +153,10 @@ pub fn get_settings(db: State<'_, DbConnection>) -> Result<AppSettings, String> 
             .unwrap_or_else(|| "dark".to_string()),
         work_days,
         show_in_tray: map.get("show_in_tray").map(|v| v == "true").unwrap_or(true),
+        telegram_bot_token: map.get("telegram_bot_token").cloned().filter(|v| !v.trim().is_empty()),
+        telegram_channel_id: map.get("telegram_channel_id").cloned().filter(|v| !v.trim().is_empty()),
+        tunnel_name: map.get("tunnel_name").cloned().filter(|v| !v.trim().is_empty()),
+        tunnel_hostname: map.get("tunnel_hostname").cloned().filter(|v| !v.trim().is_empty()),
     })
 }
 

@@ -1,0 +1,30 @@
+services:
+  synq:
+    build: .
+    ports:
+      - "7734:7734"
+    volumes:
+      - synq-data:/data
+    environment:
+      - SYNQ_DB_PATH=/data/planner.db
+      - SYNQ_DIST_PATH=/app/dist
+    restart: unless-stopped
+
+  # Optional: claude-code AI agent container
+  # Enable with: docker compose --profile ai up
+  claude-code:
+    image: node:20-slim
+    working_dir: /workspace
+    volumes:
+      - ./workspace:/workspace
+      - claude-config:/root/.claude
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    command: >
+      bash -c "npm install -g @anthropic-ai/claude-code 2>/dev/null || true && tail -f /dev/null"
+    profiles:
+      - ai
+
+volumes:
+  synq-data:
+  claude-config:

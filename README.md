@@ -1,72 +1,176 @@
-# Vegr
+# Synq
 
-**Path. Direction. Clarity.**
+**Plan. Prompt. Ship — from anywhere.**
 
-Vegr is a developer-focused daily planning desktop app built with Tauri v2, React 19, and Rust. It structures your workday into timed sessions, tracks tasks, provides a focus mode with a Pomodoro-style timer, and generates AI-powered daily reflection reports via the Anthropic Claude API.
+Synq is a project-centric coding workflow manager built with Tauri v2, React 19, and Rust. It lets you plan coding tasks, write and improve prompts with AI, run them on your desktop via CLI tools (Claude Code, Codex, OpenCode, Copilot), review output and diffs, then commit and push — all from your phone or desktop.
 
-The interface is calm, focused, minimal, and Nordic — designed to feel like a steady guide that helps you see the next clear step.
+The core idea: separate **thinking** (mobile, anytime, anywhere) from **executing** (desktop, automated). Write prompts on the train, fire them off to run on your machine, get notified when done, review and ship.
 
 ## Features
 
-- **Session-based workday** — Two structured work sessions per day with configurable start/end times (default UTC+7: 09:00–14:00 and 14:00–19:00)
-- **Morning planning phase** — Dedicated planning mode at session start (09:00–11:00) with Claude AI prompt templates
-- **Task management** — Create, reorder, carry-forward tasks across days
-- **Focus mode** — Pomodoro-style timer with session tracking
-- **Notifications** — Desktop notifications 15 minutes before session resets and end of day
-- **Daily reports** — AI-generated reflection reports streamed from Claude API
-- **Encrypted API key storage** — Claude API token stored with AES-256-GCM encryption in local SQLite
-- **System tray** — Minimal system tray integration
+### Project-Centric Task Management
+- **Project organization** — Create projects linked to git repos, each with its own task list
+- **Standalone tasks** — Quick tasks not linked to any project
+- **Task lifecycle** — pending → in_progress → done/skipped/carried_over
+- **Priority & type** — Organize by priority (high/medium/low) and type (prompt/research/review/meeting/other)
+- **Carry forward** — Move incomplete tasks to keep momentum
+
+### AI-Powered Prompt Workflow
+- **Write raw prompts** — Describe what you want to build, fix, or change
+- **Improve with AI** — One-click prompt improvement using Claude, Codex, OpenCode, or Copilot
+- **Run prompts** — Execute via CLI tools directly from the app
+- **Live output** — Stream real-time CLI output on desktop
+- **Fire-and-forget** — Run from mobile, get Telegram notification when done
+- **Prompt templates** — Save and reuse common prompt patterns
+
+### Job Execution & Monitoring
+- **Job queue** — Track all running, queued, and completed jobs across projects
+- **Parallel execution** — Run tasks on different projects simultaneously
+- **Git worktree support** — Run parallel tasks on the same project using isolated worktrees
+- **Job cancellation** — Cancel running jobs with graceful SIGTERM
+- **Telegram notifications** — Get notified on job completion/failure with task and project context
+
+### Git Integration
+- **Git status & diff** — View changes directly in the app
+- **Commit & push** — Stage, commit, and push from the UI (including mobile)
+- **Worktree pipeline** — Isolated branches per job, merge or discard after review
+- **Per-project git panel** — Branch info, dirty status, file-by-file diff viewer
+
+### Remote Access (Mobile on the Go)
+- **Built-in HTTP server** — Access from any browser on your network
+- **Cloudflare Tunnel** — Access from anywhere over the internet
+- **Token authentication** — Secure access with bearer tokens
+- **Real-time sync** — Server-Sent Events keep mobile UI in sync
+- **Touch-optimized** — 44px+ touch targets, mobile-first layout
+
+### Reports & History
+- **Daily reports** — Track tasks completed, skipped, carried over
+- **AI reflection** — Generate daily summaries with AI
+- **Prompt history** — Browse past prompts and their results
+- **Task history** — View work across all projects over time
+
+### System
+- **Auto backup** — SQLite database backed up automatically
+- **Versioned migrations** — Schema upgrades apply on startup (currently v12)
+- **System tray** — Minimal tray integration
 - **Autostart** — Optional launch on login
-- **Remote web UI** — Access your planner from a browser on the same network
-- **Prompt queue** — Queue and run multiple AI prompts with job management and cancellation
-- **Prompt templates** — Save and reuse AI prompt templates
-- **Multiple AI providers** — Supports Anthropic Claude, OpenAI Codex, and GitHub Copilot
-- **Master prompt composer** — Dedicated tab for building structured prompts with intent detection and built-in templates (Fix Issue, Implement Feature)
-- **Git worktree pipeline** — Runs prompt jobs in isolated git worktrees; each job gets a clean branch, executes, and reports back
-- **Job cancellation** — Cancel running prompt jobs with SIGTERM; queue drains gracefully
-- **Project organization** — Group and filter tasks by project
-- **Versioned database migrations** — Schema upgrades apply automatically on startup
-- **Auto backup** — Local SQLite database backup on each app launch
+- **Encrypted storage** — API keys stored with AES-256-GCM
 
-## Brand
+## How It Works
 
-| Attribute | Value |
-|---|---|
-| Name | Vegr |
-| Meaning | path, way, direction |
-| Tone | calm, focused, minimal, Nordic, premium, steady |
-| Feeling | structured, soft, cool, clear, modern |
-| Primary mood | quiet control, progress, clarity |
+### Core Workflow
 
-### Design tokens
+```mermaid
+flowchart TD
+    A([📱 Mobile / 🖥️ Desktop]) --> B[Create Project\nLink to git repo]
+    B --> C[Add Task\ndescribe what to build]
+    C --> D[Write Prompt\nin Task Detail]
+    D --> E{Improve with AI?}
+    E -- Yes --> F[AI Rewrites Prompt\nClaude / Codex / Copilot]
+    F --> G[Run Prompt\nvia CLI tool]
+    E -- No --> G
+    G --> H{Where are you?}
+    H -- Desktop --> I[Watch live output\nstreamed in app]
+    H -- Mobile --> J[Fire & forget\n⏳ wait...]
+    J --> K[📬 Telegram notification\njob done / failed]
+    K --> L[Open app\nreview output]
+    I --> L
+    L --> M[View git diff\nin app]
+    M --> N{Happy?}
+    N -- Yes --> O[Commit & Push\nfrom the UI]
+    N -- No --> D
+    O --> P([✅ Shipped])
+```
 
-Vegr uses a two-mode design system with cool neutrals, restrained accent usage, soft borders, and subtle shadows.
+### System Architecture
 
-**Light mode base**
+```mermaid
+flowchart LR
+    subgraph Mobile["📱 Mobile / Remote"]
+        MB[Browser UI\nvia Cloudflare Tunnel]
+    end
 
-| Token | Value |
-|---|---|
-| App background | `#F8FAFC` |
-| Surface | `#FFFFFF` |
-| Text primary | `#111827` |
-| Text secondary | `#475569` |
-| Border | `#E2E8F0` |
-| Accent | `#60A5FA` |
+    subgraph Desktop["🖥️ Desktop"]
+        FE[React 19 Frontend\nTauri WebView]
+    end
 
-**Dark mode base**
+    subgraph Core["Synq Core — Rust / Tauri"]
+        HTTP[Axum HTTP Server\n:7734]
+        CMD[Tauri Commands]
+        DB[(SQLite\nWAL mode)]
+        SSE[SSE Stream\nreal-time sync]
+        ENC[AES-256-GCM\nkey storage]
+    end
 
-| Token | Value |
-|---|---|
-| App background | `#0F172A` |
-| Surface | `#111827` |
-| Text primary | `#E5E7EB` |
-| Text secondary | `#CBD5E1` |
-| Border | `#334155` |
-| Accent | `#7DD3FC` |
+    subgraph Execution["Execution Layer"]
+        CC[Claude Code CLI]
+        CX[Codex CLI]
+        OC[OpenCode CLI]
+        GH[GitHub Copilot CLI]
+        WT[Git Worktrees\nisolated branches]
+    end
 
-Typography uses Inter with semibold headings, medium labels, and regular body. Radius scale: 10–18px. Shadows are subtle only.
+    subgraph Notify["Notifications"]
+        TG[Telegram Bot API]
+        CF[Cloudflare Tunnel\ncloudflared]
+    end
 
-## Requirements
+    MB -- HTTPS --> CF --> HTTP
+    FE <--> CMD
+    CMD <--> DB
+    CMD --> CC & CX & OC & GH
+    CC & CX & OC & GH --> WT
+    HTTP <--> DB
+    HTTP --> SSE --> MB
+    CMD --> TG
+    CMD --> ENC
+```
+
+### Task Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : Task created
+
+    pending --> in_progress : Run prompt
+
+    in_progress --> done : Job succeeded\n+ commit pushed
+    in_progress --> pending : Re-queue / retry
+
+    done --> [*]
+    pending --> skipped : Skipped manually
+    pending --> carried_over : Carry forward to next day
+
+    skipped --> [*]
+    carried_over --> pending : New day, fresh start
+```
+
+### Prompt Pipeline (Two-Step)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant App as Synq App
+    participant AI as AI CLI Tool
+    participant Git as Git / Repo
+
+    User->>App: Write raw prompt
+    User->>App: Click "Improve with AI"
+    App->>AI: improve prompt request
+    AI-->>App: polished prompt
+    User->>App: Click "Run Prompt"
+    App->>Git: create worktree (isolated branch)
+    App->>AI: execute prompt in worktree
+    AI-->>App: stream live output (SSE)
+    App-->>User: show output / Telegram notification
+    User->>App: review git diff
+    User->>App: commit & push
+    App->>Git: git commit + push
+```
+
+## Prerequisites
+
+### Required
 
 - [Node.js](https://nodejs.org/) v18+
 - [Rust](https://rustup.rs/) (stable toolchain)
@@ -74,6 +178,110 @@ Typography uses Inter with semibold headings, medium labels, and regular body. R
   - **macOS:** Xcode Command Line Tools
   - **Linux:** `libwebkit2gtk`, `libssl-dev`, etc.
   - **Windows:** Microsoft C++ Build Tools, WebView2
+
+### AI CLI Tools (install at least one)
+
+Synq runs prompts through these CLI tools. Install the ones you want to use:
+
+#### Claude Code (Anthropic)
+```bash
+# Install via npm
+npm install -g @anthropic-ai/claude-code
+
+# Authenticate
+claude login
+
+# Verify
+claude --version
+```
+Requires an [Anthropic API key](https://console.anthropic.com/) or Claude Pro/Max subscription.
+
+#### Codex (OpenAI)
+```bash
+# Install via npm
+npm install -g @openai/codex
+
+# Set your API key
+export OPENAI_API_KEY="your-key-here"
+
+# Verify
+codex --version
+```
+Requires an [OpenAI API key](https://platform.openai.com/api-keys).
+
+#### OpenCode
+```bash
+# Install via npm
+npm install -g opencode
+
+# Configure (follows OpenAI-compatible API)
+export OPENAI_API_KEY="your-key-here"
+
+# Verify
+opencode --version
+```
+
+#### GitHub Copilot CLI
+```bash
+# Install GitHub CLI first
+brew install gh          # macOS
+# or: sudo apt install gh  # Linux
+
+# Install Copilot extension
+gh extension install github/gh-copilot
+
+# Authenticate
+gh auth login
+
+# Verify
+gh copilot --version
+```
+Requires a [GitHub Copilot](https://github.com/features/copilot) subscription.
+
+### Cloudflare Tunnel (for remote/mobile access)
+
+To access Synq from your phone over the internet:
+
+```bash
+# Install cloudflared
+brew install cloudflare/cloudflare/cloudflared    # macOS
+# or: sudo apt install cloudflared                 # Linux
+# or: winget install Cloudflare.cloudflared        # Windows
+
+# Option 1: Quick tunnel (no account needed, temporary URL)
+# Synq handles this automatically — just click "Start Tunnel" in Remote Access settings
+
+# Option 2: Named tunnel (persistent URL, requires Cloudflare account)
+cloudflared tunnel login
+cloudflared tunnel create synq
+cloudflared tunnel route dns synq your-subdomain.yourdomain.com
+
+# Create config at ~/.cloudflared/config.yml:
+cat > ~/.cloudflared/config.yml << 'EOF'
+tunnel: synq
+credentials-file: /Users/YOUR_USER/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  - hostname: your-subdomain.yourdomain.com
+    service: http://localhost:7734
+  - service: http_status:404
+EOF
+
+# Then in Synq Settings → Remote Access, set:
+#   Tunnel Name: synq
+#   Tunnel Hostname: your-subdomain.yourdomain.com
+```
+
+### Telegram Notifications (optional)
+
+To get notified when jobs complete:
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram
+2. Copy the bot token
+3. Create a channel/group and add your bot
+4. Get the channel ID (use [@userinfobot](https://t.me/userinfobot) or the API)
+5. In Synq Settings, enter the bot token and channel ID
+6. Click "Send Test Message" to verify
 
 ## Setup
 
@@ -95,25 +303,16 @@ npm install
 npm run tauri dev
 ```
 
-This starts the Vite dev server and the Tauri app simultaneously. Frontend changes hot-reload; Rust changes trigger a recompile.
+Frontend changes hot-reload; Rust changes trigger a recompile.
 
 ## Testing
 
 ```bash
-# Run frontend tests (Vitest)
+# Frontend tests (Vitest)
 npm test
 
-# Watch mode
-npm run test:watch
-
-# Vitest UI (browser-based test runner)
-npm run test:ui
-```
-
-Rust unit tests:
-```bash
-cd src-tauri
-cargo test
+# Rust unit tests
+cd src-tauri && cargo test --lib
 ```
 
 ## Build
@@ -124,7 +323,7 @@ npm run tauri build
 ```
 
 Output locations:
-- **macOS app:** `src-tauri/target/release/bundle/macos/Vegr.app`
+- **macOS:** `src-tauri/target/release/bundle/macos/Synq.app`
 - **macOS DMG:** `src-tauri/target/release/bundle/dmg/`
 - **Windows:** `src-tauri/target/release/bundle/msi/` or `nsis/`
 
@@ -132,29 +331,36 @@ Output locations:
 
 ### First Launch
 
-1. Open the app.
-2. Go to **Settings** and enter your [Anthropic API key](https://console.anthropic.com/). It is encrypted and stored locally.
-3. Configure your timezone and session times if needed (defaults to UTC+7, sessions at 09:00 and 14:00).
+1. Open Synq
+2. Go to **Settings** and check which CLI tools are detected (green = installed)
+3. Configure your preferred AI provider
+4. (Optional) Set up Telegram notifications for remote job monitoring
+5. (Optional) Set up Cloudflare Tunnel for mobile access
 
-### Daily Workflow
+### Workflow
 
-| Time (default) | Phase |
+1. **Create a project** — Link it to a git repo on your machine
+2. **Add tasks** — Describe what you want to build or fix
+3. **Write a prompt** — Open the task, write what the AI should do
+4. **Improve the prompt** — Use "Improve with AI" for better results
+5. **Run it** — Click "Run Prompt" to execute via your chosen CLI tool
+6. **Monitor** — Watch live output on desktop, or get a Telegram notification on mobile
+7. **Review** — Check the output and git diff in the app
+8. **Ship** — Commit and push directly from Synq
+
+### Pages
+
+| Page | Purpose |
 |---|---|
-| 09:00 | Session 1 starts — Morning Planning with Claude |
-| 11:00 | Switch to development work |
-| 13:45 | 15-min warning notification |
-| 14:00 | Session 2 resets |
-| 18:45 | 15-min warning notification |
-| 19:00 | End of day — generate AI reflection report |
-
-- **Dashboard** — Overview of current session, tasks, and progress
-- **Focus Mode** — Start a focus timer for a specific task
-- **Morning Planning** — AI-assisted planning prompts (available during planning phase)
-- **Templates** — Save and manage reusable prompt templates
-- **Reports** — View and generate AI daily reflection reports
-- **Projects** — Organize tasks by project
-- **Remote Access** — Access Vegr from a browser on the same network
-- **Settings** — API key, AI provider, timezone, session times, autostart
+| **Dashboard** | Active jobs monitor, project overview, quick standalone tasks |
+| **Projects** | Manage git projects, navigate to project details |
+| **Project Detail** | Task list, filters, inline add, git panel with diff/commit/push |
+| **Task Detail** | Prompt editor, AI improve, run, output viewer, git operations |
+| **Templates** | Save and manage reusable prompt templates |
+| **History** | Browse past tasks and prompts |
+| **Reports** | Daily metrics and AI-generated reflections |
+| **Remote Access** | Cloudflare tunnel and HTTP server configuration |
+| **Settings** | CLI tools status, AI providers, Telegram, theme, backup |
 
 ## Tech Stack
 
@@ -162,12 +368,15 @@ Output locations:
 |---|---|
 | Desktop framework | Tauri v2 |
 | Frontend | React 19 + TypeScript + Vite |
-| Styling | Tailwind CSS v3 + Vegr design tokens |
+| Styling | Tailwind CSS v3 |
 | State management | Zustand v5 |
 | Charts | Recharts |
-| Backend | Rust |
-| Database | SQLite (rusqlite, bundled) |
-| Scheduling | tokio-cron-scheduler |
-| HTTP/AI streaming | reqwest + Anthropic / OpenAI / GitHub Copilot APIs |
-| Encryption | AES-256-GCM (aes-gcm crate) |
-| Testing | Vitest + Testing Library (frontend), cargo test (Rust) |
+| Backend | Rust (async, tokio) |
+| Database | SQLite (rusqlite, bundled, WAL mode) |
+| HTTP server | Axum 0.7 (embedded, for remote access) |
+| Real-time | Server-Sent Events (SSE) |
+| AI CLI tools | Claude Code, Codex, OpenCode, Copilot |
+| Remote access | Cloudflare Tunnel (cloudflared) |
+| Notifications | Telegram Bot API |
+| Encryption | AES-256-GCM |
+| Testing | Vitest (frontend), cargo test (Rust) |

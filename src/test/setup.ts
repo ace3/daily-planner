@@ -1,5 +1,9 @@
 import '@testing-library/jest-dom';
 
+// Simulate Tauri desktop environment so isWebBrowser() returns false in tests.
+// Without this, all tauri.ts wrappers branch to the HTTP path and tests fail.
+(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+
 // Mock Tauri APIs
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),

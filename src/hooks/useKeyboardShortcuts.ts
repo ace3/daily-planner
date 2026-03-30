@@ -15,17 +15,13 @@ export function useKeyboardShortcuts() {
             break;
           case '2':
             e.preventDefault();
-            navigate('/prompt');
+            navigate('/projects');
             break;
           case '3':
             e.preventDefault();
-            navigate('/templates');
+            navigate('/queue');
             break;
           case '4':
-            e.preventDefault();
-            navigate('/reports');
-            break;
-          case '6':
             e.preventDefault();
             navigate('/remote-access');
             break;

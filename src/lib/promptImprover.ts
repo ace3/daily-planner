@@ -74,8 +74,10 @@ export function buildImprovementPrompt(
   const structure = INTENT_STRUCTURE[resolvedIntent];
 
   const lines: string[] = [
-    'You rewrite rough prompts into precise AI coding agent instructions.',
-    'Return ONLY the rewritten prompt.',
+    'You are a prompt rewriter for coding agents.',
+    'Your only job is to rewrite the rough prompt into a precise execution prompt.',
+    'Do NOT execute the task. Do NOT claim implementation is done.',
+    'Return ONLY the rewritten prompt text, with no explanations before or after it.',
     '',
   ];
 
@@ -96,9 +98,19 @@ export function buildImprovementPrompt(
   lines.push(structure);
   lines.push('');
   lines.push('Rules:');
-  lines.push('- Be specific — reference files, functions, types by name');
-  lines.push('- Include acceptance criteria the agent can verify');
+  lines.push('- Be specific: reference files, functions, components, or APIs by name when possible');
+  lines.push('- Include concrete acceptance criteria and verification commands');
+  lines.push('- Include constraints, edge cases, and non-goals if implied by context');
+  lines.push('- Prefer execution-ready wording for engineering work (not analysis-only wording)');
+  lines.push("- Never output implementation progress reports like \"Done\" or \"Here's what changed\"");
   lines.push('- Omit pleasantries and meta-commentary');
+  lines.push('');
+  lines.push('Output format (use these headings):');
+  lines.push('Objective');
+  lines.push('Context');
+  lines.push('Requirements');
+  lines.push('Acceptance Criteria');
+  lines.push('Verification');
   lines.push('');
   lines.push('## Rough Prompt');
   lines.push(userPrompt);

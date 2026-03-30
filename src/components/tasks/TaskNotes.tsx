@@ -4,7 +4,6 @@ import { Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
 import type { Task } from '../../types/task';
 import { useProjectStore } from '../../stores/projectStore';
-import { useSessionDraftState } from '../../hooks/useSessionDraftState';
 
 interface TaskNotesProps {
   task: Task;
@@ -13,36 +12,27 @@ interface TaskNotesProps {
 }
 
 export const TaskNotes: React.FC<TaskNotesProps> = ({ task, onSave, onProjectChange }) => {
-  const [draft, setDraft] = useSessionDraftState(`task-notes:${task.id}`, {
-    notes: '',
-    dirty: false,
-    initializedFromTask: false,
-  });
+  const [notes, setNotes] = useState(task.notes || '');
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [projectSaving, setProjectSaving] = useState(false);
   const { projects } = useProjectStore();
-  const notes = draft.notes;
-  const dirty = draft.dirty;
 
   useEffect(() => {
-    if (draft.initializedFromTask) return;
-    setDraft((prev) => ({
-      ...prev,
-      notes: task.notes || '',
-      dirty: false,
-      initializedFromTask: true,
-    }));
-  }, [task.id, task.notes, draft.initializedFromTask, setDraft]);
+    setNotes(task.notes || '');
+    setDirty(false);
+  }, [task.id, task.notes]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setDraft((prev) => ({ ...prev, notes: e.target.value, dirty: true }));
+    setNotes(e.target.value);
+    setDirty(true);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await onSave(notes);
-      setDraft((prev) => ({ ...prev, dirty: false }));
+      setDirty(false);
     } finally {
       setSaving(false);
     }

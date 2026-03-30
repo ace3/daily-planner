@@ -1,19 +1,16 @@
 import React, { useRef, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Zap, MessageSquare, BarChart2, FolderOpen,
-  Settings, FileText, Wifi, History, MoreHorizontal, X,
+  LayoutDashboard, Zap, FolderGit2, ListOrdered,
+  Settings, Wifi, MoreHorizontal, X,
 } from 'lucide-react';
 import { useMobileStore } from '../../stores/mobileStore';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', shortcut: '⌘1' },
-  { to: '/prompt', icon: MessageSquare, label: 'Prompt', shortcut: '⌘2' },
-  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘3' },
-  { to: '/history', icon: History, label: 'History', shortcut: '⌘4' },
-  { to: '/reports', icon: BarChart2, label: 'Reports', shortcut: '⌘5' },
-  { to: '/projects', icon: FolderOpen, label: 'Projects', shortcut: '⌘6' },
-  { to: '/remote-access', icon: Wifi, label: 'Remote', shortcut: '⌘7' },
+  { to: '/projects', icon: FolderGit2, label: 'Projects', shortcut: '⌘2' },
+  { to: '/queue', icon: ListOrdered, label: 'Queue', shortcut: '⌘3' },
+  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘4' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
 
@@ -21,10 +18,13 @@ const navItems = [
 const PRIMARY_COUNT = 4;
 
 const DesktopSidebar: React.FC = () => (
-  <aside className="w-14 flex flex-col items-center py-4 gap-1 bg-[#F8FAFC] border-r border-[#E2E8F0] dark:bg-[#0F172A] dark:border-[#1E293B] shrink-0">
-    <div className="w-8 h-8 rounded-[10px] bg-[#60A5FA] dark:bg-[#7DD3FC] flex items-center justify-center mb-3 shadow-vegr-sm">
-      <Zap size={16} className="text-white dark:text-[#111827]" />
+  <aside className="w-14 flex flex-col items-center py-4 gap-1 bg-white border-r border-[#D2D2D7] dark:bg-[#2C2C2E] dark:border-[#3A3A3C] shrink-0">
+    {/* App icon */}
+    <div className="w-8 h-8 rounded-[10px] bg-[#0071E3] dark:bg-[#409CFF] flex items-center justify-center mb-3 shadow-mac">
+      <Zap size={16} className="text-white" />
     </div>
+
+    {/* Nav items */}
     <div className="flex-1 flex flex-col items-center gap-0.5 w-full px-2">
       {navItems.map(({ to, icon: Icon, label, shortcut }) => (
         <NavLink
@@ -33,14 +33,14 @@ const DesktopSidebar: React.FC = () => (
           end={to === '/'}
           title={`${label} (${shortcut})`}
           className={({ isActive }) =>
-            `w-full flex items-center justify-center p-2.5 rounded-[10px] transition-colors duration-150 cursor-pointer group relative
+            `w-full flex items-center justify-center p-2.5 rounded-[8px] transition-all duration-150 cursor-pointer
             ${isActive
-              ? 'bg-[#DBEAFE] text-[#2563EB] dark:bg-[rgba(125,211,252,0.16)] dark:text-[#7DD3FC]'
-              : 'text-[#64748B] hover:text-[#111827] hover:bg-[#F1F5F9] dark:text-[#94A3B8] dark:hover:text-[#E5E7EB] dark:hover:bg-[#1E293B]'
+              ? 'bg-[#E3F0FF] text-[#0071E3] dark:bg-[rgba(64,156,255,0.15)] dark:text-[#409CFF]'
+              : 'text-[#6E6E73] hover:text-[#1D1D1F] hover:bg-[#F5F5F7] dark:text-[#6E6E73] dark:hover:text-[#F5F5F7] dark:hover:bg-[#3A3A3C]'
             }`
           }
         >
-          <Icon size={18} />
+          <Icon size={18} strokeWidth={1.5} />
         </NavLink>
       ))}
     </div>
@@ -81,22 +81,22 @@ const MobileBottomBar: React.FC = () => {
     <>
       {/* Overlay for "More" menu */}
       {moreMenuOpen && (
-        <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setMoreMenuOpen(false)} />
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={() => setMoreMenuOpen(false)} />
       )}
 
-      {/* "More" popup menu */}
+      {/* "More" popup menu — macOS popover style */}
       {moreMenuOpen && (
         <div
           ref={menuRef}
-          className="fixed bottom-[72px] right-3 z-50 rounded-2xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] shadow-lg py-2 min-w-[200px]"
+          className="fixed bottom-[72px] right-3 z-50 rounded-[14px] border border-[#D2D2D7] bg-white/90 backdrop-blur-md dark:border-[#3A3A3C] dark:bg-[#2C2C2E]/90 shadow-mac-modal py-2 min-w-[200px]"
         >
-          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-[#21262D]">
-            <span className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">More</span>
+          <div className="flex items-center justify-between px-4 py-2 border-b border-[#E8E8ED] dark:border-[#3A3A3C]">
+            <span className="text-sm font-semibold text-[#1D1D1F] dark:text-[#F5F5F7]">More</span>
             <button
               onClick={() => setMoreMenuOpen(false)}
-              className="p-2 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+              className="p-1.5 rounded-[6px] text-[#AEAEB2] hover:text-[#6E6E73] hover:bg-[#F5F5F7] dark:hover:text-[#AEAEB2] dark:hover:bg-[#3A3A3C] transition-colors duration-150 cursor-pointer"
             >
-              <X size={18} />
+              <X size={16} strokeWidth={1.5} />
             </button>
           </div>
           {secondaryItems.map(({ to, icon: Icon, label }) => (
@@ -105,22 +105,22 @@ const MobileBottomBar: React.FC = () => {
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-3 min-h-[48px] text-sm transition-colors cursor-pointer
+                `flex items-center gap-3 px-4 py-3 min-h-[48px] text-sm transition-colors duration-150 cursor-pointer
                 ${isActive
-                  ? 'text-[#2563EB] bg-blue-50 dark:text-[#7DD3FC] dark:bg-[rgba(125,211,252,0.08)]'
-                  : 'text-gray-600 hover:bg-gray-50 dark:text-[#94A3B8] dark:hover:bg-[#1E293B]'
+                  ? 'text-[#0071E3] bg-[#E3F0FF] dark:text-[#409CFF] dark:bg-[rgba(64,156,255,0.12)]'
+                  : 'text-[#6E6E73] hover:bg-[#F5F5F7] dark:text-[#AEAEB2] dark:hover:bg-[#3A3A3C]'
                 }`
               }
             >
-              <Icon size={20} />
+              <Icon size={18} strokeWidth={1.5} />
               <span>{label}</span>
             </NavLink>
           ))}
         </div>
       )}
 
-      {/* Bottom tab bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-sm border-t border-gray-200 dark:bg-[#0F172A]/95 dark:border-[#1E293B] safe-area-bottom">
+      {/* Bottom tab bar — frosted glass style */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-[#D2D2D7] dark:bg-[#1C1C1E]/90 dark:border-[#3A3A3C] safe-area-bottom">
         <div className="flex items-stretch justify-around px-1">
           {primaryItems.map(({ to, icon: Icon, label }) => (
             <NavLink
@@ -128,14 +128,14 @@ const MobileBottomBar: React.FC = () => {
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[64px] min-w-[64px] flex-1 transition-colors cursor-pointer
+                `flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[64px] min-w-[64px] flex-1 transition-colors duration-150 cursor-pointer
                 ${isActive
-                  ? 'text-[#2563EB] dark:text-[#7DD3FC]'
-                  : 'text-[#94A3B8] dark:text-[#64748B]'
+                  ? 'text-[#0071E3] dark:text-[#409CFF]'
+                  : 'text-[#AEAEB2] dark:text-[#6E6E73]'
                 }`
               }
             >
-              <Icon size={22} />
+              <Icon size={22} strokeWidth={1.5} />
               <span className="text-[11px] font-medium leading-none">{label}</span>
             </NavLink>
           ))}
@@ -143,13 +143,13 @@ const MobileBottomBar: React.FC = () => {
           {/* More button */}
           <button
             onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[64px] min-w-[64px] flex-1 transition-colors cursor-pointer
+            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[64px] min-w-[64px] flex-1 transition-colors duration-150 cursor-pointer
               ${isSecondaryActive || moreMenuOpen
-                ? 'text-[#2563EB] dark:text-[#7DD3FC]'
-                : 'text-[#94A3B8] dark:text-[#64748B]'
+                ? 'text-[#0071E3] dark:text-[#409CFF]'
+                : 'text-[#AEAEB2] dark:text-[#6E6E73]'
               }`}
           >
-            <MoreHorizontal size={22} />
+            <MoreHorizontal size={22} strokeWidth={1.5} />
             <span className="text-[11px] font-medium leading-none">More</span>
           </button>
         </div>

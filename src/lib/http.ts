@@ -1,0 +1,185 @@
+// HTTP transport helpers for browser mode (web browser, not Tauri desktop).
+// These replace Tauri invoke() calls when running as a web app.
+
+export function isWebBrowser(): boolean {
+  return typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ === 'undefined';
+}
+
+function getBaseUrl(): string {
+  return localStorage.getItem('synq-server-url') || window.location.origin;
+}
+
+/** Read a cookie value by name, or null if not found. */
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/** Set a cookie with a 1-year expiry. Adds Secure flag when served over HTTPS (e.g. cloudflared). */
+function setCookie(name: string, value: string): void {
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
+}
+
+/** Delete a cookie by setting max-age to 0. */
+function deleteCookie(name: string): void {
+  document.cookie = `${name}=; Max-Age=0; path=/`;
+}
+
+/** Get stored auth token from localStorage (primary) or cookie (fallback). */
+export function getStoredToken(): string | null {
+  return localStorage.getItem('synq-auth-token') || getCookie('synq-token');
+}
+
+/** Clear auth token from both localStorage and cookie. */
+export function clearStoredToken(): void {
+  localStorage.removeItem('synq-auth-token');
+  deleteCookie('synq-token');
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getStoredToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
+async function checkResponse(res: Response): Promise<Response> {
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return res;
+}
+
+export async function httpGet<T>(path: string, params?: Record<string, string>): Promise<T> {
+  const url = new URL(path, getBaseUrl());
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) url.searchParams.set(k, v);
+    });
+  }
+  const res = await fetch(url.toString(), { headers: getAuthHeaders(), credentials: 'include' });
+  await checkResponse(res);
+  return res.json();
+}
+
+export async function httpPost<T>(path: string, body?: unknown): Promise<T> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  await checkResponse(res);
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
+}
+
+export async function httpPatch<T>(path: string, body?: unknown): Promise<T> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  await checkResponse(res);
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
+}
+
+export async function httpPut<T>(path: string, body?: unknown): Promise<T> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  await checkResponse(res);
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
+}
+
+export async function httpDelete<T>(path: string): Promise<T> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+  });
+  await checkResponse(res);
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
+}
+
+/** Extract ?token= from URL on load, store in localStorage + cookie, redirect to clean URL */
+export function extractAndStoreToken(): void {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('token');
+  if (token) {
+    localStorage.setItem('synq-auth-token', token);
+    setCookie('synq-token', token);
+    // Store server URL as origin
+    localStorage.setItem('synq-server-url', url.origin);
+    // Remove token from URL without reload
+    url.searchParams.delete('token');
+    window.history.replaceState({}, '', url.toString());
+  }
+}
+
+/** Build SSE URL with token query param (EventSource can't set headers) */
+export function getSseUrl(path: string): string {
+  const token = getStoredToken();
+  const base = getBaseUrl();
+  const url = new URL(path, base);
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
+}
+
+/** POST to an SSE endpoint and collect all streamed lines into a single string. */
+export async function httpPostSse(path: string, body: unknown, onChunk?: (partial: string) => void): Promise<string> {
+  const url = new URL(path, getBaseUrl());
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  await checkResponse(res);
+  if (!res.body) throw new Error('SSE stream unavailable');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventType = '';
+  let dataLine = '';
+  const collected: string[] = [];
+
+  const processEvent = () => {
+    if (!dataLine) return;
+    if (eventType === 'error') throw new Error(dataLine);
+    if (eventType === 'line' || eventType === '') {
+      collected.push(dataLine);
+      onChunk?.(collected.join('\n'));
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      if (line.startsWith('event:')) eventType = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLine = line.slice(5).trim();
+      else if (line === '') { processEvent(); eventType = ''; dataLine = ''; }
+    }
+  }
+  if (dataLine) processEvent();
+  return collected.join('\n').trim();
+}

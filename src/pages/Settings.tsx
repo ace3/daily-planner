@@ -1,43 +1,44 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, AlertTriangle, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight } from 'lucide-react';
+import { Settings as SettingsIcon, Clock, Database, RotateCcw, Upload, MessageSquare, Save, Shield, ShieldCheck, ShieldX, Trash2, RefreshCw, HardDrive, ChevronDown, ChevronRight, Bell, Info, X, Terminal } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
-import { useReportStore } from '../stores/reportStore';
+import { useProviderStore } from '../stores/providerStore';
 import {
-  backupData, restoreData, resetAppData, checkCopilotCliAvailability,
+  backupData, restoreData, resetAppData, testTelegramNotification,
   triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
   restoreFromBackupSession, deleteBackupSession, getBackupSettings, setBackupSettings,
   type BackupSessionInfo, type BackupSettings,
 } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
-import { useSessionDraftState } from '../hooks/useSessionDraftState';
+import { isWebBrowser } from '../lib/http';
 
 interface SettingsDraft {
   timezone_offset: string;
-  session1_kickstart: string;
-  planning_end: string;
-  session2_start: string;
-  warn_before_min: string;
   default_model_codex: string;
   default_model_claude: string;
   default_model_opencode: string;
   default_model_copilot: string;
   promptDraft: string;
+  telegram_bot_token: string;
+  telegram_channel_id: string;
+  tunnel_name: string;
+  tunnel_hostname: string;
   initializedFromSettings: boolean;
   initializedPrompt: boolean;
 }
 
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
-  const { fetchTasks, activeDate } = useTaskStore();
-  const { fetchRecentReports } = useReportStore();
+  const { fetchTasks } = useTaskStore();
+  const { claudeAvailable, opencodeAvailable, codexAvailable, copilotAvailable, checkAvailability } = useProviderStore();
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
-  const [copilotCliAvailable, setCopilotCliAvailable] = useState<boolean | null>(null);
+  const [telegramTesting, setTelegramTesting] = useState(false);
+  const [showTunnelGuide, setShowTunnelGuide] = useState(false);
 
   // Auto Backup state
   const [backupSessions, setBackupSessions] = useState<BackupSessionInfo[]>([]);
@@ -48,17 +49,17 @@ export const SettingsPage: React.FC = () => {
   const [sessionActions, setSessionActions] = useState<Record<string, string>>({});
   const [restoreSessionId, setRestoreSessionId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(false);
-  const [draft, setDraft] = useSessionDraftState<SettingsDraft>('settings-page-draft', {
+  const [draft, setDraft] = useState<SettingsDraft>({
     timezone_offset: '',
-    session1_kickstart: '',
-    planning_end: '',
-    session2_start: '',
-    warn_before_min: '',
     default_model_codex: '',
     default_model_claude: '',
     default_model_opencode: '',
     default_model_copilot: '',
     promptDraft: '',
+    telegram_bot_token: '',
+    telegram_channel_id: '',
+    tunnel_name: '',
+    tunnel_hostname: '',
     initializedFromSettings: false,
     initializedPrompt: false,
   });
@@ -79,10 +80,8 @@ export const SettingsPage: React.FC = () => {
   useEffect(() => {
     fetchSettings();
     fetchGlobalPrompt();
-    checkCopilotCliAvailability()
-      .then((status) => setCopilotCliAvailable(status.available))
-      .catch(() => setCopilotCliAvailable(false));
     loadBackupData();
+    checkAvailability();
   }, []);
 
   useEffect(() => {
@@ -96,14 +95,14 @@ export const SettingsPage: React.FC = () => {
     setDraft((prev) => ({
       ...prev,
       timezone_offset: String(settings.timezone_offset),
-      session1_kickstart: settings.session1_kickstart,
-      planning_end: settings.planning_end,
-      session2_start: settings.session2_start,
-      warn_before_min: String(settings.warn_before_min),
       default_model_codex: settings.default_model_codex,
       default_model_claude: settings.default_model_claude,
       default_model_opencode: settings.default_model_opencode,
       default_model_copilot: settings.default_model_copilot,
+      telegram_bot_token: settings.telegram_bot_token ?? '',
+      telegram_channel_id: settings.telegram_channel_id ?? '',
+      tunnel_name: settings.tunnel_name ?? '',
+      tunnel_hostname: settings.tunnel_hostname ?? '',
       initializedFromSettings: true,
     }));
   }, [
@@ -149,6 +148,18 @@ export const SettingsPage: React.FC = () => {
     await handleSave(key, trimmed);
   };
 
+  const handleTestTelegram = async () => {
+    setTelegramTesting(true);
+    try {
+      await testTelegramNotification();
+      toast.success('Test message sent to Telegram');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTelegramTesting(false);
+    }
+  };
+
   const handleSaveGlobalPrompt = async () => {
     setPromptSaving(true);
     try {
@@ -179,7 +190,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const result = await restoreData();
       if (result === 'cancelled') return;
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('Data restored successfully');
     } catch (e) {
       toast.error(String(e));
@@ -193,9 +204,8 @@ export const SettingsPage: React.FC = () => {
     setDataOpLoading(true);
     try {
       const keepSettings = checkValues?.['keep_settings'] ?? true;
-      const keepBuiltinTemplates = checkValues?.['keep_builtin_templates'] ?? true;
-      await resetAppData(keepSettings, keepBuiltinTemplates);
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await resetAppData(keepSettings);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('App data cleared');
     } catch (e) {
       toast.error(String(e));
@@ -263,7 +273,7 @@ export const SettingsPage: React.FC = () => {
     setSessionActions((p) => ({ ...p, [id]: 'restoring' }));
     try {
       await restoreFromBackupSession(id);
-      await Promise.all([fetchSettings(), fetchTasks(activeDate), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('Restored from backup session');
     } catch (e) {
       toast.error(`Restore failed: ${String(e)}`);
@@ -296,6 +306,35 @@ export const SettingsPage: React.FC = () => {
           <h1 className="text-base font-semibold text-gray-900 dark:text-[#E6EDF3]">Settings</h1>
         </div>
 
+        {/* CLI Tools Status */}
+        {(() => {
+          const tools = [
+            { name: 'claude', label: 'Claude CLI', available: claudeAvailable },
+            { name: 'codex', label: 'OpenAI Codex CLI', available: codexAvailable },
+            { name: 'opencode', label: 'OpenCode', available: opencodeAvailable },
+            { name: 'copilot', label: 'GitHub Copilot CLI', available: copilotAvailable },
+          ];
+          return (
+            <section className={sectionClass}>
+              <div className={sectionHeaderClass}>
+                <Terminal size={14} className="text-gray-500 dark:text-[#8B949E]" />
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">CLI Tools</h2>
+              </div>
+              <div className="px-4 py-2 divide-y divide-gray-100 dark:divide-[#21262D]">
+                {tools.map((tool) => (
+                  <div key={tool.name} className="flex items-center justify-between py-2.5">
+                    <span className="text-sm text-gray-700 dark:text-[#E6EDF3]">{tool.label}</span>
+                    <span className={`flex items-center gap-1.5 text-xs font-medium ${tool.available ? 'text-green-400' : 'text-gray-500 dark:text-[#484F58]'}`}>
+                      <span className={`w-2 h-2 rounded-full ${tool.available ? 'bg-green-500' : 'bg-gray-400 dark:bg-[#484F58]'}`} />
+                      {tool.available ? 'Installed' : 'Not found'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })()}
+
         {/* Timezone & Schedule */}
         <section className={sectionClass}>
           <div className={sectionHeaderClass}>
@@ -323,76 +362,6 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Time settings */}
-            {[
-              { key: 'session1_kickstart', label: 'Morning Kickstart', desc: 'When to start prompting (5-hour session begins)' },
-              { key: 'planning_end', label: 'Switch to Claude Code', desc: 'End of planning phase — switch to development' },
-              { key: 'session2_start', label: 'Session Reset', desc: 'When Claude Pro session resets (5-hour cycle)' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} className="space-y-1.5">
-                <div>
-                  <label className={labelClass}>{label}</label>
-                  <p className="text-xs text-gray-400 dark:text-[#484F58] mt-0.5">{desc}</p>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="time"
-                    value={draft[key as 'session1_kickstart' | 'planning_end' | 'session2_start']}
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        [key]: e.target.value,
-                      }))
-                    }
-                    onBlur={(e) => handleSave(key, e.target.value)}
-                    className={inputClass}
-                  />
-                </div>
-              </div>
-            ))}
-
-            {/* Warning time */}
-            <div className="space-y-1.5">
-              <label className={labelClass}>Warning Before Reset (minutes)</label>
-              <input
-                type="number"
-                value={draft.warn_before_min}
-                min={5}
-                max={60}
-                onChange={(e) => setDraft((prev) => ({ ...prev, warn_before_min: e.target.value }))}
-                onBlur={(e) => handleSave('warn_before_min', e.target.value)}
-                className={`w-24 ${inputClass}`}
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* Model */}
-        <section className={sectionClass}>
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-[#30363D]">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">AI Provider</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            <select
-              value={settings.ai_provider}
-              onChange={(e) => handleSave('ai_provider', e.target.value)}
-              className={`w-full ${inputClass} cursor-pointer`}
-            >
-              <option value="claude">Claude CLI</option>
-              <option value="opencode">OpenCode CLI</option>
-              <option value="copilot_cli">GitHub Copilot CLI (gh copilot)</option>
-            </select>
-            <p className="text-xs text-gray-400 dark:text-[#484F58]">
-              Used for prompt improvements, queued runs, and AI report reflections.
-            </p>
-            {settings.ai_provider === 'copilot_cli' && copilotCliAvailable === false && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400 flex items-start gap-2">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  <strong>Copilot CLI unavailable.</strong> Install/authenticate with <code>gh</code> and <code>gh copilot</code> before using this provider.
-                </span>
-              </div>
-            )}
           </div>
         </section>
 
@@ -508,6 +477,200 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
+        {/* Notifications */}
+        <section className={sectionClass}>
+          <div className={sectionHeaderClass}>
+            <Bell size={14} className="text-gray-500 dark:text-[#8B949E]" />
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Notifications</h2>
+          </div>
+          <div className="p-4 space-y-4">
+            <p className="text-xs text-gray-400 dark:text-[#484F58]">
+              When a Cloudflare tunnel is active, the public URL will be sent to this Telegram channel. A new message is sent only when the URL changes.
+            </p>
+
+            {/* Named tunnel config */}
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-4 space-y-3">
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9]">Named Tunnel (static domain)</p>
+                <button
+                  onClick={() => setShowTunnelGuide(true)}
+                  className="text-gray-400 hover:text-blue-500 dark:text-[#484F58] dark:hover:text-[#7DD3FC] transition-colors cursor-pointer"
+                  title="Setup guide"
+                >
+                  <Info size={13} />
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 dark:text-[#484F58]">
+                Leave blank to use a random <code className="font-mono">trycloudflare.com</code> URL. To use a static domain, set both fields below (requires <code className="font-mono">cloudflared tunnel login</code> and a DNS route).
+              </p>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Tunnel Name</label>
+                <input
+                  type="text"
+                  value={draft.tunnel_name}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, tunnel_name: e.target.value }))}
+                  onBlur={(e) => handleSave('tunnel_name', e.target.value)}
+                  placeholder="daily-planner"
+                  className={`w-full ${inputClass}`}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Tunnel Hostname</label>
+                <input
+                  type="text"
+                  value={draft.tunnel_hostname}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, tunnel_hostname: e.target.value }))}
+                  onBlur={(e) => handleSave('tunnel_hostname', e.target.value)}
+                  placeholder="planner.yourdomain.com"
+                  className={`w-full ${inputClass}`}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-4">
+              <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9] mb-3">Telegram Notification</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass}>Telegram Bot Token</label>
+              <input
+                type="password"
+                value={draft.telegram_bot_token}
+                onChange={(e) => setDraft((prev) => ({ ...prev, telegram_bot_token: e.target.value }))}
+                onBlur={(e) => handleSave('telegram_bot_token', e.target.value)}
+                placeholder="1234567890:ABCdef..."
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass}>Telegram Channel ID</label>
+              <input
+                type="text"
+                value={draft.telegram_channel_id}
+                onChange={(e) => setDraft((prev) => ({ ...prev, telegram_channel_id: e.target.value }))}
+                onBlur={(e) => handleSave('telegram_channel_id', e.target.value)}
+                placeholder="-1001234567890 or @channelname"
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex justify-end pt-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Bell size={12} />}
+                onClick={handleTestTelegram}
+                loading={telegramTesting}
+              >
+                Send Test Message
+              </Button>
+            </div>
+          </div>
+
+          {/* Tunnel Setup Guide Modal */}
+          {showTunnelGuide && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              onClick={(e) => { if (e.target === e.currentTarget) setShowTunnelGuide(false); }}
+            >
+              <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-[#30363D] dark:bg-[#161B22] flex flex-col max-h-[90vh]">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-[#30363D] shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Info size={14} className="text-blue-500 dark:text-[#7DD3FC]" />
+                    <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Cloudflare Named Tunnel Setup</h2>
+                  </div>
+                  <button onClick={() => setShowTunnelGuide(false)} className="text-gray-400 hover:text-gray-600 dark:text-[#484F58] dark:hover:text-[#8B949E] cursor-pointer transition-colors">
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="overflow-y-auto p-4 space-y-5 text-xs text-gray-600 dark:text-[#8B949E]">
+
+                  <p>A <strong className="text-gray-800 dark:text-[#C9D1D9]">named tunnel</strong> gives you a permanent static URL (e.g. <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">planner.yourdomain.com</code>) instead of a random one each time.</p>
+
+                  {/* Prerequisites */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Prerequisites</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li>A Cloudflare account (free)</li>
+                      <li>A domain added to Cloudflare (nameservers pointing to CF)</li>
+                      <li><code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">cloudflared</code> installed — <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">brew install cloudflared</code></li>
+                    </ul>
+                  </div>
+
+                  {/* Step 1 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 1 — Authenticate</p>
+                    <p>Opens a browser to log in to your Cloudflare account and saves credentials to <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/cert.pem</code>.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel login</pre>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 2 — Create the tunnel</p>
+                    <p>Creates a named tunnel and saves a credentials JSON to <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/</code>. Note the tunnel UUID printed.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel create daily-planner</pre>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 3 — Create a DNS record</p>
+                    <p>Routes your subdomain to the tunnel. The CNAME is created automatically in Cloudflare DNS.</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto">cloudflared tunnel route dns daily-planner planner.yourdomain.com</pre>
+                  </div>
+
+                  {/* Step 4 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 4 — Create config file</p>
+                    <p>Create <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">~/.cloudflared/config.yml</code> with the following content (replace the UUID and hostname):</p>
+                    <pre className="bg-gray-100 dark:bg-[#0F1117] rounded-lg px-3 py-2 font-mono text-[11px] overflow-x-auto leading-relaxed">{`tunnel: daily-planner
+credentials-file: /Users/YOUR_USER/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: planner.yourdomain.com
+    service: http://localhost:7734
+  - service: http_status:404`}</pre>
+                    <p>Find your UUID by running: <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">cloudflared tunnel list</code></p>
+                  </div>
+
+                  {/* Step 5 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 5 — Fill in the settings</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li><strong className="text-gray-700 dark:text-[#C9D1D9]">Tunnel Name:</strong> <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">daily-planner</code></li>
+                      <li><strong className="text-gray-700 dark:text-[#C9D1D9]">Tunnel Hostname:</strong> <code className="font-mono bg-gray-100 dark:bg-[#0F1117] px-1 py-0.5 rounded">planner.yourdomain.com</code></li>
+                    </ul>
+                  </div>
+
+                  {/* Step 6 */}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-gray-700 dark:text-[#C9D1D9]">Step 6 — Start the tunnel</p>
+                    <p>Go to the <strong className="text-gray-700 dark:text-[#C9D1D9]">Remote Access</strong> page and click <strong className="text-gray-700 dark:text-[#C9D1D9]">Start Tunnel</strong>. The URL will be permanent across restarts.</p>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400">
+                    <strong>Tip:</strong> Leave both fields blank to use a random <code className="font-mono">trycloudflare.com</code> URL without any setup.
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex justify-end px-4 py-3 border-t border-gray-100 dark:border-[#21262D] shrink-0">
+                  <button
+                    onClick={() => setShowTunnelGuide(false)}
+                    className="text-xs px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors cursor-pointer"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Global AI Prompt */}
         <section className={sectionClass}>
           <div className={sectionHeaderClass}>
@@ -540,8 +703,8 @@ export const SettingsPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Auto Backup */}
-        <section className={sectionClass}>
+        {/* Auto Backup (desktop only) */}
+        {!isWebBrowser() && <section className={sectionClass}>
           <div className={sectionHeaderClass}>
             <HardDrive size={14} className="text-gray-500 dark:text-[#8B949E]" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Auto Backup</h2>
@@ -723,10 +886,10 @@ export const SettingsPage: React.FC = () => {
               )}
             </div>
           </div>
-        </section>
+        </section>}
 
-        {/* Data Management */}
-        <section className={sectionClass}>
+        {/* Data Management (desktop only) */}
+        {!isWebBrowser() && <section className={sectionClass}>
           <div className={sectionHeaderClass}>
             <Database size={14} className="text-gray-500 dark:text-[#8B949E]" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Data Management</h2>
@@ -785,7 +948,7 @@ export const SettingsPage: React.FC = () => {
               </button>
             </div>
           </div>
-        </section>
+        </section>}
       </div>
 
       <ConfirmModal
@@ -811,13 +974,12 @@ export const SettingsPage: React.FC = () => {
       <ConfirmModal
         open={showResetConfirm}
         title="Reset App Data"
-        description="This will permanently delete all tasks, focus sessions, and reports. This cannot be undone."
+        description="This will permanently delete all tasks and focus sessions. This cannot be undone."
         confirmLabel="Reset"
         variant="danger"
         requireTyped="RESET"
         checkboxes={[
           { id: 'keep_settings', label: 'Keep settings (timezone, schedule)', defaultChecked: true },
-          { id: 'keep_builtin_templates', label: 'Keep built-in prompt templates', defaultChecked: true },
         ]}
         onConfirm={handleReset}
         onCancel={() => setShowResetConfirm(false)}

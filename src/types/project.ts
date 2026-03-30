@@ -3,6 +3,7 @@ export interface Project {
   name: string;
   path: string;
   prompt: string | null;
+  deleted_at: string | null;
   created_at: string;
 }
 

@@ -16,10 +16,10 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
 }) => {
   const statuses: Array<{ value: TaskStatus | 'all'; label: string }> = [
     { value: 'all', label: 'All' },
-    { value: 'pending', label: 'Pending' },
+    { value: 'todo', label: 'To-Do' },
     { value: 'in_progress', label: 'Active' },
+    { value: 'review', label: 'Review' },
     { value: 'done', label: 'Done' },
-    { value: 'skipped', label: 'Skipped' },
   ];
 
   const types: Array<{ value: TaskType | 'all'; label: string }> = [
@@ -27,7 +27,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
     { value: 'research', label: 'Research' },
     { value: 'prompt', label: 'Prompt' },
     { value: 'meeting', label: 'Meeting' },
-    { value: 'review', label: 'Review' },
+    { value: 'review', label: 'Done' },
     { value: 'other', label: 'Other' },
   ];
 

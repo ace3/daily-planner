@@ -6,12 +6,16 @@ const SELECTED_PROJECT_KEY = 'selected_project_id';
 
 interface ProjectState {
   projects: Project[];
+  trashedProjects: Project[];
   selectedProject: Project | null;
   loading: boolean;
   projectPrompt: string | null;
   fetchProjects: () => Promise<void>;
+  fetchTrashedProjects: () => Promise<void>;
   createProject: (input: CreateProjectInput) => Promise<string>;
   deleteProject: (id: string) => Promise<void>;
+  restoreProject: (id: string) => Promise<void>;
+  hardDeleteProject: (id: string) => Promise<void>;
   setSelectedProject: (project: Project | null) => void;
   /** Call once at app bootstrap after fetchProjects to rehydrate selection. */
   initSelectedProject: () => Promise<void>;
@@ -21,6 +25,7 @@ interface ProjectState {
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
+  trashedProjects: [],
   selectedProject: null,
   loading: false,
   projectPrompt: null,
@@ -29,15 +34,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ loading: true });
     try {
       const projects = await api.getProjects();
-      set({ projects, loading: false });
+      set({ projects: Array.isArray(projects) ? projects : [], loading: false });
     } catch {
-      set({ loading: false });
+      set({ projects: [], loading: false });
+    }
+  },
+
+  fetchTrashedProjects: async () => {
+    try {
+      const trashedProjects = await api.getTrashedProjects();
+      set({ trashedProjects });
+    } catch {
+      set({ trashedProjects: [] });
     }
   },
 
   createProject: async (input) => {
     const id = await api.createProject(input);
-    await get().fetchProjects();
+    await Promise.all([get().fetchProjects(), get().fetchTrashedProjects()]);
     return id;
   },
 
@@ -48,7 +62,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ selectedProject: null });
       api.setSetting(SELECTED_PROJECT_KEY, '').catch(() => {});
     }
-    set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
+    await Promise.all([get().fetchProjects(), get().fetchTrashedProjects()]);
+  },
+
+  restoreProject: async (id) => {
+    await api.restoreProject(id);
+    await Promise.all([get().fetchProjects(), get().fetchTrashedProjects()]);
+  },
+
+  hardDeleteProject: async (id) => {
+    await api.hardDeleteProject(id);
+    if (get().selectedProject?.id === id) {
+      set({ selectedProject: null });
+      api.setSetting(SELECTED_PROJECT_KEY, '').catch(() => {});
+    }
+    await Promise.all([get().fetchProjects(), get().fetchTrashedProjects()]);
   },
 
   setSelectedProject: (project) => {

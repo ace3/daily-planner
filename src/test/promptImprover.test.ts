@@ -119,6 +119,21 @@ describe('buildImprovementPrompt', () => {
     expect(result).toContain('Omit pleasantries');
   });
 
+  it('explicitly forbids executing the task in the rewrite step', () => {
+    const result = buildImprovementPrompt('implement dark mode');
+    expect(result).toContain('Do NOT execute the task');
+    expect(result).toContain('Do NOT claim implementation is done');
+  });
+
+  it('requires structured output sections for execution-ready prompts', () => {
+    const result = buildImprovementPrompt('fix task detail cancellation issue');
+    expect(result).toContain('Objective');
+    expect(result).toContain('Context');
+    expect(result).toContain('Requirements');
+    expect(result).toContain('Acceptance Criteria');
+    expect(result).toContain('Verification');
+  });
+
   it('produces output under 1000 characters for simple prompts', () => {
     const result = buildImprovementPrompt('fix the bug');
     expect(result.length).toBeLessThan(1000);
@@ -126,7 +141,7 @@ describe('buildImprovementPrompt', () => {
 
   it('starts with the role instruction', () => {
     const result = buildImprovementPrompt('something');
-    expect(result.startsWith('You rewrite rough prompts')).toBe(true);
+    expect(result.startsWith('You are a prompt rewriter')).toBe(true);
   });
 
   it('contains only the rewritten prompt instruction', () => {

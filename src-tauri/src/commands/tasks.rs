@@ -3,30 +3,37 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Stdio;
 use tauri::State;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Deserialize)]
 pub struct CreateTaskInput {
-    pub date: String,
-    pub session_slot: i64,
     pub title: String,
+    pub description: Option<String>,
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
     pub project_id: Option<String>,
+    pub deadline: Option<String>,
+    pub agent: Option<String>,
+    pub git_workflow: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateTaskInput {
     pub id: String,
     pub title: Option<String>,
+    pub description: Option<String>,
     pub notes: Option<String>,
     pub task_type: Option<String>,
     pub priority: Option<i64>,
     pub estimated_min: Option<i64>,
-    pub session_slot: Option<i64>,
     pub project_id: Option<String>,
     pub clear_project: Option<bool>,
+    pub deadline: Option<Option<String>>,
+    pub agent: Option<Option<String>>,
+    pub git_workflow: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -47,6 +54,24 @@ pub struct CleanupTaskWorktreeResult {
     pub status: String,
     pub branch_deleted: bool,
     pub warning: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TaskAttachmentInput {
+    pub source: String,
+    pub path: Option<String>,
+    pub mime: Option<String>,
+    pub size: Option<u64>,
+    pub data_base64: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BrainstormTaskSuggestion {
+    pub title: String,
+    pub description: String,
+    pub checklist: Vec<String>,
+    pub priority: i64,
+    pub project: Option<String>,
 }
 
 fn slugify_branch_component(title: &str) -> String {
@@ -92,19 +117,19 @@ fn build_launch_command(worktree_path: &str, prompt: &str) -> String {
 
 fn pick_prompt(ctx: &queries::TaskWorktreeContext) -> String {
     let from_improved = ctx
-        .prompt_result
+        .improved_prompt
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(prompt) = from_improved {
         return prompt.to_string();
     }
-    let from_used = ctx
-        .prompt_used
+    let from_raw = ctx
+        .raw_prompt
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if let Some(prompt) = from_used {
+    if let Some(prompt) = from_raw {
         return prompt.to_string();
     }
     let from_notes = ctx.notes.trim();
@@ -124,10 +149,249 @@ fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<std::process::Output, St
         .map_err(|e| format!("Failed to run git {:?}: {}", args, e))
 }
 
+fn sanitize_json_output(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(stripped) = trimmed.strip_prefix("```json") {
+        return stripped.strip_suffix("```").unwrap_or(stripped).trim().to_string();
+    }
+    if let Some(stripped) = trimmed.strip_prefix("```") {
+        return stripped.strip_suffix("```").unwrap_or(stripped).trim().to_string();
+    }
+    trimmed.to_string()
+}
+
+pub(crate) fn validate_and_sanitize_suggestions(raw: &str) -> Result<Vec<BrainstormTaskSuggestion>, String> {
+    let cleaned = sanitize_json_output(raw);
+    let mut parsed: Vec<BrainstormTaskSuggestion> =
+        serde_json::from_str(&cleaned).map_err(|e| format!("Invalid AI JSON output: {}", e))?;
+
+    if parsed.is_empty() {
+        return Err("AI returned an empty task list.".to_string());
+    }
+    if parsed.len() > 25 {
+        parsed.truncate(25);
+    }
+
+    let mut out = Vec::with_capacity(parsed.len());
+    for mut item in parsed {
+        item.title = item.title.trim().to_string();
+        item.description = item.description.trim().to_string();
+        item.checklist = item
+            .checklist
+            .into_iter()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .take(20)
+            .collect();
+        item.priority = item.priority.clamp(1, 3);
+        item.project = item
+            .project
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+
+        if item.title.is_empty() {
+            continue;
+        }
+        if item.description.is_empty() {
+            item.description = "No description provided.".to_string();
+        }
+        out.push(item);
+    }
+
+    if out.is_empty() {
+        return Err("AI output did not contain any valid tasks.".to_string());
+    }
+    Ok(out)
+}
+
+pub(crate) fn validate_attachments(attachments: &[TaskAttachmentInput]) -> Result<Vec<String>, String> {
+    const MAX_BYTES: u64 = 10 * 1024 * 1024;
+    let allowed_mimes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+    let mut lines = Vec::new();
+    for (idx, attachment) in attachments.iter().enumerate() {
+        match attachment.source.as_str() {
+            "path" => {
+                let path = attachment
+                    .path
+                    .as_ref()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| format!("Attachment {} missing file path.", idx + 1))?;
+                let meta = fs::metadata(&path)
+                    .map_err(|e| format!("Attachment path not readable '{}': {}", path, e))?;
+                if !meta.is_file() {
+                    return Err(format!("Attachment path is not a file: {}", path));
+                }
+                if meta.len() > MAX_BYTES {
+                    return Err(format!("Attachment exceeds 10MB limit: {}", path));
+                }
+                let ext = Path::new(&path)
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if !["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
+                    return Err(format!("Unsupported attachment extension '{}': {}", ext, path));
+                }
+                lines.push(format!(
+                    "- source=path path={} size={}B",
+                    path,
+                    meta.len()
+                ));
+            }
+            "clipboard" => {
+                let mime = attachment
+                    .mime
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                let size = attachment.size.unwrap_or(0);
+                if !allowed_mimes.contains(&mime.as_str()) {
+                    return Err(format!("Unsupported clipboard mime '{}'", mime));
+                }
+                if size == 0 || size > MAX_BYTES {
+                    return Err("Clipboard image size is invalid or exceeds 10MB".to_string());
+                }
+                lines.push(format!("- source=clipboard mime={} size={}B", mime, size));
+            }
+            other => {
+                return Err(format!("Unsupported attachment source: {}", other));
+            }
+        }
+    }
+    Ok(lines)
+}
+
+pub(crate) fn build_brainstorm_prompt(notes: &str, attachments: &[String]) -> String {
+    let mut lines = vec![
+        "You are a senior engineering planner.".to_string(),
+        "Convert user notes into implementation tasks for a coding agent.".to_string(),
+        "Return ONLY valid JSON. No markdown, no explanation.".to_string(),
+        "JSON schema:".to_string(),
+        "[".to_string(),
+        "  {".to_string(),
+        "    \"title\": \"string (required)\",".to_string(),
+        "    \"description\": \"string (required, concise)\",".to_string(),
+        "    \"checklist\": [\"string\", \"...\"],".to_string(),
+        "    \"priority\": 1 | 2 | 3,".to_string(),
+        "    \"project\": \"string or null\"".to_string(),
+        "  }".to_string(),
+        "]".to_string(),
+        "Rules:".to_string(),
+        "- 3 to 12 tasks".to_string(),
+        "- task titles must be actionable and implementation-specific".to_string(),
+        "- checklist items must be concrete coding/testing steps".to_string(),
+        "- use priority=1 for high risk/high impact".to_string(),
+        "- do not include empty fields".to_string(),
+        "".to_string(),
+        "User notes:".to_string(),
+        notes.trim().to_string(),
+    ];
+
+    if !attachments.is_empty() {
+        lines.push("".to_string());
+        lines.push("Image inputs (for context):".to_string());
+        lines.extend(attachments.iter().cloned());
+    }
+
+    lines.join("\n")
+}
+
 #[tauri::command]
-pub fn get_tasks(date: String, db: State<'_, DbConnection>) -> Result<Vec<queries::Task>, String> {
+pub async fn brainstorm_tasks_from_notes(
+    notes: String,
+    attachments: Option<Vec<TaskAttachmentInput>>,
+    provider: Option<String>,
+    project_path: Option<String>,
+    db: State<'_, DbConnection>,
+) -> Result<Vec<BrainstormTaskSuggestion>, String> {
+    let trimmed_notes = notes.trim();
+    if trimmed_notes.is_empty() {
+        return Err("Notes are required.".to_string());
+    }
+
+    let attachments = attachments.unwrap_or_default();
+    let attachment_lines = validate_attachments(&attachments)?;
+    let prompt = build_brainstorm_prompt(trimmed_notes, &attachment_lines);
+
+    let (model, cli_provider) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let model_key = crate::commands::claude::default_model_setting_key(provider.as_deref());
+        let configured_model = queries::get_setting(&conn, model_key)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let p = crate::commands::claude::AiProvider::from_input(provider.as_deref());
+        let resolved_model =
+            configured_model.unwrap_or_else(|| crate::commands::claude::hardcoded_default_model(p).to_string());
+        (resolved_model, p)
+    };
+
+    let args = crate::commands::claude::build_run_args(cli_provider, &prompt, Some(&model));
+    let mut cmd = tokio::process::Command::new(cli_provider.cli_binary());
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.env("NO_COLOR", "1");
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    if let Some(path) = project_path.as_deref().filter(|p| !p.trim().is_empty()) {
+        cmd.current_dir(path);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to run AI CLI: {}", e))?;
+
+    let mut stdout_text = String::new();
+    let mut stderr_text = String::new();
+
+    if let Some(stdout) = child.stdout.take() {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            stdout_text.push_str(&line);
+            stdout_text.push('\n');
+        }
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            stderr_text.push_str(&line);
+            stderr_text.push('\n');
+        }
+    }
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed waiting for AI CLI: {}", e))?;
+    if !status.success() {
+        return Err(format!(
+            "AI brainstorm command failed: {}",
+            stderr_text.trim()
+        ));
+    }
+
+    validate_and_sanitize_suggestions(&stdout_text)
+}
+
+#[tauri::command]
+pub fn get_tasks(project_id: Option<String>, db: State<'_, DbConnection>) -> Result<Vec<queries::Task>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_tasks_by_date(&conn, &date).map_err(|e| e.to_string())
+    match project_id.as_deref() {
+        Some(pid) if !pid.is_empty() => queries::get_tasks_by_project(&conn, pid).map_err(|e| e.to_string()),
+        _ => queries::get_all_tasks_active(&conn).map_err(|e| e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn get_task(id: String, db: State<'_, DbConnection>) -> Result<Option<queries::Task>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    queries::get_task_by_id(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -137,23 +401,19 @@ pub fn get_tasks_range(from: String, to: String, db: State<'_, DbConnection>) ->
 }
 
 #[tauri::command]
-pub fn rollover_incomplete_tasks(date: String, db: State<'_, DbConnection>) -> Result<i64, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::rollover_incomplete_tasks(&conn, &date).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn create_task(input: CreateTaskInput, db: State<'_, DbConnection>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     queries::create_task(
         &conn,
-        &input.date,
-        input.session_slot,
         &input.title,
-        &input.task_type.unwrap_or_else(|| "other".to_string()),
+        input.description.as_deref(),
+        &input.task_type.unwrap_or_else(|| "prompt".to_string()),
         input.priority.unwrap_or(2),
         input.estimated_min,
         input.project_id.as_deref(),
+        input.deadline.as_deref(),
+        input.agent.as_deref(),
+        input.git_workflow.unwrap_or(false),
     )
     .map_err(|e| e.to_string())
 }
@@ -165,13 +425,16 @@ pub fn update_task(input: UpdateTaskInput, db: State<'_, DbConnection>) -> Resul
         &conn,
         &input.id,
         input.title.as_deref(),
+        input.description.as_deref(),
         input.notes.as_deref(),
         input.task_type.as_deref(),
         input.priority,
         input.estimated_min,
-        input.session_slot,
         input.project_id.as_deref(),
         input.clear_project.unwrap_or(false),
+        input.deadline.as_ref().map(|d| d.as_deref()),
+        input.agent.as_ref().map(|a| a.as_deref()),
+        input.git_workflow,
     )
     .map_err(|e| e.to_string())
 }
@@ -186,18 +449,6 @@ pub fn update_task_status(
     queries::update_task_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn move_task_to_session(
-    task_id: String,
-    target_session: i64,
-    db: State<'_, DbConnection>,
-) -> Result<(), String> {
-    if target_session != 1 && target_session != 2 {
-        return Err(format!("Invalid session: {}. Must be 1 or 2.", target_session));
-    }
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::move_task_to_session(&conn, &task_id, target_session).map_err(|e| e.to_string())
-}
 
 #[tauri::command]
 pub fn delete_task(id: String, db: State<'_, DbConnection>) -> Result<(), String> {
@@ -208,12 +459,10 @@ pub fn delete_task(id: String, db: State<'_, DbConnection>) -> Result<(), String
 #[tauri::command]
 pub fn carry_task_forward(
     id: String,
-    tomorrow_date: String,
-    session_slot: i64,
     db: State<'_, DbConnection>,
 ) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::carry_task_forward(&conn, &id, &tomorrow_date, session_slot).map_err(|e| e.to_string())
+    queries::carry_task_forward(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -223,14 +472,15 @@ pub fn reorder_tasks(task_ids: Vec<String>, db: State<'_, DbConnection>) -> Resu
 }
 
 #[tauri::command]
-pub fn save_prompt_result(
+pub fn save_task_prompt(
     id: String,
-    prompt_used: String,
-    prompt_result: String,
+    raw_prompt: Option<String>,
+    improved_prompt: Option<String>,
     db: State<'_, DbConnection>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::save_prompt_result(&conn, &id, &prompt_used, &prompt_result).map_err(|e| e.to_string())
+    queries::save_task_prompt(&conn, &id, raw_prompt.as_deref(), improved_prompt.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -449,25 +699,6 @@ pub fn cleanup_task_worktree(
     })
 }
 
-#[tauri::command]
-pub fn start_focus_session(
-    task_id: String,
-    date: String,
-    db: State<'_, DbConnection>,
-) -> Result<String, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::start_focus_session(&conn, &task_id, &date).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn end_focus_session(
-    session_id: String,
-    notes: String,
-    db: State<'_, DbConnection>,
-) -> Result<i64, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::end_focus_session(&conn, &session_id, &notes).map_err(|e| e.to_string())
-}
 
 #[cfg(test)]
 mod tests {
@@ -500,8 +731,8 @@ mod tests {
             id: "t1".to_string(),
             title: "Task".to_string(),
             notes: "notes".to_string(),
-            prompt_used: Some("used".to_string()),
-            prompt_result: Some("improved".to_string()),
+            raw_prompt: Some("used".to_string()),
+            improved_prompt: Some("improved".to_string()),
             project_path: Some("/tmp/repo".to_string()),
             worktree_path: None,
             worktree_branch: None,
@@ -509,63 +740,43 @@ mod tests {
         };
         assert_eq!(pick_prompt(&ctx), "improved");
 
-        ctx.prompt_result = None;
+        ctx.improved_prompt = None;
         assert_eq!(pick_prompt(&ctx), "used");
 
-        ctx.prompt_used = None;
+        ctx.raw_prompt = None;
         assert_eq!(pick_prompt(&ctx), "notes");
     }
+
+    #[test]
+    fn test_validate_and_sanitize_suggestions_parses_json() {
+        let raw = r#"
+        [
+          {
+            "title": "Implement release workflow",
+            "description": "Add semver bump and multi-OS release CI.",
+            "checklist": ["Add Makefile target", "Add release workflow"],
+            "priority": 1,
+            "project": "core"
+          }
+        ]
+        "#;
+        let parsed = validate_and_sanitize_suggestions(raw).expect("parse ok");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].title, "Implement release workflow");
+        assert_eq!(parsed[0].priority, 1);
+    }
+
+    #[test]
+    fn test_validate_and_sanitize_suggestions_strips_markdown_fence() {
+        let raw = "```json\n[{\"title\":\"A\",\"description\":\"B\",\"checklist\":[],\"priority\":5,\"project\":null}]\n```";
+        let parsed = validate_and_sanitize_suggestions(raw).expect("parse fenced json");
+        assert_eq!(parsed[0].priority, 3);
+    }
+
+    #[test]
+    fn test_validate_and_sanitize_suggestions_rejects_empty() {
+        let err = validate_and_sanitize_suggestions("[]").expect_err("must fail");
+        assert!(err.contains("empty task list"));
+    }
 }
 
-#[tauri::command]
-pub fn get_prompt_templates(
-    db: State<'_, DbConnection>,
-) -> Result<Vec<queries::PromptTemplateItem>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_prompt_templates(&conn).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn create_prompt_template(name: String, content: String, db: State<'_, DbConnection>) -> Result<queries::PromptTemplateItem, String> {
-    let trimmed_name = name.trim();
-    let trimmed_content = content.trim();
-    if trimmed_name.is_empty() {
-        return Err("Template name is required".to_string());
-    }
-    if trimmed_content.is_empty() {
-        return Err("Template content is required".to_string());
-    }
-
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::create_prompt_template(&conn, trimmed_name, trimmed_content).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn update_prompt_template(id: String, name: String, content: String, db: State<'_, DbConnection>) -> Result<queries::PromptTemplateItem, String> {
-    let trimmed_id = id.trim();
-    let trimmed_name = name.trim();
-    let trimmed_content = content.trim();
-    if trimmed_id.is_empty() {
-        return Err("Template id is required".to_string());
-    }
-    if trimmed_name.is_empty() {
-        return Err("Template name is required".to_string());
-    }
-    if trimmed_content.is_empty() {
-        return Err("Template content is required".to_string());
-    }
-
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::update_prompt_template(&conn, trimmed_id, trimmed_name, trimmed_content).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn delete_prompt_template(id: String, db: State<'_, DbConnection>) -> Result<bool, String> {
-    let trimmed_id = id.trim();
-    if trimmed_id.is_empty() {
-        return Err("Template id is required".to_string());
-    }
-
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::delete_prompt_template(&conn, trimmed_id).map_err(|e| e.to_string())
-}

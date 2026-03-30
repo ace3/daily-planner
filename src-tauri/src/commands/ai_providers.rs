@@ -18,13 +18,68 @@ struct ProviderAvailability {
     copilot: bool,
 }
 
-fn command_exists(command: &str) -> bool {
-    let path_var = match env::var_os("PATH") {
-        Some(path) => path,
-        None => return false,
-    };
+/// Extra directories to search beyond the process PATH.
+/// GUI apps on macOS/Linux often launch with a stripped PATH that omits
+/// directories added by shell configs (.zshrc, .bashrc, nvm, homebrew, etc.).
+fn extra_search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
 
-    env::split_paths(&path_var).any(|dir| command_path_exists(&dir, command))
+    // Home-relative dirs
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join(".npm/bin"));
+        dirs.push(home.join(".yarn/bin"));
+        dirs.push(home.join(".cargo/bin"));
+        dirs.push(home.join(".nvm/versions/node"));  // traversed below
+        // nvm shims
+        dirs.push(home.join(".nvm/shims"));
+        // pnpm global
+        dirs.push(home.join(".local/share/pnpm"));
+    }
+
+    // macOS homebrew (Intel + Apple Silicon)
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/opt/homebrew/sbin"));
+
+    // Linux common
+    dirs.push(PathBuf::from("/usr/bin"));
+    dirs.push(PathBuf::from("/usr/local/sbin"));
+
+    dirs
+}
+
+fn command_exists(command: &str) -> bool {
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+
+    // Process PATH first
+    if let Some(path_var) = env::var_os("PATH") {
+        search_dirs.extend(env::split_paths(&path_var));
+    }
+
+    // Append extra dirs (de-duplication is fine to skip — any() short-circuits)
+    search_dirs.extend(extra_search_dirs());
+
+    if search_dirs.iter().any(|dir| command_path_exists(dir, command)) {
+        return true;
+    }
+
+    // Last resort: ask the login shell. Handles exotic setups (asdf, mise, etc.)
+    #[cfg(unix)]
+    {
+        if let Ok(shell) = env::var("SHELL") {
+            let result = Command::new(&shell)
+                .args(["-l", "-c", &format!("command -v {}", command)])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if result.map(|s| s.success()).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn command_path_exists(dir: &Path, command: &str) -> bool {
