@@ -15,6 +15,29 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 // ---------------------------------------------------------------------------
+// Resolve cloudflared binary path
+// ---------------------------------------------------------------------------
+
+/// Find the `cloudflared` binary.  When launched from a macOS `.app` bundle the
+/// PATH is minimal (`/usr/bin:/bin:…`), so Homebrew paths are missing.  We
+/// probe well-known locations before falling back to a bare name (which relies
+/// on PATH).
+fn resolve_cloudflared() -> String {
+    let candidates: &[&str] = &[
+        "/opt/homebrew/bin/cloudflared",   // ARM macOS Homebrew
+        "/usr/local/bin/cloudflared",      // Intel macOS Homebrew / manual install
+        "/usr/bin/cloudflared",            // system-wide
+    ];
+    for path in candidates {
+        if std::path::Path::new(path).exists() {
+            return path.to_string();
+        }
+    }
+    // Fallback: hope it's on PATH (works when run from terminal)
+    "cloudflared".to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -103,7 +126,7 @@ impl TunnelManager {
 
     async fn spawn_cloudflared(&self, port: u16) -> anyhow::Result<()> {
         // Verify cloudflared is available
-        let check = Command::new("cloudflared")
+        let check = Command::new(resolve_cloudflared())
             .arg("--version")
             .output()
             .await;
@@ -112,7 +135,7 @@ impl TunnelManager {
             inner.status = TunnelStatus {
                 running: false,
                 url: None,
-                error: Some("cloudflared not found. Install with: brew install cloudflared".to_string()),
+                error: Some("cloudflared not found. Install with: brew install cloudflared (then restart the app)".to_string()),
             };
             bail!("cloudflared not found");
         }
@@ -133,7 +156,7 @@ impl TunnelManager {
             let home = std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
             let config_path = format!("{}/.cloudflared/config.yml", home);
             eprintln!("[tunnel] Starting named tunnel: {} (config: {})", name, config_path);
-            Command::new("cloudflared")
+            Command::new(resolve_cloudflared())
                 .args(["tunnel", "--config", &config_path, "run", name])
                 .env("HOME", &home)
                 .stdout(std::process::Stdio::piped())
@@ -144,7 +167,7 @@ impl TunnelManager {
         } else {
             let url_arg = format!("http://localhost:{}", port);
             eprintln!("[tunnel] Starting quick tunnel on {}", url_arg);
-            Command::new("cloudflared")
+            Command::new(resolve_cloudflared())
                 .args(["tunnel", "--url", &url_arg])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -256,7 +279,7 @@ impl TunnelManager {
                     let new_child = if respawn_named {
                         let home2 = std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
                         let config_path2 = format!("{}/.cloudflared/config.yml", home2);
-                        Command::new("cloudflared")
+                        Command::new(resolve_cloudflared())
                             .args(["tunnel", "--config", &config_path2, "run", rname.as_deref().unwrap()])
                             .env("HOME", &home2)
                             .stdout(std::process::Stdio::piped())
@@ -265,7 +288,7 @@ impl TunnelManager {
                             .spawn()
                     } else {
                         let url_arg2 = format!("http://localhost:{}", port);
-                        Command::new("cloudflared")
+                        Command::new(resolve_cloudflared())
                             .args(["tunnel", "--url", &url_arg2])
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
