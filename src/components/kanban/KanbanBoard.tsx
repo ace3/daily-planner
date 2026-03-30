@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
+  CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverEvent,
@@ -8,6 +9,7 @@ import {
   useSensor,
   useSensors,
   closestCenter,
+  pointerWithin,
   DragOverlay,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -42,6 +44,13 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
+  // More stable for empty columns: try pointer hit first, then fall back.
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) return pointerCollisions;
+    return closestCenter(args);
+  };
+
   // Apply filters
   const filteredTasks = useMemo(() => {
     return boardTasks.filter((t) => {
@@ -61,7 +70,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
   // Tasks grouped by status, sorted by position
   const tasksByStatus = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = {
-      todo: [], improved: [], planned: [], in_progress: [], review: [],
+      todo: [], improved: [], planned: [], in_progress: [], review: [], done: [],
       skipped: [], carried_over: [],
     };
     for (const t of filteredTasks) {
@@ -199,7 +208,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
       <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 pb-4">
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}

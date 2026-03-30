@@ -222,10 +222,11 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
 
       {/* Desktop drag-and-drop status lanes */}
       {!m && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {[
             { status: 'in_progress' as TaskStatus, label: 'Active' },
-            { status: 'review' as TaskStatus, label: 'Done' },
+            { status: 'review' as TaskStatus, label: 'Review' },
+            { status: 'done' as TaskStatus, label: 'Done' },
             { status: 'skipped' as TaskStatus, label: 'Skipped' },
           ].map(({ status, label }) => (
             <div

@@ -48,7 +48,8 @@ const statusBadge: Record<Task['status'], { label: string; variant: 'blue' | 'gr
   improved: { label: 'Improved', variant: 'purple' },
   planned: { label: 'Planned', variant: 'blue' },
   in_progress: { label: 'In Progress', variant: 'blue' },
-  review: { label: 'Done', variant: 'green' },
+  review: { label: 'Review', variant: 'green' },
+  done: { label: 'Done', variant: 'green' },
   skipped: { label: 'Skipped', variant: 'amber' },
   carried_over: { label: 'Carried', variant: 'purple' },
 };

@@ -18,7 +18,8 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
     { value: 'all', label: 'All' },
     { value: 'todo', label: 'To-Do' },
     { value: 'in_progress', label: 'Active' },
-    { value: 'review', label: 'Done' },
+    { value: 'review', label: 'Review' },
+    { value: 'done', label: 'Done' },
     { value: 'skipped', label: 'Skipped' },
   ];
 

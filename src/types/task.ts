@@ -1,5 +1,5 @@
 export type TaskType = 'research' | 'prompt' | 'meeting' | 'review' | 'other';
-export type TaskStatus = 'todo' | 'improved' | 'planned' | 'in_progress' | 'review' | 'skipped' | 'carried_over';
+export type TaskStatus = 'todo' | 'improved' | 'planned' | 'in_progress' | 'review' | 'done' | 'skipped' | 'carried_over';
 export type TaskPriority = 1 | 2 | 3; // 1=high, 2=medium, 3=low
 export type WorktreeStatus = 'active' | 'merged' | 'abandoned';
 export type JobStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
@@ -7,7 +7,7 @@ export type ReviewStatus = 'none' | 'pending' | 'approved' | 'needs_fix';
 export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'copilot';
 
 /** The five kanban column statuses (in display order). */
-export const KANBAN_STATUSES: TaskStatus[] = ['todo', 'improved', 'planned', 'in_progress', 'review'];
+export const KANBAN_STATUSES: TaskStatus[] = ['todo', 'improved', 'planned', 'in_progress', 'review', 'done'];
 
 /** Side statuses that don't appear as kanban columns. */
 export const SIDE_STATUSES: TaskStatus[] = ['skipped', 'carried_over'];

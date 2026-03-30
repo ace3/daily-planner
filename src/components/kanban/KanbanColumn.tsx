@@ -17,7 +17,8 @@ const STATUS_CONFIG: Record<
   improved:    { label: 'Improved',   chipClass: 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300', dotClass: 'bg-purple-400 dark:bg-purple-300' },
   planned:     { label: 'Planned',    chipClass: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300', dotClass: 'bg-blue-400 dark:bg-blue-300' },
   in_progress: { label: 'In Progress',chipClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300', dotClass: 'bg-amber-400 dark:bg-amber-300' },
-  review:      { label: 'Done',       chipClass: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300', dotClass: 'bg-green-500 dark:bg-green-400' },
+  review:      { label: 'Review',     chipClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', dotClass: 'bg-emerald-500 dark:bg-emerald-400' },
+  done:        { label: 'Done',       chipClass: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300', dotClass: 'bg-green-500 dark:bg-green-400' },
 };
 
 const KanbanColumn: React.FC<KanbanColumnProps> = ({ status, tasks, children }) => {

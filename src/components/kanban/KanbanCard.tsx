@@ -74,13 +74,14 @@ export const SortableKanbanCard: React.FC<KanbanCardProps & { id: string }> = ({
         task={task}
         onClick={onClick}
         isDragging={isDragging}
-        dragHandleProps={{ ...attributes, ...listeners }}
+        draggableProps={{ ...attributes, ...listeners }}
       />
     </div>
   );
 };
 
 interface KanbanCardInternalProps extends KanbanCardProps {
+  draggableProps?: React.HTMLAttributes<HTMLElement>;
   dragHandleProps?: React.HTMLAttributes<HTMLElement>;
 }
 
@@ -88,11 +89,14 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
   task,
   onClick,
   isDragging,
+  draggableProps,
   dragHandleProps,
 }) => {
   return (
     <div
+      {...draggableProps}
       onClick={onClick}
+      data-testid={`kanban-card-${task.id}`}
       className={`
         relative bg-white dark:bg-[#0F1117] border border-gray-200 dark:border-[#30363D] rounded-[10px] p-3 cursor-pointer group
         shadow-[0_1px_3px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.04)]
@@ -104,10 +108,10 @@ export const KanbanCard: React.FC<KanbanCardInternalProps> = ({
       {/* Drag handle — visible on hover */}
       {dragHandleProps && (
         <button
-          {...dragHandleProps}
           onClick={(e) => e.stopPropagation()}
           className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-300 cursor-grab active:cursor-grabbing p-0.5"
           aria-label="Drag task"
+          type="button"
         >
           <GripVertical size={14} />
         </button>

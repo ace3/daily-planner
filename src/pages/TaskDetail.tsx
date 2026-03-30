@@ -35,6 +35,7 @@ import { ReviewPanel } from '../components/ReviewPanel';
 
 function statusColors(status: string): string {
   switch (status) {
+    case 'done': return 'bg-green-500/20 text-green-400';
     case 'review': return 'bg-green-500/20 text-green-400';
     case 'in_progress': return 'bg-blue-500/20 text-blue-400';
     case 'planned': return 'bg-cyan-500/20 text-cyan-400';
@@ -528,47 +529,52 @@ export const TaskDetail: React.FC = () => {
   // ---------------------------------------------------------------------------
   return (
     <div
-      className={`${m ? 'p-3' : 'p-6 max-w-4xl mx-auto'} space-y-4 overflow-y-auto h-full`}
+      onClick={() => navigate(-1)}
+      className={`${m ? 'p-2' : 'p-6'} overflow-y-auto h-full dark:bg-[#0F1117]/80`}
       data-scrollable
     >
-      {/* ------------------------------------------------------------------ */}
-      {/* Header                                                               */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="flex items-start gap-3">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 rounded-lg dark:hover:bg-[#21262D] min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 mt-0.5"
-          aria-label="Go back"
-        >
-          <ArrowLeft size={20} />
-        </button>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={`${m ? 'p-2' : 'max-w-4xl mx-auto'} space-y-4`}
+      >
+        {/* ------------------------------------------------------------------ */}
+        {/* Header                                                               */}
+        {/* ------------------------------------------------------------------ */}
+        <div className="flex items-start gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 rounded-lg dark:hover:bg-[#21262D] min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 mt-0.5"
+            aria-label="Go back"
+          >
+            <ArrowLeft size={20} />
+          </button>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className={`font-bold ${m ? 'text-lg' : 'text-xl'} dark:text-[#E6EDF3]`}>{task.title}</h1>
-            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors(task.status)}`}>
-              {task.status.replace('_', ' ')}
-            </span>
-            <span className={`px-2 py-0.5 rounded text-xs font-medium ${priorityColors(task.priority)}`}>
-              {priorityLabel(task.priority)}
-            </span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className={`font-bold ${m ? 'text-lg' : 'text-xl'} dark:text-[#E6EDF3]`}>{task.title}</h1>
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors(task.status)}`}>
+                {task.status.replace('_', ' ')}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${priorityColors(task.priority)}`}>
+                {priorityLabel(task.priority)}
+              </span>
+            </div>
+            {project && (
+              <button
+                onClick={() => navigate(`/projects/${project.id}`)}
+                className="flex items-center gap-1 text-sm dark:text-blue-400 hover:underline mt-0.5"
+              >
+                <GitBranch size={12} />
+                {project.name}
+              </button>
+            )}
           </div>
-          {project && (
-            <button
-              onClick={() => navigate(`/projects/${project.id}`)}
-              className="flex items-center gap-1 text-sm dark:text-blue-400 hover:underline mt-0.5"
-            >
-              <GitBranch size={12} />
-              {project.name}
-            </button>
-          )}
         </div>
-      </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Task Metadata                                                        */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
+        {/* ------------------------------------------------------------------ */}
+        {/* Task Metadata                                                        */}
+        {/* ------------------------------------------------------------------ */}
+        <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
         <h3 className="font-semibold dark:text-[#E6EDF3] text-sm uppercase tracking-wide">Task Details</h3>
 
         {/* Title */}
@@ -639,7 +645,8 @@ export const TaskDetail: React.FC = () => {
               <option value="improved">Improved</option>
               <option value="planned">Planned</option>
               <option value="in_progress">In Progress</option>
-              <option value="review">Done</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
               <option value="skipped">Skipped</option>
               <option value="carried_over">Carried Over</option>
             </select>
@@ -668,12 +675,12 @@ export const TaskDetail: React.FC = () => {
             Use Title as Prompt
           </button>
         </div>
-      </div>
+        </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Prompt Section                                                       */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
+        {/* ------------------------------------------------------------------ */}
+        {/* Prompt Section                                                       */}
+        {/* ------------------------------------------------------------------ */}
+        <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
         <h3 className="font-semibold dark:text-[#E6EDF3] flex items-center gap-2">
           <Terminal size={16} /> Prompt
         </h3>
@@ -829,13 +836,13 @@ export const TaskDetail: React.FC = () => {
             )}
           </button>
         </div>
-      </div>
+        </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Output Section                                                       */}
-      {/* ------------------------------------------------------------------ */}
-      {(hasOutput || isJobActive) && (
-        <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
+        {/* ------------------------------------------------------------------ */}
+        {/* Output Section                                                       */}
+        {/* ------------------------------------------------------------------ */}
+        {(hasOutput || isJobActive) && (
+          <div className="dark:bg-[#161B22] rounded-xl p-4 space-y-3 border dark:border-[#30363D]">
           {/* Job status banner */}
           {selectedJob && (
             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium ${jobStatusColors(selectedJob.status)}`}>
@@ -962,32 +969,32 @@ export const TaskDetail: React.FC = () => {
               )}
             </div>
           )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Review Panel (visible when status = review or review_output exists)  */}
-      {/* ------------------------------------------------------------------ */}
-      {(task.status === 'review' || task.review_output) && (
-        <ReviewPanel
-          taskId={task.id}
-          reviewOutput={task.review_output}
-          reviewStatus={task.review_status}
-          onReviewRequested={handleRequestReview}
-          onApproved={handleApprove}
-          onFixRequested={handleFixFromReview}
-          reviewing={reviewing}
-          approving={approving}
-          fixing={fixing}
-          error={reviewError}
-        />
-      )}
+        {/* ------------------------------------------------------------------ */}
+        {/* Review Panel (visible when status = review or review_output exists)  */}
+        {/* ------------------------------------------------------------------ */}
+        {(task.status === 'review' || task.review_output) && (
+          <ReviewPanel
+            taskId={task.id}
+            reviewOutput={task.review_output}
+            reviewStatus={task.review_status}
+            onReviewRequested={handleRequestReview}
+            onApproved={handleApprove}
+            onFixRequested={handleFixFromReview}
+            reviewing={reviewing}
+            approving={approving}
+            fixing={fixing}
+            error={reviewError}
+          />
+        )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Job History                                                          */}
-      {/* ------------------------------------------------------------------ */}
-      {jobs.length > 0 && (
-        <div className="dark:bg-[#161B22] rounded-xl border dark:border-[#30363D] overflow-hidden">
+        {/* ------------------------------------------------------------------ */}
+        {/* Job History                                                          */}
+        {/* ------------------------------------------------------------------ */}
+        {jobs.length > 0 && (
+          <div className="dark:bg-[#161B22] rounded-xl border dark:border-[#30363D] overflow-hidden">
           <button
             onClick={() => setShowJobHistory((v) => !v)}
             className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium dark:text-[#E6EDF3] dark:hover:bg-[#21262D] min-h-[44px]"
@@ -1021,11 +1028,12 @@ export const TaskDetail: React.FC = () => {
               ))}
             </div>
           )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Bottom spacer for mobile */}
-      {m && <div className="h-4" />}
+        {/* Bottom spacer for mobile */}
+        {m && <div className="h-4" />}
+      </div>
     </div>
   );
 };
