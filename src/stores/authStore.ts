@@ -35,6 +35,10 @@ interface AuthState {
 
   /** POST /api/auth/change-password — updates password server-side. */
   changePassword: (newPassword: string) => Promise<void>;
+  /** POST /api/auth/forgot-password — generates a reset link and logs it server-side. */
+  forgotPassword: (username: string) => Promise<void>;
+  /** POST /api/auth/reset-password — resets password with a one-time token. */
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -85,5 +89,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   changePassword: async (newPassword: string) => {
     await httpPost('/api/auth/change-password', { new_password: newPassword });
     set({ mustChangePassword: false });
+  },
+
+  forgotPassword: async (username: string) => {
+    await httpPost('/api/auth/forgot-password', { username });
+  },
+
+  resetPassword: async (token: string, newPassword: string) => {
+    await httpPost('/api/auth/reset-password', { token, new_password: newPassword });
   },
 }));

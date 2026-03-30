@@ -23,9 +23,9 @@ export function useKeyboardShortcuts() {
             break;
           case '4':
             e.preventDefault();
-            navigate('/reports');
+            navigate('/history');
             break;
-          case '6':
+          case '5':
             e.preventDefault();
             navigate('/remote-access');
             break;

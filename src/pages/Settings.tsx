@@ -4,7 +4,6 @@ import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
-import { useReportStore } from '../stores/reportStore';
 import { useProviderStore } from '../stores/providerStore';
 import {
   backupData, restoreData, resetAppData, testTelegramNotification,
@@ -32,7 +31,6 @@ interface SettingsDraft {
 export const SettingsPage: React.FC = () => {
   const { settings, fetchSettings, updateSetting, globalPrompt, fetchGlobalPrompt, setGlobalPrompt } = useSettingsStore();
   const { fetchTasks } = useTaskStore();
-  const { fetchRecentReports } = useReportStore();
   const { claudeAvailable, opencodeAvailable, codexAvailable, copilotAvailable, checkAvailability } = useProviderStore();
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -191,7 +189,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const result = await restoreData();
       if (result === 'cancelled') return;
-      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('Data restored successfully');
     } catch (e) {
       toast.error(String(e));
@@ -207,7 +205,7 @@ export const SettingsPage: React.FC = () => {
       const keepSettings = checkValues?.['keep_settings'] ?? true;
       const keepBuiltinTemplates = checkValues?.['keep_builtin_templates'] ?? true;
       await resetAppData(keepSettings, keepBuiltinTemplates);
-      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('App data cleared');
     } catch (e) {
       toast.error(String(e));
@@ -275,7 +273,7 @@ export const SettingsPage: React.FC = () => {
     setSessionActions((p) => ({ ...p, [id]: 'restoring' }));
     try {
       await restoreFromBackupSession(id);
-      await Promise.all([fetchSettings(), fetchTasks(), fetchRecentReports(30)]);
+      await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('Restored from backup session');
     } catch (e) {
       toast.error(`Restore failed: ${String(e)}`);
@@ -976,7 +974,7 @@ ingress:
       <ConfirmModal
         open={showResetConfirm}
         title="Reset App Data"
-        description="This will permanently delete all tasks, focus sessions, and reports. This cannot be undone."
+        description="This will permanently delete all tasks and focus sessions. This cannot be undone."
         confirmLabel="Reset"
         variant="danger"
         requireTyped="RESET"

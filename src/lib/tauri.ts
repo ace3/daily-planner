@@ -13,7 +13,6 @@ import type {
   CleanupWorktreeResult,
 } from '../types/task';
 import type { AppSettings, AiProvider } from '../types/settings';
-import type { DailyReport } from '../types/report';
 import type { Project, CreateProjectInput } from '../types/project';
 import type { PromptJob } from '../types/job';
 import { invoke } from '@tauri-apps/api/core';
@@ -481,6 +480,21 @@ export const getHttpServerPort = (): Promise<number> =>
     ? Promise.resolve(parseInt(window.location.port || '7734', 10))
     : tauriInvoke<number>('get_http_server_port', {});
 
+export const getHttpAuthToken = (): Promise<string> =>
+  isWebBrowser()
+    ? httpGet<{ token: string | null }>('/api/remote/auth-token').then((r) => r.token ?? '')
+    : getSetting('http_auth_token').then((v) => v ?? '');
+
+export const regenerateHttpAuthToken = (): Promise<string> =>
+  isWebBrowser()
+    ? httpPost<{ token: string }>('/api/remote/auth-token/regenerate', {}).then((r) => r.token ?? '')
+    : (() => {
+        const array = new Uint8Array(16);
+        crypto.getRandomValues(array);
+        const token = Array.from(array).map((b) => b.toString(16).padStart(2, '0')).join('');
+        return setSetting('http_auth_token', token).then(() => token);
+      })();
+
 // ---------------------------------------------------------------------------
 // Auto backup (desktop only)
 // ---------------------------------------------------------------------------
@@ -547,30 +561,6 @@ export const setBackupSettings = (
     : tauriInvoke<void>('set_backup_settings', { enabled, intervalMin, maxSessions });
 
 // ---------------------------------------------------------------------------
-// Reports
-// ---------------------------------------------------------------------------
-
-export const generateReport = (date: string): Promise<DailyReport> =>
-  isWebBrowser()
-    ? httpPost<DailyReport>(`/api/reports/${date}/generate`)
-    : tauriInvoke<DailyReport>('generate_report', { date });
-
-export const getReport = (date: string): Promise<DailyReport | null> =>
-  isWebBrowser()
-    ? httpGet<DailyReport | null>(`/api/reports/${date}`)
-    : tauriInvoke<DailyReport | null>('get_report', { date });
-
-export const getReportsRange = (from: string, to: string): Promise<DailyReport[]> =>
-  isWebBrowser()
-    ? httpGet<DailyReport[]>('/api/reports', { from, to })
-    : tauriInvoke<DailyReport[]>('get_reports_range', { from, to });
-
-export const saveAiReflection = (date: string, reflection: string): Promise<void> =>
-  isWebBrowser()
-    ? httpPost<void>(`/api/reports/${date}/reflection`, { reflection })
-    : tauriInvoke<void>('save_ai_reflection', { date, reflection });
-
-// ---------------------------------------------------------------------------
 // Devices (Phase 4)
 // ---------------------------------------------------------------------------
 
@@ -608,17 +598,17 @@ export interface TunnelStatus {
 
 export const startTunnel = (port: number): Promise<TunnelStatus> =>
   isWebBrowser()
-    ? Promise.resolve({ running: false, url: null, error: 'Not available in browser mode' })
+    ? httpPost<TunnelStatus>('/api/tunnel/start', { port })
     : tauriInvoke<TunnelStatus>('start_tunnel_cmd', { port });
 
 export const stopTunnel = (): Promise<TunnelStatus> =>
   isWebBrowser()
-    ? Promise.resolve({ running: false, url: null, error: null })
+    ? httpPost<TunnelStatus>('/api/tunnel/stop', {})
     : tauriInvoke<TunnelStatus>('stop_tunnel_cmd');
 
 export const getTunnelStatus = (): Promise<TunnelStatus> =>
   isWebBrowser()
-    ? Promise.resolve({ running: false, url: null, error: null })
+    ? httpGet<TunnelStatus>('/api/tunnel/status')
     : tauriInvoke<TunnelStatus>('get_tunnel_status');
 
 export const testTelegramNotification = (): Promise<void> =>

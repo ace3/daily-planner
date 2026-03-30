@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Wifi, Copy, Check, QrCode, RefreshCw, ExternalLink, Trash2, Globe, CircleDot, Smartphone } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { getLocalIp, getHttpServerPort, getSetting, setSetting, listDevices, deleteDevice, startTunnel, stopTunnel, getTunnelStatus } from '../lib/tauri';
+import { getLocalIp, getHttpServerPort, getHttpAuthToken, regenerateHttpAuthToken, listDevices, deleteDevice, startTunnel, stopTunnel, getTunnelStatus } from '../lib/tauri';
 import type { Device, TunnelStatus } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
-import { isWebBrowser } from '../lib/http';
 
 // Minimal QR code generator using canvas — no external dependency required.
 let QRCodeLib: { toCanvas: (el: HTMLCanvasElement, text: string, opts: object) => Promise<void> } | null = null;
@@ -84,16 +83,22 @@ export const RemoteAccessPage: React.FC = () => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const [ip, p, t] = await Promise.all([getLocalIp(), getHttpServerPort(), getSetting('http_auth_token')]);
-      setLocalIp(ip);
-      setPort(p);
-      setToken(t ?? '');
-    } catch (e) {
-      toast.error(`Failed to load remote access info: ${String(e)}`);
-    } finally {
-      setLoading(false);
+    const [ipRes, portRes, tokenRes] = await Promise.allSettled([
+      getLocalIp(),
+      getHttpServerPort(),
+      getHttpAuthToken(),
+    ]);
+    if (ipRes.status === 'fulfilled') setLocalIp(ipRes.value);
+    else setLocalIp(window.location.hostname || 'localhost');
+    if (portRes.status === 'fulfilled') setPort(portRes.value);
+    if (tokenRes.status === 'fulfilled') setToken(tokenRes.value ?? '');
+    if (ipRes.status === 'rejected' && portRes.status === 'rejected') {
+      toast.error('Failed to load local network address');
     }
+    if (tokenRes.status === 'rejected') {
+      setToken('');
+    }
+    setLoading(false);
   }, []);
 
   const loadDevices = useCallback(async () => {
@@ -120,14 +125,11 @@ export const RemoteAccessPage: React.FC = () => {
   useEffect(() => {
     load();
     loadDevices();
-    if (!isWebBrowser()) {
-      loadTunnelStatus();
-    }
+    loadTunnelStatus();
   }, [load, loadDevices, loadTunnelStatus]);
 
   // Poll tunnel status every 3s while running
   useEffect(() => {
-    if (isWebBrowser()) return;
     if (tunnel.running) {
       tunnelPollRef.current = setInterval(loadTunnelStatus, 3000);
     } else {
@@ -139,10 +141,7 @@ export const RemoteAccessPage: React.FC = () => {
   const handleRegenerateToken = useCallback(async () => {
     setRegenerating(true);
     try {
-      const array = new Uint8Array(16);
-      crypto.getRandomValues(array);
-      const newToken = Array.from(array).map((b) => b.toString(16).padStart(2, '0')).join('');
-      await setSetting('http_auth_token', newToken);
+      const newToken = await regenerateHttpAuthToken();
       setToken(newToken);
       toast.success('Auth token regenerated — all existing sessions will need to re-scan the QR code.');
     } catch (e) {
@@ -363,9 +362,8 @@ export const RemoteAccessPage: React.FC = () => {
         )}
       </div>
 
-      {/* Cloudflare Tunnel card — desktop only */}
-      {!isWebBrowser() && (
-        <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 flex flex-col gap-3">
+      {/* Cloudflare Tunnel card */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Globe size={14} className="text-gray-500 dark:text-[#8B949E]" />
@@ -432,8 +430,7 @@ export const RemoteAccessPage: React.FC = () => {
             Install with: <code className="text-gray-500">brew install cloudflared</code>.
             Auto-reconnects if the connection drops.
           </div>
-        </div>
-      )}
+      </div>
 
       {/* Setup guide */}
       <div className="rounded-xl border border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22] p-4">

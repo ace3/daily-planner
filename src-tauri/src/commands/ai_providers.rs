@@ -125,16 +125,12 @@ fn command_succeeds(binary: &str, args: &[&str]) -> bool {
 }
 
 fn detect_provider_availability() -> ProviderAvailability {
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    eprintln!("[ai-providers] PATH={}", path_var);
-    let av = ProviderAvailability {
+    ProviderAvailability {
         claude: command_exists("claude"),
         codex: command_exists("codex"),
         opencode: command_exists("opencode"),
         copilot: command_exists("copilot") && command_succeeds("copilot", &["--version"]),
-    };
-    eprintln!("[ai-providers] availability={:?}", av);
-    av
+    }
 }
 
 fn providers_from_availability(availability: ProviderAvailability) -> Vec<AiProvider> {

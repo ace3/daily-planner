@@ -4,11 +4,15 @@ version = "0.1.2"
 description = "Developer Daily Planner"
 authors = []
 edition = "2021"
-default-run = "daily-planner"
+default-run = "synq"
 
 [lib]
 name = "daily_planner_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "synq"
+path = "src/main.rs"
 
 [[bin]]
 name = "synq-server"

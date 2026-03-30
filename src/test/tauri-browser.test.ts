@@ -15,7 +15,6 @@ import {
   getProjects,
   getGlobalPrompt,
   setGlobalPrompt,
-  generateReport,
   getLocalIp,
   getHttpServerPort,
 } from '../lib/tauri';
@@ -204,22 +203,6 @@ describe('setGlobalPrompt (browser mode)', () => {
     expect(opts.method).toBe('PUT');
     const body = JSON.parse(opts.body as string);
     expect(body.prompt).toBe('my prompt');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Reports
-// ---------------------------------------------------------------------------
-
-describe('generateReport (browser mode)', () => {
-  it('POSTs /api/reports/:date/generate', async () => {
-    const report = { date: '2026-03-23', summary: 'Done' };
-    mockFetchJson(report);
-    const result = await generateReport('2026-03-23');
-    const [url, opts] = lastFetchCall();
-    expect(url).toContain('/api/reports/2026-03-23/generate');
-    expect(opts.method).toBe('POST');
-    expect(result).toEqual(report);
   });
 });
 

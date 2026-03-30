@@ -5,7 +5,6 @@ pub mod data_management;
 pub mod git;
 pub mod jobs;
 pub mod projects;
-pub mod reports;
 pub mod settings;
 pub mod tasks;
 pub mod worktree;

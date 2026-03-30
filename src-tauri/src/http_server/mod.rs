@@ -60,7 +60,6 @@ use crate::db::queries;
 pub enum ServerEvent {
     TaskChanged { date: String },
     SettingsChanged,
-    ReportChanged { date: String },
     ProjectsChanged,
     TemplatesChanged,
     DevicesChanged,
@@ -80,6 +79,8 @@ pub struct ServerState {
     job_registry: Arc<Mutex<HashMap<String, u32>>>,
     /// Broadcast channel for real-time SSE events.
     event_tx: broadcast::Sender<ServerEvent>,
+    /// Shared Cloudflare tunnel manager.
+    tunnel_manager: Arc<crate::tunnel::TunnelManager>,
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +315,117 @@ async fn auth_change_password(
         let conn = s.db.lock().map_err(internal)?;
         auth::change_password(&*conn, &user_id, &new_hash).map_err(internal)?;
     }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/auth/forgot-password
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ForgotPasswordBody {
+    username: String,
+}
+
+async fn auth_forgot_password(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ForgotPasswordBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let username = body.username.trim();
+    if username.is_empty() {
+        return Err(bad_request("Username is required"));
+    }
+
+    let user = {
+        let conn = s.db.lock().map_err(internal)?;
+        auth::get_user_by_username(&*conn, username).map_err(internal)?
+    };
+
+    if let Some(u) = user {
+        let token = uuid::Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(30);
+        let expires_str = expires_at.to_rfc3339();
+
+        {
+            let conn = s.db.lock().map_err(internal)?;
+            queries::set_setting(&*conn, "password_reset_token", &token).map_err(internal)?;
+            queries::set_setting(&*conn, "password_reset_expires_at", &expires_str).map_err(internal)?;
+            queries::set_setting(&*conn, "password_reset_user_id", &u.id).map_err(internal)?;
+        }
+
+        let proto = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or("http");
+        let host = headers
+            .get("x-forwarded-host")
+            .or_else(|| headers.get("host"))
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or("localhost:7734");
+        let link = format!("{}://{}/?reset_token={}", proto, host, token);
+        eprintln!("[auth] Password reset link for {}: {}", username, link);
+    }
+
+    // Return a generic success response to avoid username enumeration.
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/auth/reset-password
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ResetPasswordBody {
+    token: String,
+    new_password: String,
+}
+
+async fn auth_reset_password(
+    State(s): State<ServerState>,
+    Json(body): Json<ResetPasswordBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.new_password.len() < 6 {
+        return Err(bad_request("Password must be at least 6 characters"));
+    }
+    if body.token.trim().is_empty() {
+        return Err(bad_request("Reset token is required"));
+    }
+
+    let (stored_token, expires_at_str, user_id) = {
+        let conn = s.db.lock().map_err(internal)?;
+        (
+            queries::get_setting(&*conn, "password_reset_token").map_err(internal)?,
+            queries::get_setting(&*conn, "password_reset_expires_at").map_err(internal)?,
+            queries::get_setting(&*conn, "password_reset_user_id").map_err(internal)?,
+        )
+    };
+
+    let token_ok = stored_token.trim() == body.token.trim();
+    let user_id = user_id.trim().to_string();
+    let exp = chrono::DateTime::parse_from_rfc3339(expires_at_str.trim())
+        .map_err(|_| bad_request("Invalid or expired reset token"))?
+        .with_timezone(&chrono::Utc);
+    if !token_ok || user_id.is_empty() || chrono::Utc::now() > exp {
+        return Err(bad_request("Invalid or expired reset token"));
+    }
+
+    let new_pass = body.new_password.clone();
+    let new_hash = tokio::task::spawn_blocking(move || auth::hash_password(&new_pass))
+        .await
+        .map_err(|e| internal(e))?
+        .map_err(internal)?;
+
+    {
+        let conn = s.db.lock().map_err(internal)?;
+        auth::change_password(&*conn, &user_id, &new_hash).map_err(internal)?;
+        queries::set_setting(&*conn, "password_reset_token", "").map_err(internal)?;
+        queries::set_setting(&*conn, "password_reset_expires_at", "").map_err(internal)?;
+        queries::set_setting(&*conn, "password_reset_user_id", "").map_err(internal)?;
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -668,7 +780,6 @@ async fn get_ai_providers(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
     let providers = crate::commands::ai_providers::detect_available_providers();
-    eprintln!("[ai-providers] detected: {:?}", providers);
     Ok(Json(serde_json::to_value(providers).unwrap_or_default()))
 }
 
@@ -716,6 +827,47 @@ async fn set_setting_by_key(
     drop(conn);
     let _ = s.event_tx.send(ServerEvent::SettingsChanged);
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: GET /api/remote/auth-token
+// ---------------------------------------------------------------------------
+
+async fn get_remote_auth_token(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
+    let conn = s.db.lock().map_err(internal)?;
+    let token = queries::get_setting(&*conn, "http_auth_token").unwrap_or_default();
+    let trimmed = token.trim().to_string();
+    let value = if trimmed.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(trimmed) };
+    Ok(Json(serde_json::json!({ "token": value })))
+}
+
+// ---------------------------------------------------------------------------
+// Route: POST /api/remote/auth-token/regenerate
+// ---------------------------------------------------------------------------
+
+async fn regenerate_remote_auth_token(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let new_token: String = {
+        use rand::Rng;
+        rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect()
+    };
+    let conn = s.db.lock().map_err(internal)?;
+    queries::set_setting(&*conn, "http_auth_token", &new_token).map_err(internal)?;
+    drop(conn);
+    let _ = s.event_tx.send(ServerEvent::SettingsChanged);
+    Ok(Json(serde_json::json!({ "token": new_token })))
 }
 
 // ---------------------------------------------------------------------------
@@ -795,89 +947,6 @@ async fn get_session(
         session2_start: session2,
         timezone_offset: tz,
     }))
-}
-
-// ---------------------------------------------------------------------------
-// Route: GET /api/reports?from=YYYY-MM-DD&to=YYYY-MM-DD
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct ReportsQuery {
-    from: Option<String>,
-    to: Option<String>,
-    token: Option<String>,
-}
-
-async fn get_reports(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Query(q): Query<ReportsQuery>,
-) -> Result<Json<Vec<queries::DailyReport>>, ApiError> {
-    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let from = q.from.as_deref().unwrap_or(&today).to_string();
-    let to = q.to.as_deref().unwrap_or(&today).to_string();
-    let conn = s.db.lock().map_err(internal)?;
-    let reports = queries::get_reports_range(&*conn, &from, &to).map_err(internal)?;
-    Ok(Json(reports))
-}
-
-// ---------------------------------------------------------------------------
-// Route: GET /api/reports/:date
-// ---------------------------------------------------------------------------
-
-async fn get_report(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
-    Path(date): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
-    let conn = s.db.lock().map_err(internal)?;
-    // queries::get_report returns Result<Option<DailyReport>>
-    let report = queries::get_report(&*conn, &date).map_err(internal)?;
-    Ok(Json(serde_json::to_value(report).unwrap_or(serde_json::Value::Null)))
-}
-
-// ---------------------------------------------------------------------------
-// Route: POST /api/reports/:date/generate
-// ---------------------------------------------------------------------------
-
-async fn generate_report_endpoint(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Path(date): Path<String>,
-) -> Result<Json<queries::DailyReport>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    // queries::generate_report is the actual function name
-    let report = queries::generate_report(&*conn, &date).map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::ReportChanged { date });
-    Ok(Json(report))
-}
-
-// ---------------------------------------------------------------------------
-// Route: POST /api/reports/:date/reflection
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct ReflectionBody {
-    reflection: String,
-}
-
-async fn save_report_reflection(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Path(date): Path<String>,
-    Json(body): Json<ReflectionBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    queries::save_ai_reflection(&*conn, &date, &body.reflection).map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::ReportChanged { date });
-    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1286,55 @@ async fn delete_device_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Tunnel routes (Cloudflare)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct StartTunnelHttpBody {
+    port: Option<u16>,
+}
+
+async fn get_tunnel_status_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::tunnel::TunnelStatus>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    Ok(Json(s.tunnel_manager.status().await))
+}
+
+async fn start_tunnel_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+    Json(body): Json<StartTunnelHttpBody>,
+) -> Result<Json<crate::tunnel::TunnelStatus>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let port = if let Some(p) = body.port {
+        p
+    } else {
+        let conn = s.db.lock().map_err(internal)?;
+        queries::get_setting(&*conn, "http_server_port")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(7734)
+    };
+    let status = s
+        .tunnel_manager
+        .start(port)
+        .await
+        .map_err(internal)?;
+    Ok(Json(status))
+}
+
+async fn stop_tunnel_handler(
+    State(s): State<ServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::tunnel::TunnelStatus>, ApiError> {
+    check_auth(&s.db, &headers)?;
+    let status = s.tunnel_manager.stop().await.map_err(internal)?;
+    Ok(Json(status))
+}
+
+// ---------------------------------------------------------------------------
 // SSE helpers
 // ---------------------------------------------------------------------------
 
@@ -1253,7 +1371,6 @@ async fn events_stream(
                     let event_type = match &event {
                         ServerEvent::TaskChanged { .. } => "task_changed",
                         ServerEvent::SettingsChanged => "settings_changed",
-                        ServerEvent::ReportChanged { .. } => "report_changed",
                         ServerEvent::ProjectsChanged => "projects_changed",
                         ServerEvent::TemplatesChanged => "templates_changed",
                         ServerEvent::DevicesChanged => "devices_changed",
@@ -2316,8 +2433,9 @@ pub async fn start(
     };
 
     let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
+    let tunnel_manager = Arc::new(crate::tunnel::TunnelManager::new(db_path.clone()));
 
-    let state = ServerState { db, job_registry, event_tx };
+    let state = ServerState { db, job_registry, event_tx, tunnel_manager };
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::PUT, Method::OPTIONS])
@@ -2329,6 +2447,8 @@ pub async fn start(
         .route("/api/auth/login", post(auth_login))
         .route("/api/auth/logout", post(auth_logout))
         .route("/api/auth/change-password", post(auth_change_password))
+        .route("/api/auth/forgot-password", post(auth_forgot_password))
+        .route("/api/auth/reset-password", post(auth_reset_password))
         .route("/api/auth/me", get(auth_me))
         // Health (no auth)
         .route("/api/health", get(health))
@@ -2345,14 +2465,11 @@ pub async fn start(
         // Settings
         .route("/api/settings", get(get_settings))
         .route("/api/settings/:key", get(get_setting_by_key).put(set_setting_by_key))
+        .route("/api/remote/auth-token", get(get_remote_auth_token))
+        .route("/api/remote/auth-token/regenerate", post(regenerate_remote_auth_token))
         .route("/api/ai-providers", get(get_ai_providers))
         // Session
         .route("/api/session", get(get_session))
-        // Reports
-        .route("/api/reports", get(get_reports))
-        .route("/api/reports/:date", get(get_report))
-        .route("/api/reports/:date/generate", post(generate_report_endpoint))
-        .route("/api/reports/:date/reflection", post(save_report_reflection))
         // Projects
         .route("/api/projects", get(get_projects).post(create_project))
         .route("/api/projects/validate-path", post(validate_project_path_http))
@@ -2381,6 +2498,10 @@ pub async fn start(
         // Devices
         .route("/api/devices", get(list_devices_handler).post(register_device_handler))
         .route("/api/devices/:id", delete(delete_device_handler))
+        // Tunnel
+        .route("/api/tunnel/status", get(get_tunnel_status_handler))
+        .route("/api/tunnel/start", post(start_tunnel_handler))
+        .route("/api/tunnel/stop", post(stop_tunnel_handler))
         // Prompt
         .route("/api/prompt/global", get(get_global_prompt).put(set_global_prompt))
         .route("/api/prompt/templates", get(get_prompt_templates).post(create_prompt_template))

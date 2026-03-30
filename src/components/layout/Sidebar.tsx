@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Zap, FolderGit2, BarChart3, Clock,
+  LayoutDashboard, Zap, FolderGit2, Clock,
   Settings, FileText, Wifi, MoreHorizontal, X,
 } from 'lucide-react';
 import { useMobileStore } from '../../stores/mobileStore';
@@ -11,8 +11,7 @@ const navItems = [
   { to: '/projects', icon: FolderGit2, label: 'Projects', shortcut: '⌘2' },
   { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘3' },
   { to: '/history', icon: Clock, label: 'History', shortcut: '⌘4' },
-  { to: '/reports', icon: BarChart3, label: 'Reports', shortcut: '⌘5' },
-  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘6' },
+  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘5' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
 

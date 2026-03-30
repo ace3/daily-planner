@@ -7,7 +7,6 @@ interface SseHandlers {
   onTaskChanged?: (date: string) => void;
   onSettingsChanged?: () => void;
   onProjectsChanged?: () => void;
-  onReportChanged?: (date: string) => void;
   onTemplatesChanged?: () => void;
   onDevicesChanged?: () => void;
   onJobStatusChanged?: (jobId: string) => void;
@@ -39,13 +38,6 @@ function connect() {
 
   es.addEventListener('projects_changed', () => {
     handlers.onProjectsChanged?.();
-  });
-
-  es.addEventListener('report_changed', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data) as { data?: { date?: string } };
-      handlers.onReportChanged?.(data?.data?.date ?? '');
-    } catch { /* ignore parse errors */ }
   });
 
   es.addEventListener('templates_changed', () => {
