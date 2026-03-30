@@ -40,8 +40,6 @@ function statusColors(status: string): string {
     case 'in_progress': return 'bg-blue-500/20 text-blue-400';
     case 'planned': return 'bg-cyan-500/20 text-cyan-400';
     case 'improved': return 'bg-purple-500/20 text-purple-400';
-    case 'skipped': return 'bg-gray-500/20 text-gray-400';
-    case 'carried_over': return 'bg-orange-500/20 text-orange-400';
     default: return 'bg-yellow-500/20 text-yellow-400'; // todo
   }
 }
@@ -665,8 +663,6 @@ export const TaskDetail: React.FC = () => {
               <option value="in_progress">In Progress</option>
               <option value="review">Review</option>
               <option value="done">Done</option>
-              <option value="skipped">Skipped</option>
-              <option value="carried_over">Carried Over</option>
             </select>
           </div>
         </div>

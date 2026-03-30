@@ -25,6 +25,14 @@ export const ProjectDetail: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showGit, setShowGit] = useState(false);
 
+  const projectStats = useMemo(() => {
+    const total = tasks.length;
+    const done = tasks.filter((t) => t.status === 'review' || t.status === 'done').length;
+    const active = tasks.filter((t) => !['done', 'review'].includes(t.status)).length;
+    const todo = tasks.filter((t) => t.status === 'todo').length;
+    return { total, done, active, todo };
+  }, [tasks]);
+
   const loadTasks = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -109,6 +117,27 @@ export const ProjectDetail: React.FC = () => {
             <GitPanel projectPath={project.path} projectId={project.id} />
           </div>
         )}
+
+        <div className={`${mobileMode ? 'px-3 pt-2' : 'px-4 pt-2'} shrink-0`}>
+          <div className="grid grid-cols-4 gap-2 rounded-xl border border-gray-200 bg-white p-2 dark:border-[#30363D] dark:bg-[#161B22]">
+            <div className="rounded-lg border border-gray-100 p-2 dark:border-[#21262D]">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Total</div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-[#E6EDF3]">{projectStats.total}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-2 dark:border-[#21262D]">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Done</div>
+              <div className="text-lg font-semibold text-emerald-400">{projectStats.done}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-2 dark:border-[#21262D]">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">Active</div>
+              <div className="text-lg font-semibold text-amber-400">{projectStats.active}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-2 dark:border-[#21262D]">
+              <div className="text-[11px] text-gray-500 dark:text-[#8B949E]">To Do</div>
+              <div className="text-lg font-semibold text-blue-400">{projectStats.todo}</div>
+            </div>
+          </div>
+        </div>
 
         <div className="flex-1 overflow-hidden">
           {loading ? (

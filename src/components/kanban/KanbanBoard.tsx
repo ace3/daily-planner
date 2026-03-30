@@ -71,7 +71,6 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
   const tasksByStatus = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = {
       todo: [], improved: [], planned: [], in_progress: [], review: [], done: [],
-      skipped: [], carried_over: [],
     };
     for (const t of filteredTasks) {
       if (map[t.status as TaskStatus]) {

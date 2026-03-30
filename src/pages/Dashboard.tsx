@@ -13,7 +13,6 @@ interface AppSummary {
   total: number;
   done: number;
   active: number;
-  skipped: number;
 }
 
 export const Dashboard: React.FC = () => {
@@ -29,7 +28,6 @@ export const Dashboard: React.FC = () => {
     total: 0,
     done: 0,
     active: 0,
-    skipped: 0,
   });
 
   useEffect(() => {
@@ -45,11 +43,10 @@ export const Dashboard: React.FC = () => {
     getTasksRange('1970-01-01', today)
       .then((allTasks) => {
         if (!mounted) return;
-        const total = allTasks.filter((t) => t.status !== 'carried_over').length;
+        const total = allTasks.length;
         const done = allTasks.filter((t) => t.status === 'review' || (t.status as string) === 'done').length;
-        const active = allTasks.filter((t) => t.status === 'todo' || t.status === 'in_progress').length;
-        const skipped = allTasks.filter((t) => t.status === 'skipped').length;
-        setAppSummary({ total, done, active, skipped });
+        const active = allTasks.filter((t) => !['done', 'review'].includes(t.status)).length;
+        setAppSummary({ total, done, active });
       })
       .catch((e) => {
         console.error('Failed to load whole-app summary:', e);
@@ -143,8 +140,6 @@ export const Dashboard: React.FC = () => {
             </div>
             <div className="mt-2 text-xs text-gray-500 dark:text-[#8B949E]">
               Completion: <span className="font-semibold text-gray-900 dark:text-[#E6EDF3]">{appCompletionPct}%</span>
-              {' · '}
-              Skipped: <span className="font-semibold text-gray-900 dark:text-[#E6EDF3]">{appSummary.skipped}</span>
             </div>
           </div>
         </div>

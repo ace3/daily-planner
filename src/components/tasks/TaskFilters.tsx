@@ -20,7 +20,6 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
     { value: 'in_progress', label: 'Active' },
     { value: 'review', label: 'Review' },
     { value: 'done', label: 'Done' },
-    { value: 'skipped', label: 'Skipped' },
   ];
 
   const types: Array<{ value: TaskType | 'all'; label: string }> = [

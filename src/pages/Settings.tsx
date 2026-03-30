@@ -12,6 +12,7 @@ import {
   type BackupSessionInfo, type BackupSettings,
 } from '../lib/tauri';
 import { toast } from '../components/ui/Toast';
+import { isWebBrowser } from '../lib/http';
 
 interface SettingsDraft {
   timezone_offset: string;
@@ -702,8 +703,8 @@ ingress:
           </div>
         </section>
 
-        {/* Auto Backup */}
-        <section className={sectionClass}>
+        {/* Auto Backup (desktop only) */}
+        {!isWebBrowser() && <section className={sectionClass}>
           <div className={sectionHeaderClass}>
             <HardDrive size={14} className="text-gray-500 dark:text-[#8B949E]" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Auto Backup</h2>
@@ -885,10 +886,10 @@ ingress:
               )}
             </div>
           </div>
-        </section>
+        </section>}
 
-        {/* Data Management */}
-        <section className={sectionClass}>
+        {/* Data Management (desktop only) */}
+        {!isWebBrowser() && <section className={sectionClass}>
           <div className={sectionHeaderClass}>
             <Database size={14} className="text-gray-500 dark:text-[#8B949E]" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-[#E6EDF3]">Data Management</h2>
@@ -947,7 +948,7 @@ ingress:
               </button>
             </div>
           </div>
-        </section>
+        </section>}
       </div>
 
       <ConfirmModal

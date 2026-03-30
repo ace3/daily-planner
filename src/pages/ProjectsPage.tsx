@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Plus, Trash2, FolderSearch, ChevronUp, Save, MessageSquare, GitBranch, RotateCcw } from 'lucide-react';
 import { GitPanel } from '../components/projects/GitPanel';
 import { useProjectStore } from '../stores/projectStore';
-import { openFolderDialog, validateProjectPath } from '../lib/tauri';
+import { openFolderDialog, validateProjectPath, getTasksByProject } from '../lib/tauri';
+import type { Task } from '../types/task';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
@@ -30,6 +31,7 @@ export const ProjectsPage: React.FC = () => {
     expandedPrompt: null as string | null,
     promptDrafts: {} as Record<string, string>,
   });
+  const [projectStats, setProjectStats] = useState<Record<string, { total: number; done: number; active: number }>>({});
   const [adding, setAdding] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [hardDeleteTarget, setHardDeleteTarget] = useState<string | null>(null);
@@ -49,6 +51,29 @@ export const ProjectsPage: React.FC = () => {
     fetchProjects();
     fetchTrashedProjects();
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadStats = async () => {
+      const stats: Record<string, { total: number; done: number; active: number }> = {};
+      await Promise.all(
+        projects.map(async (p) => {
+          try {
+            const tasks = await getTasksByProject(p.id);
+            const total = tasks.length;
+            const done = tasks.filter((t: Task) => t.status === 'review' || t.status === 'done').length;
+            const active = total - done;
+            stats[p.id] = { total, done, active };
+          } catch {
+            stats[p.id] = { total: 0, done: 0, active: 0 };
+          }
+        })
+      );
+      if (mounted) setProjectStats(stats);
+    };
+    if (projects.length > 0) loadStats();
+    return () => { mounted = false; };
+  }, [projects]);
 
   // Initialize prompt drafts from fetched projects
   useEffect(() => {
@@ -277,6 +302,19 @@ export const ProjectsPage: React.FC = () => {
                 <div className="text-sm font-medium text-gray-900 dark:text-[#E6EDF3] truncate">{project.name}</div>
                 <div className="text-xs text-gray-400 dark:text-[#484F58] truncate">{project.path}</div>
               </div>
+              {projectStats[project.id] && (
+                <div className="flex items-center gap-3 shrink-0 mr-2">
+                  <span className="text-xs text-gray-500 dark:text-[#8B949E]">
+                    <span className="font-semibold text-gray-700 dark:text-[#E6EDF3]">{projectStats[project.id].total}</span> total
+                  </span>
+                  <span className="text-xs text-gray-500 dark:text-[#8B949E]">
+                    <span className="font-semibold text-emerald-400">{projectStats[project.id].done}</span> done
+                  </span>
+                  <span className="text-xs text-gray-500 dark:text-[#8B949E]">
+                    <span className="font-semibold text-amber-400">{projectStats[project.id].active}</span> active
+                  </span>
+                </div>
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation();

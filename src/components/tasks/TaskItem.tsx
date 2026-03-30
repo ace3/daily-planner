@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   CheckCircle2,
   Circle,
-  SkipForward,
   Trash2,
   ArrowRight,
   ChevronDown,
@@ -50,8 +49,6 @@ const statusBadge: Record<Task['status'], { label: string; variant: 'blue' | 'gr
   in_progress: { label: 'In Progress', variant: 'blue' },
   review: { label: 'Review', variant: 'green' },
   done: { label: 'Done', variant: 'green' },
-  skipped: { label: 'Skipped', variant: 'amber' },
-  carried_over: { label: 'Carried', variant: 'purple' },
 };
 const DRAG_TASK_ID_MIME = 'application/x-task-id';
 
@@ -71,8 +68,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   const [expanded, setExpanded] = useState(false);
   const { mobileMode: m } = useMobileStore();
   const isDone = task.status === 'review' || (task.status as string) === 'done';
-  const isSkipped = task.status === 'skipped';
-  const isCarried = task.status === 'carried_over';
 
   // --- MOBILE LAYOUT ---
   if (m) {
@@ -82,8 +77,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           rounded-xl border transition-colors duration-150
           ${isDone
             ? 'border-emerald-500/20 bg-emerald-500/5'
-            : isSkipped || isCarried
-            ? 'border-gray-100 bg-gray-50 opacity-60 dark:border-[#21262D] dark:bg-[#0F1117]'
             : 'border-gray-200 bg-white dark:border-[#30363D] dark:bg-[#161B22]'}
         `}
       >
@@ -105,7 +98,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           <div className="flex-1 min-w-0" onClick={() => onSelect?.(task)}>
             <span
               className={`text-base block ${
-                isDone || isSkipped ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
+                isDone ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
               }`}
             >
               {task.title}
@@ -140,16 +133,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           <div className="border-t border-gray-100 dark:border-[#21262D]">
             {/* Action buttons — horizontal scrollable row */}
             <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto">
-              {!isDone && !isSkipped && !isCarried && (
-                <button
-                  onClick={() => onStatusChange(task.id, 'skipped')}
-                  className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 whitespace-nowrap cursor-pointer"
-                >
-                  <SkipForward size={16} />
-                  Skip
-                </button>
-              )}
-              {!isDone && !isCarried && (
+              {!isDone && (
                 <button
                   onClick={() => onCarryForward(task.id)}
                   className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-blue-400 bg-blue-500/10 border border-blue-500/20 whitespace-nowrap cursor-pointer"
@@ -158,7 +142,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                   Tomorrow
                 </button>
               )}
-              {!isCarried && task.project_id && (
+              {task.project_id && (
                 <button
                   onClick={() => onRunAsWorktree?.(task)}
                   className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-sm text-purple-400 bg-purple-500/10 border border-purple-500/20 whitespace-nowrap cursor-pointer"
@@ -202,9 +186,8 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   // --- DESKTOP LAYOUT (unchanged) ---
   return (
     <div
-      draggable={!isCarried}
+      draggable
       onDragStart={(e) => {
-        if (isCarried) return;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData(DRAG_TASK_ID_MIME, task.id);
         e.dataTransfer.setData('text/plain', task.id);
@@ -216,8 +199,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         group rounded-lg border transition-colors duration-150
         ${isDone
           ? 'border-emerald-500/20 bg-emerald-500/5'
-          : isSkipped || isCarried
-          ? 'border-gray-100 bg-gray-50 opacity-60 dark:border-[#21262D] dark:bg-[#0F1117]'
           : 'border-gray-200 bg-white hover:border-gray-300 dark:border-[#30363D] dark:bg-[#161B22] dark:hover:border-[#444C56]'}
       `}
     >
@@ -245,7 +226,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className={`text-sm cursor-pointer ${
-                isDone || isSkipped ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
+                isDone ? 'line-through text-gray-400 dark:text-[#484F58]' : 'text-gray-900 dark:text-[#E6EDF3]'
               }`}
               onClick={() => onSelect?.(task)}
             >
@@ -272,16 +253,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
         {/* Actions */}
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          {!isDone && !isSkipped && !isCarried && (
-            <button
-              onClick={() => onStatusChange(task.id, 'skipped')}
-              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-amber-400 transition-colors cursor-pointer rounded"
-              title="Skip"
-            >
-              <SkipForward size={13} />
-            </button>
-          )}
-          {!isDone && !isCarried && (
+          {!isDone && (
             <button
               onClick={() => onCarryForward(task.id)}
               className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-blue-400 transition-colors cursor-pointer rounded"
@@ -290,16 +262,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <ArrowRight size={13} />
             </button>
           )}
-          {!isCarried && (
-            <button
-              onClick={() => onRunAsWorktree?.(task)}
-              disabled={!task.project_id}
-              className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer rounded"
-              title={task.project_id ? 'Run as worktree' : 'Assign a project first'}
-            >
-              <GitBranchPlus size={13} />
-            </button>
-          )}
+          <button
+            onClick={() => onRunAsWorktree?.(task)}
+            disabled={!task.project_id}
+            className="p-1.5 text-gray-400 dark:text-[#484F58] hover:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer rounded"
+            title={task.project_id ? 'Run as worktree' : 'Assign a project first'}
+          >
+            <GitBranchPlus size={13} />
+          </button>
           {task.worktree_status === 'active' && (
             <button
               onClick={() => onCleanupWorktree?.(task)}

@@ -85,7 +85,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
       return;
     }
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.status === 'carried_over') {
+    if (!task) {
       setDragOverStatus(null);
       return;
     }
@@ -147,7 +147,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   };
 
   const doneTasks = tasks.filter((t) => t.status === 'review' || (t.status as string) === 'done');
-  const pendingTasks = tasks.filter((t) => t.status !== 'review' && (t.status as string) !== 'done' && t.status !== 'carried_over');
+  const pendingTasks = tasks.filter((t) => t.status !== 'review' && (t.status as string) !== 'done');
 
   // Group pending tasks by project
   const tasksByProject = new Map<string | null, Task[]>();
@@ -197,7 +197,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
           Tasks
         </span>
         <span className={`text-gray-400 dark:text-[#484F58] ${m ? 'text-sm' : 'text-xs'}`}>
-          {doneTasks.length}/{tasks.filter((t) => t.status !== 'carried_over').length}
+          {doneTasks.length}/{tasks.length}
         </span>
       </div>
 
@@ -227,7 +227,6 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
             { status: 'in_progress' as TaskStatus, label: 'Active' },
             { status: 'review' as TaskStatus, label: 'Review' },
             { status: 'done' as TaskStatus, label: 'Done' },
-            { status: 'skipped' as TaskStatus, label: 'Skipped' },
           ].map(({ status, label }) => (
             <div
               key={status}

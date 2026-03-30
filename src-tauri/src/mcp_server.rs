@@ -144,7 +144,7 @@ fn tools_list() -> Value {
         },
         {
             "name": "update_task_status",
-            "description": "Update the status of a task. Valid statuses: todo, improved, planned, in_progress, review, skipped, carried_over.",
+            "description": "Update the status of a task. Valid statuses: todo, improved, planned, in_progress, review, done.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -300,7 +300,7 @@ fn handle_tool_call(conn: &Connection, tool_name: &str, args: &Value) -> Result<
                 .ok_or((-32602i64, "Missing required argument: status".to_string()))?;
 
             const VALID_STATUSES: &[&str] = &[
-                "todo", "improved", "planned", "in_progress", "review", "skipped", "carried_over",
+                "todo", "improved", "planned", "in_progress", "review", "done",
             ];
             if !VALID_STATUSES.contains(&status) {
                 return Err((-32602i64, format!(
