@@ -61,7 +61,6 @@ pub enum ServerEvent {
     TaskChanged { date: String },
     SettingsChanged,
     ProjectsChanged,
-    TemplatesChanged,
     DevicesChanged,
     JobStatusChanged { job_id: String },
     JobOutput { job_id: String },
@@ -1141,95 +1140,6 @@ async fn set_global_prompt(
 }
 
 // ---------------------------------------------------------------------------
-// Route: GET /api/prompt/templates
-// ---------------------------------------------------------------------------
-
-async fn get_prompt_templates(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
-) -> Result<Json<Vec<queries::PromptTemplateItem>>, ApiError> {
-    check_auth_with_query(&s.db, &headers, q.token.as_deref())?;
-    let conn = s.db.lock().map_err(internal)?;
-    let templates = queries::list_prompt_templates(&*conn).map_err(internal)?;
-    Ok(Json(templates))
-}
-
-// ---------------------------------------------------------------------------
-// Route: POST /api/prompt/templates
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct CreateTemplateBody {
-    name: String,
-    content: String,
-}
-
-async fn create_prompt_template(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateTemplateBody>,
-) -> Result<Json<queries::PromptTemplateItem>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    let template = queries::create_prompt_template(&*conn, &body.name, &body.content)
-        .map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
-    Ok(Json(template))
-}
-
-// ---------------------------------------------------------------------------
-// Route: PATCH /api/prompt/templates/:id
-// Note: update_prompt_template takes &str (not Option<&str>) — both name and
-// content are required. The client must supply both fields.
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct UpdateTemplateBody {
-    name: String,
-    content: String,
-}
-
-async fn update_prompt_template(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(body): Json<UpdateTemplateBody>,
-) -> Result<Json<queries::PromptTemplateItem>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    let template = queries::update_prompt_template(
-        &*conn,
-        &id,
-        &body.name,
-        &body.content,
-    )
-    .map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
-    Ok(Json(template))
-}
-
-// ---------------------------------------------------------------------------
-// Route: DELETE /api/prompt/templates/:id
-// ---------------------------------------------------------------------------
-
-async fn delete_prompt_template_handler(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    check_auth(&s.db, &headers)?;
-    let conn = s.db.lock().map_err(internal)?;
-    // delete_prompt_template returns Result<bool>; map the error only
-    queries::delete_prompt_template(&*conn, &id).map_err(internal)?;
-    drop(conn);
-    let _ = s.event_tx.send(ServerEvent::TemplatesChanged);
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-// ---------------------------------------------------------------------------
 // Route: GET /api/devices
 // ---------------------------------------------------------------------------
 
@@ -1372,7 +1282,6 @@ async fn events_stream(
                         ServerEvent::TaskChanged { .. } => "task_changed",
                         ServerEvent::SettingsChanged => "settings_changed",
                         ServerEvent::ProjectsChanged => "projects_changed",
-                        ServerEvent::TemplatesChanged => "templates_changed",
                         ServerEvent::DevicesChanged => "devices_changed",
                         ServerEvent::JobStatusChanged { .. } => "job_status_changed",
                         ServerEvent::JobOutput { .. } => "job_output",
@@ -2537,8 +2446,6 @@ pub async fn start(
         .route("/api/tunnel/stop", post(stop_tunnel_handler))
         // Prompt
         .route("/api/prompt/global", get(get_global_prompt).put(set_global_prompt))
-        .route("/api/prompt/templates", get(get_prompt_templates).post(create_prompt_template))
-        .route("/api/prompt/templates/:id", patch(update_prompt_template).delete(delete_prompt_template_handler))
         .route("/api/prompt/improve", post(prompt_improve))
         .route("/api/prompt/run", post(prompt_run))
         .route("/api/tasks/brainstorm", post(brainstorm_tasks))

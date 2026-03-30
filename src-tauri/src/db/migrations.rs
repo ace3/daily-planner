@@ -5,7 +5,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// The highest schema version this build knows about.
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 
 /// Run all pending migrations against `conn`.
 ///
@@ -74,6 +74,9 @@ pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> anyhow::
     }
     if current < 14 {
         apply_v14(conn)?;
+    }
+    if current < 15 {
+        apply_v15(conn)?;
     }
 
     eprintln!(
@@ -863,6 +866,13 @@ fn apply_v14(conn: &mut Connection) -> anyhow::Result<()> {
     })
 }
 
+fn apply_v15(conn: &mut Connection) -> anyhow::Result<()> {
+    with_migration(conn, 15, "Drop prompt_templates table", |tx| {
+        tx.execute_batch("DROP TABLE IF EXISTS prompt_templates;")
+            .context("v15 DDL failed")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema introspection helpers (take &Connection — works on both Connection
 // and Transaction<'_> via Deref coercion)
@@ -993,7 +1003,6 @@ mod tests {
         // All expected tables exist (focus_sessions and daily_sessions dropped in v12).
         for tbl in &[
             "tasks",
-            "prompt_templates",
             "daily_reports",
             "settings",
             "projects",
@@ -1055,15 +1064,8 @@ mod tests {
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION as i64);
 
-        // 8 builtin templates seeded (6 original + 2 from v10).
-        let tmpl_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM prompt_templates WHERE is_builtin=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(tmpl_count, 8);
+        // prompt_templates table must NOT exist after v15.
+        assert!(!table_exists(&conn, "prompt_templates").unwrap(), "prompt_templates must be dropped");
 
         // Default settings populated.
         let tz: String = conn

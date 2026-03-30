@@ -2,7 +2,6 @@ import type {
   Task,
   CreateTaskInput,
   UpdateTaskInput,
-  PromptTemplate,
   BrainstormTaskSuggestion,
   TaskAttachmentInput,
   RunTaskWorktreeResult,
@@ -131,30 +130,6 @@ export const cleanupTaskWorktree = (taskId: string): Promise<CleanupTaskWorktree
   isWebBrowser()
     ? Promise.reject(new Error('Not available in browser mode'))
     : tauriInvoke<CleanupTaskWorktreeResult>('cleanup_task_worktree', { taskId });
-
-// ---------------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------------
-
-export const getPromptTemplates = (): Promise<PromptTemplate[]> =>
-  isWebBrowser()
-    ? httpGet<PromptTemplate[]>('/api/prompt/templates')
-    : tauriInvoke<PromptTemplate[]>('get_prompt_templates', {});
-
-export const createPromptTemplate = (name: string, content: string): Promise<PromptTemplate> =>
-  isWebBrowser()
-    ? httpPost<PromptTemplate>('/api/prompt/templates', { name, content })
-    : tauriInvoke<PromptTemplate>('create_prompt_template', { name, content });
-
-export const updatePromptTemplate = (id: string, name: string, content: string): Promise<PromptTemplate> =>
-  isWebBrowser()
-    ? httpPatch<PromptTemplate>(`/api/prompt/templates/${id}`, { name, content })
-    : tauriInvoke<PromptTemplate>('update_prompt_template', { id, name, content });
-
-export const deletePromptTemplate = (id: string): Promise<boolean> =>
-  isWebBrowser()
-    ? httpDelete<{ ok: boolean }>(`/api/prompt/templates/${id}`).then(() => true)
-    : tauriInvoke<boolean>('delete_prompt_template', { id });
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -288,10 +263,10 @@ export const restoreData = (): Promise<string> =>
     ? Promise.reject(new Error('Not available in browser mode'))
     : tauriInvoke<string>('restore_data', {});
 
-export const resetAppData = (keepSettings: boolean, keepBuiltinTemplates: boolean): Promise<void> =>
+export const resetAppData = (keepSettings: boolean): Promise<void> =>
   isWebBrowser()
     ? Promise.reject(new Error('Not available in browser mode'))
-    : tauriInvoke<void>('reset_app_data', { keepSettings, keepBuiltinTemplates });
+    : tauriInvoke<void>('reset_app_data', { keepSettings });
 
 // ---------------------------------------------------------------------------
 // Projects

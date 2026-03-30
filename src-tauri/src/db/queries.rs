@@ -54,25 +54,6 @@ pub struct PromptJob {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PromptTemplate {
-    pub id: String,
-    pub name: String,
-    pub category: String,
-    pub template: String,
-    pub variables: String,
-    pub is_builtin: bool,
-    pub use_count: i64,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PromptTemplateItem {
-    pub id: String,
-    pub name: String,
-    pub content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DailyReport {
     pub id: String,
     pub date: String,
@@ -633,69 +614,6 @@ pub fn get_all_prompt_jobs(conn: &Connection) -> Result<Vec<PromptJob>> {
     Ok(jobs)
 }
 
-// ---- TEMPLATE QUERIES ----
-
-pub fn list_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplateItem>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, template FROM prompt_templates ORDER BY is_builtin DESC, use_count DESC, name"
-    )?;
-    let templates = stmt
-        .query_map([], |row| {
-            Ok(PromptTemplateItem {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                content: row.get(2)?,
-            })
-        })?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(templates)
-}
-
-pub fn create_prompt_template(conn: &Connection, name: &str, content: &str) -> Result<PromptTemplateItem> {
-    let id = uuid::Uuid::new_v4().to_string().replace("-", "");
-    conn.execute(
-        "INSERT INTO prompt_templates (id, name, template, category, variables, is_builtin, use_count)
-         VALUES (?1, ?2, ?3, 'general', '[]', 0, 0)",
-        params![id, name, content],
-    )?;
-
-    Ok(PromptTemplateItem {
-        id,
-        name: name.to_string(),
-        content: content.to_string(),
-    })
-}
-
-pub fn update_prompt_template(conn: &Connection, id: &str, name: &str, content: &str) -> Result<PromptTemplateItem> {
-    let rows = conn.execute(
-        "UPDATE prompt_templates SET name = ?1, template = ?2 WHERE id = ?3",
-        params![name, content, id],
-    )?;
-    if rows == 0 {
-        return Err(rusqlite::Error::QueryReturnedNoRows);
-    }
-
-    Ok(PromptTemplateItem {
-        id: id.to_string(),
-        name: name.to_string(),
-        content: content.to_string(),
-    })
-}
-
-pub fn delete_prompt_template(conn: &Connection, id: &str) -> Result<bool> {
-    let rows = conn.execute("DELETE FROM prompt_templates WHERE id = ?1", params![id])?;
-    Ok(rows > 0)
-}
-
-#[allow(dead_code)]
-pub fn increment_template_use(conn: &Connection, id: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE prompt_templates SET use_count = use_count + 1 WHERE id = ?1",
-        params![id],
-    )?;
-    Ok(())
-}
-
 // ---- SETTINGS QUERIES ----
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<String> {
@@ -861,28 +779,6 @@ pub fn get_all_tasks_active(conn: &Connection) -> Result<Vec<Task>> {
     let tasks = stmt.query_map([], |row| row_to_task(row))?
         .collect::<Result<Vec<_>>>()?;
     Ok(tasks)
-}
-
-pub fn get_all_prompt_templates(conn: &Connection) -> Result<Vec<PromptTemplate>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, category, template, variables, is_builtin, use_count, created_at
-         FROM prompt_templates ORDER BY is_builtin DESC, name",
-    )?;
-    let templates = stmt
-        .query_map([], |row| {
-            Ok(PromptTemplate {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                category: row.get(2)?,
-                template: row.get(3)?,
-                variables: row.get(4)?,
-                is_builtin: row.get::<_, i64>(5)? == 1,
-                use_count: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(templates)
 }
 
 pub fn get_all_daily_reports(conn: &Connection) -> Result<Vec<DailyReport>> {

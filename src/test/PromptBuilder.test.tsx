@@ -12,20 +12,6 @@ vi.mock('../hooks/usePromptQueue', () => ({
   }),
 }));
 
-vi.mock('../stores/promptTemplateStore', () => ({
-  usePromptTemplateStore: () => ({
-    promptTemplates: [],
-    selectedTemplateId: null,
-    loading: false,
-    error: null,
-    fetchPromptTemplates: vi.fn().mockResolvedValue(undefined),
-    selectTemplate: vi.fn(),
-    createTemplate: vi.fn(),
-    updateTemplate: vi.fn(),
-    deleteTemplate: vi.fn(),
-  }),
-}));
-
 describe('PromptBuilder Use Task Title button', () => {
   const defaultProps = () => ({
     prompt: '',

@@ -145,10 +145,6 @@ All endpoints are under `/api/` prefix. Auth required unless noted.
 |--------|------|-------------|
 | GET | `/api/prompt/global` | Get global prompt |
 | PUT | `/api/prompt/global` | Set global prompt |
-| GET | `/api/prompt/templates` | List prompt templates |
-| POST | `/api/prompt/templates` | Create template |
-| PATCH | `/api/prompt/templates/:id` | Update template |
-| DELETE | `/api/prompt/templates/:id` | Delete template |
 | POST | `/api/prompt/improve` | Improve a prompt |
 | POST | `/api/prompt/run` | Run a prompt |
 
@@ -157,7 +153,7 @@ All endpoints are under `/api/` prefix. Auth required unless noted.
 |--------|------|-------------|
 | GET | `/api/events?token=<token>` | Server-Sent Events stream |
 
-Event types: `TaskChanged`, `SettingsChanged`, `ReportChanged`, `ProjectsChanged`, `TemplatesChanged`, `DevicesChanged`, `JobStatusChanged`, `JobOutput`
+Event types: `TaskChanged`, `SettingsChanged`, `ReportChanged`, `ProjectsChanged`, `DevicesChanged`, `JobStatusChanged`, `JobOutput`
 
 ## Recommended AI Test Workflow
 

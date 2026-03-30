@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Zap, FolderGit2, ListOrdered,
-  Settings, FileText, Wifi, MoreHorizontal, X,
+  Settings, Wifi, MoreHorizontal, X,
 } from 'lucide-react';
 import { useMobileStore } from '../../stores/mobileStore';
 
@@ -10,8 +10,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', shortcut: '⌘1' },
   { to: '/projects', icon: FolderGit2, label: 'Projects', shortcut: '⌘2' },
   { to: '/queue', icon: ListOrdered, label: 'Queue', shortcut: '⌘3' },
-  { to: '/templates', icon: FileText, label: 'Templates', shortcut: '⌘4' },
-  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘5' },
+  { to: '/remote-access', icon: Wifi, label: 'Remote Access', shortcut: '⌘4' },
   { to: '/settings', icon: Settings, label: 'Settings', shortcut: '⌘,' },
 ];
 

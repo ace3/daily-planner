@@ -69,7 +69,6 @@ fn compute_sha256(data: &[u8]) -> String {
 
 fn count_items(backup: &BackupData) -> i64 {
     (backup.tasks.len()
-        + backup.prompt_templates.len()
         + backup.daily_reports.len()
         + backup.settings.len()) as i64
 }
@@ -79,7 +78,6 @@ fn make_backup_data(conn: &Connection) -> rusqlite::Result<BackupData> {
         version: 1,
         created_at: chrono::Utc::now().to_rfc3339(),
         tasks: queries::get_all_tasks(conn)?,
-        prompt_templates: queries::get_all_prompt_templates(conn)?,
         daily_reports: queries::get_all_daily_reports(conn)?,
         settings: queries::get_all_settings_non_sensitive(conn)?,
     })
@@ -391,8 +389,6 @@ pub fn restore_from_backup_session(
     conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM daily_sessions", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM daily_reports", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", [])
-        .map_err(|e| e.to_string())?;
     conn.execute(
         "DELETE FROM settings WHERE key NOT IN ('claude_token_enc', 'backup_enabled', 'backup_interval_min', 'backup_max_sessions')",
         [],
@@ -433,21 +429,6 @@ pub fn restore_from_backup_session(
             ],
         )
         .map_err(|e| e.to_string())?;
-    }
-
-    for pt in &backup.prompt_templates {
-        if !pt.is_builtin {
-            conn.execute(
-                "INSERT OR REPLACE INTO prompt_templates
-                 (id, name, category, template, variables, is_builtin, use_count, created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                rusqlite::params![
-                    pt.id, pt.name, pt.category, pt.template, pt.variables,
-                    0i64, pt.use_count, pt.created_at
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        }
     }
 
     for setting in &backup.settings {

@@ -23,10 +23,6 @@ export function useKeyboardShortcuts() {
             break;
           case '4':
             e.preventDefault();
-            navigate('/templates');
-            break;
-          case '5':
-            e.preventDefault();
             navigate('/remote-access');
             break;
           case ',':

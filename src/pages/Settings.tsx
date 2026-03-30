@@ -203,8 +203,7 @@ export const SettingsPage: React.FC = () => {
     setDataOpLoading(true);
     try {
       const keepSettings = checkValues?.['keep_settings'] ?? true;
-      const keepBuiltinTemplates = checkValues?.['keep_builtin_templates'] ?? true;
-      await resetAppData(keepSettings, keepBuiltinTemplates);
+      await resetAppData(keepSettings);
       await Promise.all([fetchSettings(), fetchTasks()]);
       toast.success('App data cleared');
     } catch (e) {
@@ -980,7 +979,6 @@ ingress:
         requireTyped="RESET"
         checkboxes={[
           { id: 'keep_settings', label: 'Keep settings (timezone, schedule)', defaultChecked: true },
-          { id: 'keep_builtin_templates', label: 'Keep built-in prompt templates', defaultChecked: true },
         ]}
         onConfirm={handleReset}
         onCancel={() => setShowResetConfirm(false)}

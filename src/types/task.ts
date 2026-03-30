@@ -72,12 +72,6 @@ export interface UpdateTaskInput {
   git_workflow?: boolean;
 }
 
-export interface PromptTemplate {
-  id: string;
-  name: string;
-  content: string;
-}
-
 export interface RunTaskWorktreeResult {
   task_id: string;
   worktree_path: string;

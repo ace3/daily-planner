@@ -1,4 +1,4 @@
-use crate::db::queries::{DailyReport, PromptTemplate, SettingRow, Task};
+use crate::db::queries::{DailyReport, SettingRow, Task};
 use crate::db::{queries, DbConnection};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -9,7 +9,6 @@ pub struct BackupData {
     pub version: u32,
     pub created_at: String,
     pub tasks: Vec<Task>,
-    pub prompt_templates: Vec<PromptTemplate>,
     pub daily_reports: Vec<DailyReport>,
     pub settings: Vec<SettingRow>,
 }
@@ -39,7 +38,6 @@ pub fn backup_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Result
         version: 1,
         created_at: chrono::Utc::now().to_rfc3339(),
         tasks: queries::get_all_tasks(&conn).map_err(|e| e.to_string())?,
-        prompt_templates: queries::get_all_prompt_templates(&conn).map_err(|e| e.to_string())?,
         daily_reports: queries::get_all_daily_reports(&conn).map_err(|e| e.to_string())?,
         settings: queries::get_all_settings_non_sensitive(&conn).map_err(|e| e.to_string())?,
     };
@@ -87,8 +85,6 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM daily_reports", [])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", [])
-        .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", [])
         .map_err(|e| e.to_string())?;
 
@@ -128,28 +124,6 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
         .map_err(|e| e.to_string())?;
     }
 
-    // Only restore non-builtin templates (builtin ones are seeded by migration)
-    for pt in &backup.prompt_templates {
-        if !pt.is_builtin {
-            conn.execute(
-                "INSERT OR REPLACE INTO prompt_templates
-                 (id, name, category, template, variables, is_builtin, use_count, created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                rusqlite::params![
-                    pt.id,
-                    pt.name,
-                    pt.category,
-                    pt.template,
-                    pt.variables,
-                    0i64,
-                    pt.use_count,
-                    pt.created_at
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
     for setting in &backup.settings {
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
@@ -164,7 +138,6 @@ pub fn restore_data(app: tauri::AppHandle, db: State<'_, DbConnection>) -> Resul
 #[tauri::command]
 pub fn reset_app_data(
     keep_settings: bool,
-    keep_builtin_templates: bool,
     db: State<'_, DbConnection>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -177,14 +150,6 @@ pub fn reset_app_data(
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM daily_reports", [])
         .map_err(|e| e.to_string())?;
-
-    if keep_builtin_templates {
-        conn.execute("DELETE FROM prompt_templates WHERE is_builtin = 0", [])
-            .map_err(|e| e.to_string())?;
-    } else {
-        conn.execute("DELETE FROM prompt_templates", [])
-            .map_err(|e| e.to_string())?;
-    }
 
     if !keep_settings {
         conn.execute("DELETE FROM settings WHERE key != 'claude_token_enc'", [])

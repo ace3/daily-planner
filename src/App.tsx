@@ -3,7 +3,6 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { Dashboard } from './pages/Dashboard';
-import { TemplatesPage } from './pages/TemplatesPage';
 import { SettingsPage } from './pages/Settings';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetail } from './pages/ProjectDetail';
@@ -148,7 +147,6 @@ const AppInner: React.FC = () => {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/queue" element={<QueuePage />} />
-              <Route path="/templates" element={<TemplatesPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:id" element={<ProjectDetail />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
