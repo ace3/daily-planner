@@ -87,9 +87,7 @@ try {
 
   assertVersionAlignment();
 
-  const tag = createTag(next);
   console.log(`Updated version: ${current} -> ${next}`);
-  console.log(`Created git tag: ${tag}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

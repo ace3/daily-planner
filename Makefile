@@ -14,8 +14,9 @@ release-prepare:
 	@$(MAKE) version-update BUMP=$(or $(BUMP),patch)
 	@git add $(VERSION_FILES)
 	@VERSION=$$(node -p "require('./package.json').version"); \
-	git commit -m "release: v$$VERSION"
-	@echo "Release commit created for version $$(node -p \"require('./package.json').version\")"
+	git commit -m "release: v$$VERSION"; \
+	git tag -a "v$$VERSION" -m "Release $$VERSION"
+	@echo "Release commit created and tagged v$$(node -p 'require(\"./package.json\").version')"
 
 release-push:
 	@git push origin $(CURRENT_BRANCH)
