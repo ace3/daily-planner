@@ -605,7 +605,7 @@ export const TaskDetail: React.FC = () => {
               <option value="prompt">Prompt</option>
               <option value="research">Research</option>
               <option value="meeting">Meeting</option>
-              <option value="review">Review</option>
+              <option value="review">Done</option>
               <option value="other">Other</option>
             </select>
           </div>
@@ -639,7 +639,7 @@ export const TaskDetail: React.FC = () => {
               <option value="improved">Improved</option>
               <option value="planned">Planned</option>
               <option value="in_progress">In Progress</option>
-              <option value="review">Review</option>
+              <option value="review">Done</option>
               <option value="skipped">Skipped</option>
               <option value="carried_over">Carried Over</option>
             </select>

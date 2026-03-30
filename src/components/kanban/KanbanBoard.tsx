@@ -31,6 +31,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
 
   const [filters, setFilters] = useState<KanbanFiltersType>({});
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [dragSourceColumn, setDragSourceColumn] = useState<TaskStatus | null>(null);
   const [boardTasks, setBoardTasks] = useState<Task[]>(tasks);
 
   useEffect(() => {
@@ -89,6 +90,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
   function handleDragStart(event: DragStartEvent) {
     const task = findTaskById(String(event.active.id));
     setActiveTask(task ?? null);
+    setDragSourceColumn(task?.status ?? null);
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -118,20 +120,24 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveTask(null);
+    const sourceColumn = dragSourceColumn ?? findColumnOfTask(String(active.id));
+    setDragSourceColumn(null);
 
-    if (!over) return;
+    if (!over) {
+      setBoardTasks(tasks);
+      return;
+    }
 
     const activeId = String(active.id);
     const overId = String(over.id);
 
-    const activeColumn = findColumnOfTask(activeId);
     const overColumn = KANBAN_STATUSES.includes(overId as TaskStatus)
       ? (overId as TaskStatus)
       : findColumnOfTask(overId);
 
-    if (!activeColumn || !overColumn) return;
+    if (!sourceColumn || !overColumn) return;
 
-    if (activeColumn !== overColumn) {
+    if (sourceColumn !== overColumn) {
       // Cross-column drop — status update
       try {
         await updateTaskStatus(activeId, overColumn);
@@ -142,15 +148,17 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
         );
       } catch (e) {
         console.error('Failed to update task status:', e);
+        setBoardTasks(tasks);
       }
       return;
     }
 
     // Same column — reorder
-    const colTasks = tasksByStatus[activeColumn];
+    if (KANBAN_STATUSES.includes(overId as TaskStatus)) return;
+    const colTasks = tasksByStatus[sourceColumn];
     const oldIndex = colTasks.findIndex((t) => t.id === activeId);
     const newIndex = colTasks.findIndex((t) => t.id === overId);
-    if (oldIndex === newIndex) return;
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
     const reordered = arrayMove(colTasks, oldIndex, newIndex);
     setBoardTasks((prev) => {
@@ -166,7 +174,14 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
       await reorderTasks(reordered.map((t) => t.id));
     } catch (e) {
       console.error('Failed to reorder tasks:', e);
+      setBoardTasks(tasks);
     }
+  }
+
+  function handleDragCancel() {
+    setActiveTask(null);
+    setDragSourceColumn(null);
+    setBoardTasks(tasks);
   }
 
   return (
@@ -188,6 +203,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, lockedProjectId }) => 
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
         >
           <div className="flex gap-3 h-full" style={{ minWidth: 'max-content' }}>
             {KANBAN_STATUSES.map((status) => {

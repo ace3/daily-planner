@@ -12,7 +12,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { addDays, format } from 'date-fns';
 import { toast } from '../ui/Toast';
 import { FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
-import type { BrainstormTaskSuggestion } from '../../types/task';
+import type { BrainstormTaskSuggestion, TaskStatus } from '../../types/task';
 
 interface TaskListProps {
   onTaskSelect?: (task: Task) => void;
@@ -21,6 +21,8 @@ interface TaskListProps {
 export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
   const [completedOpen, setCompletedOpen] = useState(false);
   const [brainstormOpen, setBrainstormOpen] = useState(false);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<TaskStatus | null>(null);
   const { mobileMode: m } = useMobileStore();
   const {
     tasks,
@@ -75,6 +77,26 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
     await updateTaskStatus(id, status);
   };
 
+  const handleDropToStatus = async (status: TaskStatus, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData('application/x-task-id') || event.dataTransfer.getData('text/plain');
+    if (!taskId) {
+      setDragOverStatus(null);
+      return;
+    }
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || task.status === 'carried_over') {
+      setDragOverStatus(null);
+      return;
+    }
+    if (task.status !== status) {
+      await handleStatusChange(task.id, status);
+      toast.success(`Task moved to ${status === 'in_progress' ? 'in progress' : status}`);
+    }
+    setDragOverStatus(null);
+    setDraggingTaskId(null);
+  };
+
   const handleDelete = async (id: string) => {
     await deleteTask(id);
     toast.success('Task deleted');
@@ -124,8 +146,8 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
     toast.success(result.branch_deleted ? 'Worktree cleaned up and branch deleted' : 'Worktree cleaned up');
   };
 
-  const doneTasks = tasks.filter((t) => t.status === 'review');
-  const pendingTasks = tasks.filter((t) => t.status !== 'review' && t.status !== 'carried_over');
+  const doneTasks = tasks.filter((t) => t.status === 'review' || (t.status as string) === 'done');
+  const pendingTasks = tasks.filter((t) => t.status !== 'review' && (t.status as string) !== 'done' && t.status !== 'carried_over');
 
   // Group pending tasks by project
   const tasksByProject = new Map<string | null, Task[]>();
@@ -160,6 +182,11 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
       onSelect={onTaskSelect}
       onRunAsWorktree={handleRunAsWorktree}
       onCleanupWorktree={handleCleanupWorktree}
+      onDragStart={setDraggingTaskId}
+      onDragEnd={() => {
+        setDraggingTaskId(null);
+        setDragOverStatus(null);
+      }}
     />
   );
 
@@ -192,6 +219,41 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
         projects={projects}
         onCreateTasks={handleCreateBrainstormTasks}
       />
+
+      {/* Desktop drag-and-drop status lanes */}
+      {!m && (
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { status: 'in_progress' as TaskStatus, label: 'Active' },
+            { status: 'review' as TaskStatus, label: 'Done' },
+            { status: 'skipped' as TaskStatus, label: 'Skipped' },
+          ].map(({ status, label }) => (
+            <div
+              key={status}
+              onDragOver={(e) => {
+                if (!draggingTaskId) return;
+                e.preventDefault();
+                setDragOverStatus(status);
+              }}
+              onDragLeave={() => setDragOverStatus((prev) => (prev === status ? null : prev))}
+              onDrop={(e) => {
+                handleDropToStatus(status, e).catch(() => {
+                  toast.error('Failed to update task status');
+                  setDragOverStatus(null);
+                  setDraggingTaskId(null);
+                });
+              }}
+              className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                dragOverStatus === status
+                  ? 'border-blue-400 bg-blue-500/10 text-blue-400'
+                  : 'border-gray-200 dark:border-[#30363D] text-gray-500 dark:text-[#8B949E]'
+              }`}
+            >
+              Drop here → {label}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className={m ? 'space-y-3' : 'space-y-1.5'}>
         {/* Project groups */}
@@ -239,7 +301,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onTaskSelect }) => {
               ${m ? 'text-sm min-h-[44px]' : 'text-xs'}`}
           >
             {completedOpen ? <ChevronDown size={m ? 16 : 12} /> : <ChevronRight size={m ? 16 : 12} />}
-            Completed ({doneTasks.length})
+            Done ({doneTasks.length})
           </button>
           {completedOpen && (
             <div className={m ? 'space-y-3' : 'space-y-1.5'}>

@@ -28,6 +28,8 @@ interface TaskItemProps {
   onSelect?: (task: Task) => void;
   onRunAsWorktree?: (task: Task) => Promise<void>;
   onCleanupWorktree?: (task: Task) => Promise<void>;
+  onDragStart?: (taskId: string) => void;
+  onDragEnd?: () => void;
 }
 
 const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple'> = {
@@ -41,6 +43,16 @@ const typeColors: Record<string, 'blue' | 'green' | 'amber' | 'red' | 'gray' | '
 
 const priorityColors = ['', 'text-red-400', 'text-amber-400', 'text-gray-400 dark:text-[#484F58]'];
 const priorityDots = ['', '●', '●', '●'];
+const statusBadge: Record<Task['status'], { label: string; variant: 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'purple' }> = {
+  todo: { label: 'To-Do', variant: 'gray' },
+  improved: { label: 'Improved', variant: 'purple' },
+  planned: { label: 'Planned', variant: 'blue' },
+  in_progress: { label: 'In Progress', variant: 'blue' },
+  review: { label: 'Done', variant: 'green' },
+  skipped: { label: 'Skipped', variant: 'amber' },
+  carried_over: { label: 'Carried', variant: 'purple' },
+};
+const DRAG_TASK_ID_MIME = 'application/x-task-id';
 
 export const TaskItem: React.FC<TaskItemProps> = ({
   task,
@@ -52,10 +64,12 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onSelect,
   onRunAsWorktree,
   onCleanupWorktree,
+  onDragStart,
+  onDragEnd,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const { mobileMode: m } = useMobileStore();
-  const isDone = task.status === 'review';
+  const isDone = task.status === 'review' || (task.status as string) === 'done';
   const isSkipped = task.status === 'skipped';
   const isCarried = task.status === 'carried_over';
 
@@ -97,6 +111,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             </span>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <Badge variant={typeColors[task.task_type] || 'gray'}>{task.task_type}</Badge>
+              <Badge variant={statusBadge[task.status].variant}>{statusBadge[task.status].label}</Badge>
               {task.priority > 0 && (
                 <span className={`text-sm ${priorityColors[task.priority]}`}>
                   {priorityDots[task.priority]}
@@ -186,6 +201,16 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   // --- DESKTOP LAYOUT (unchanged) ---
   return (
     <div
+      draggable={!isCarried}
+      onDragStart={(e) => {
+        if (isCarried) return;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData(DRAG_TASK_ID_MIME, task.id);
+        e.dataTransfer.setData('text/plain', task.id);
+        e.dataTransfer.setData('application/x-task-status', task.status);
+        onDragStart?.(task.id);
+      }}
+      onDragEnd={() => onDragEnd?.()}
       className={`
         group rounded-lg border transition-colors duration-150
         ${isDone
@@ -229,6 +254,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               {priorityDots[task.priority]}
             </span>
             <Badge variant={typeColors[task.task_type] || 'gray'}>{task.task_type}</Badge>
+            <Badge variant={statusBadge[task.status].variant}>{statusBadge[task.status].label}</Badge>
             {task.worktree_status === 'active' && <Badge variant="blue">worktree active</Badge>}
             {task.worktree_status === 'merged' && <Badge variant="green">worktree merged</Badge>}
             {task.worktree_status === 'abandoned' && <Badge variant="amber">worktree abandoned</Badge>}
