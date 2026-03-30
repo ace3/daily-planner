@@ -34,9 +34,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ loading: true });
     try {
       const projects = await api.getProjects();
-      set({ projects, loading: false });
+      set({ projects: Array.isArray(projects) ? projects : [], loading: false });
     } catch {
-      set({ loading: false });
+      set({ projects: [], loading: false });
     }
   },
 

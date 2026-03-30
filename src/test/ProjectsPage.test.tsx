@@ -57,6 +57,7 @@ function setupProjectInvokeMock(opts?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   vi.mocked(dialogOpen).mockResolvedValue(null);
   vi.mocked(invoke).mockResolvedValue(undefined as any);
   useProjectStore.setState({
@@ -126,6 +127,20 @@ describe('ProjectsPage', () => {
         input: { name: 'new-repo', path: '/tmp/new-repo' },
       });
     });
+  });
+
+  it('disables browse and shows web guidance when running in web mode', async () => {
+    setupProjectInvokeMock();
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+
+    render(
+      <MemoryRouter>
+        <ProjectsPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/Web mode: Browse is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Browse' })).toBeDisabled();
   });
 
   it('shows validation error and blocks create when path is invalid', async () => {

@@ -38,6 +38,7 @@ export const ProjectsPage: React.FC = () => {
   const [pathError, setPathError] = useState<string | null>(null);
   const [validatingPath, setValidatingPath] = useState(false);
   const { selectedPath, projectName, expandedPrompt, promptDrafts } = draft;
+  const tauriRuntime = typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ !== 'undefined';
 
   const derivePathName = (path: string): string => {
     const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -69,6 +70,10 @@ export const ProjectsPage: React.FC = () => {
   }, [projects, setDraft]);
 
   const handleBrowse = async () => {
+    if (!tauriRuntime) {
+      toast.info('Browse is only available in the desktop app. Enter the path manually.');
+      return;
+    }
     try {
       const path = await openFolderDialog();
       if (path) {
@@ -114,6 +119,13 @@ export const ProjectsPage: React.FC = () => {
       return null;
     } finally {
       setValidatingPath(false);
+    }
+  };
+
+  const handleCheckPath = async () => {
+    const normalizedPath = await validatePath();
+    if (normalizedPath) {
+      toast.success('Path looks valid.');
     }
   };
 
@@ -179,12 +191,34 @@ export const ProjectsPage: React.FC = () => {
             placeholder="Select a folder..."
             className={inputClass}
           />
-          <Button variant="ghost" size="sm" icon={<FolderSearch size={14} />} onClick={handleBrowse}>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FolderSearch size={14} />}
+            onClick={handleBrowse}
+            disabled={!tauriRuntime}
+            title={!tauriRuntime ? 'Browse is only available in the desktop app' : 'Browse'}
+          >
             Browse
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCheckPath}
+            loading={validatingPath}
+            disabled={!selectedPath.trim()}
+            title="Check path"
+          >
+            Check Path
           </Button>
         </div>
         {pathError && (
           <p className="text-xs text-red-400">{pathError}</p>
+        )}
+        {!tauriRuntime && (
+          <p className="text-xs text-amber-500 dark:text-amber-400">
+            Web mode: Browse is unavailable. Paste a project path manually, then click Check Path.
+          </p>
         )}
 
         {selectedPath && (
