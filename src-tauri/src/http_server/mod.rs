@@ -1274,28 +1274,40 @@ async fn events_stream(
     let (tx, stream_rx) = mpsc::channel::<Result<Event, Infallible>>(64);
 
     tokio::spawn(async move {
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+        heartbeat.tick().await; // consume first immediate tick
         loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let data = serde_json::to_string(&event).unwrap_or_default();
-                    let event_type = match &event {
-                        ServerEvent::TaskChanged { .. } => "task_changed",
-                        ServerEvent::SettingsChanged => "settings_changed",
-                        ServerEvent::ProjectsChanged => "projects_changed",
-                        ServerEvent::DevicesChanged => "devices_changed",
-                        ServerEvent::JobStatusChanged { .. } => "job_status_changed",
-                        ServerEvent::JobOutput { .. } => "job_output",
-                    };
-                    if tx
-                        .send(Ok(Event::default().event(event_type).data(data)))
-                        .await
-                        .is_err()
-                    {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            let data = serde_json::to_string(&event).unwrap_or_default();
+                            let event_type = match &event {
+                                ServerEvent::TaskChanged { .. } => "task_changed",
+                                ServerEvent::SettingsChanged => "settings_changed",
+                                ServerEvent::ProjectsChanged => "projects_changed",
+                                ServerEvent::DevicesChanged => "devices_changed",
+                                ServerEvent::JobStatusChanged { .. } => "job_status_changed",
+                                ServerEvent::JobOutput { .. } => "job_output",
+                            };
+                            if tx
+                                .send(Ok(Event::default().event(event_type).data(data)))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+                _ = heartbeat.tick() => {
+                    // Send a comment as heartbeat; if client is gone, tx.send() fails
+                    if tx.send(Ok(Event::default().comment("ping"))).await.is_err() {
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
     });
@@ -2376,6 +2388,9 @@ pub async fn start(
     let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
     let tunnel_manager = Arc::new(crate::tunnel::TunnelManager::new(db_path.clone()));
 
+    // Clone the registry handle before state is moved into the router.
+    let job_registry_for_sweep = Arc::clone(&job_registry);
+
     let state = ServerState { db, job_registry, event_tx, tunnel_manager };
 
     let cors = CorsLayer::new()
@@ -2460,6 +2475,31 @@ pub async fn start(
     } else {
         app.fallback(|| async { (StatusCode::SERVICE_UNAVAILABLE, "Frontend not built. Run: npm run build") })
     };
+
+    // Periodic job registry cleanup — remove entries for dead processes.
+    // Runs every 5 minutes; uses kill(pid, 0) to probe liveness without
+    // sending an actual signal.
+    {
+        let registry = job_registry_for_sweep;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let mut reg = registry.lock().unwrap();
+                reg.retain(|job_id, pid| {
+                    // kill with signal 0 checks process existence without signalling it.
+                    let alive = unsafe { libc::kill(*pid as libc::pid_t, 0) } == 0;
+                    if !alive {
+                        eprintln!(
+                            "[http] Sweeping stale job registry entry: {} (pid {})",
+                            job_id, pid
+                        );
+                    }
+                    alive
+                });
+            }
+        });
+    }
 
     let bind_addr = format!("0.0.0.0:{}", port);
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {

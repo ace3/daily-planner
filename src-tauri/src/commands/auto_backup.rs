@@ -230,25 +230,33 @@ pub fn do_verify_session(conn: &Connection, session_id: &str) -> anyhow::Result<
 
 pub async fn start_backup_scheduler(db_path: PathBuf) {
     let mut last_backup: Option<std::time::Instant> = None;
+    let mut conn: Option<Connection> = None;
 
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
-        let conn = match Connection::open(&db_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[auto_backup] Scheduler: failed to open DB: {}", e);
-                continue;
+        // Open or reopen connection if needed (initial open or after a backup error).
+        if conn.is_none() {
+            match Connection::open(&db_path) {
+                Ok(c) => {
+                    if let Err(e) = c.execute_batch(
+                        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+                    ) {
+                        eprintln!("[auto_backup] Scheduler: PRAGMA failed: {}", e);
+                        continue;
+                    }
+                    conn = Some(c);
+                }
+                Err(e) => {
+                    eprintln!("[auto_backup] Scheduler: failed to open DB: {}", e);
+                    continue;
+                }
             }
-        };
-        if let Err(e) = conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
-        ) {
-            eprintln!("[auto_backup] Scheduler: PRAGMA failed: {}", e);
-            continue;
         }
 
-        let enabled = queries::get_setting(&conn, "backup_enabled")
+        let c = conn.as_ref().unwrap();
+
+        let enabled = queries::get_setting(c, "backup_enabled")
             .unwrap_or_default()
             .trim()
             .eq_ignore_ascii_case("true");
@@ -256,7 +264,7 @@ pub async fn start_backup_scheduler(db_path: PathBuf) {
             continue;
         }
 
-        let interval_min: u64 = queries::get_setting(&conn, "backup_interval_min")
+        let interval_min: u64 = queries::get_setting(c, "backup_interval_min")
             .unwrap_or_default()
             .parse()
             .unwrap_or(30);
@@ -266,13 +274,15 @@ pub async fn start_backup_scheduler(db_path: PathBuf) {
             .unwrap_or(true);
 
         if should_run {
-            match run_backup(&conn, &db_path) {
+            match run_backup(c, &db_path) {
                 Ok(info) => {
                     last_backup = Some(std::time::Instant::now());
                     eprintln!("[auto_backup] Scheduled backup OK: {}", info.id);
                 }
                 Err(e) => {
                     eprintln!("[auto_backup] Scheduled backup FAILED: {}", e);
+                    // Drop the connection so it gets reopened next tick.
+                    conn = None;
                 }
             }
         }

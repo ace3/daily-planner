@@ -5,6 +5,11 @@
 //!
 //! The public HTTPS URL is parsed from cloudflared's stdout/stderr output.
 //! A background watchdog task auto-respawns the process if it dies unexpectedly.
+//!
+//! Shutdown is coordinated via a `CancellationToken`: calling `stop()` cancels the
+//! token before killing the child, which causes all spawned reader tasks and any
+//! in-progress respawn sleep to exit cleanly.  A fresh token is installed after
+//! cleanup so that a subsequent `start()` works correctly.
 
 use anyhow::{bail, Context};
 use rusqlite::Connection;
@@ -13,6 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // Resolve cloudflared binary path
@@ -65,6 +71,8 @@ struct TunnelInner {
     port: u16,
     last_notified_url: Option<String>,
     db_path: std::path::PathBuf,
+    /// Cancelled on `stop()` to unblock all spawned reader/watchdog tasks.
+    cancel_token: CancellationToken,
 }
 
 impl TunnelInner {
@@ -76,6 +84,7 @@ impl TunnelInner {
             port: 7734,
             last_notified_url: None,
             db_path,
+            cancel_token: CancellationToken::new(),
         }
     }
 }
@@ -115,12 +124,22 @@ impl TunnelManager {
     }
 
     pub async fn stop(&self) -> anyhow::Result<TunnelStatus> {
+        // Clone the token BEFORE locking to avoid holding the lock across an await.
+        let token = self.inner.lock().await.cancel_token.clone();
+
+        // Signal all background tasks (reader loops, respawn sleep) to exit.
+        token.cancel();
+
         let mut inner = self.inner.lock().await;
         inner.enabled = false;
         if let Some(mut child) = inner.child.take() {
             let _ = child.kill().await;
         }
         inner.status = TunnelStatus { running: false, url: None, error: None };
+
+        // Install a fresh token so a subsequent start() gets a clean slate.
+        inner.cancel_token = CancellationToken::new();
+
         Ok(inner.status.clone())
     }
 
@@ -201,51 +220,74 @@ impl TunnelManager {
             }
         }
 
+        // Clone the token BEFORE locking inner to avoid holding the lock across awaits.
+        let token = self.inner.lock().await.cancel_token.clone();
+
         // Capture stderr/stdout in a background task
         let inner_arc = Arc::clone(&self.inner);
         let stderr = child.stderr.take();
         let stdout = child.stdout.take();
 
         tokio::spawn(async move {
-            let url_found2 = Arc::new(tokio::sync::Notify::new());
             let inner2 = Arc::clone(&inner_arc);
             let is_named = named_mode;
 
+            // --- stderr reader ---
+            let token_stderr = token.clone();
             let stderr_task = tokio::spawn(async move {
                 if let Some(err) = stderr {
                     let mut lines = BufReader::new(err).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        eprintln!("[tunnel] {}", line);
-                        // For quick tunnels, parse the URL from output
-                        if !is_named {
-                            if let Some(url) = extract_tunnel_url(&line) {
-                                let mut s = inner2.lock().await;
-                                let changed = s.last_notified_url.as_deref() != Some(url.as_str());
-                                s.status.url = Some(url.clone());
-                                s.status.running = true;
-                                s.status.error = None;
-                                if changed {
-                                    s.last_notified_url = Some(url.clone());
-                                    let db_path = s.db_path.clone();
-                                    drop(s);
-                                    tokio::spawn(async move {
-                                        if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
-                                            eprintln!("[tunnel] Telegram notify error: {}", e);
+                    loop {
+                        tokio::select! {
+                            _ = token_stderr.cancelled() => break,
+                            result = lines.next_line() => {
+                                match result {
+                                    Ok(Some(line)) => {
+                                        eprintln!("[tunnel] {}", line);
+                                        // For quick tunnels, parse the URL from output
+                                        if !is_named {
+                                            if let Some(url) = extract_tunnel_url(&line) {
+                                                let mut s = inner2.lock().await;
+                                                let changed = s.last_notified_url.as_deref() != Some(url.as_str());
+                                                s.status.url = Some(url.clone());
+                                                s.status.running = true;
+                                                s.status.error = None;
+                                                if changed {
+                                                    s.last_notified_url = Some(url.clone());
+                                                    let db_path = s.db_path.clone();
+                                                    drop(s);
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
+                                                            eprintln!("[tunnel] Telegram notify error: {}", e);
+                                                        }
+                                                    });
+                                                }
+                                            }
                                         }
-                                    });
+                                    }
+                                    _ => break,
                                 }
-                                url_found2.notify_waiters();
                             }
                         }
                     }
                 }
             });
 
+            // --- stdout reader ---
+            let token_stdout = token.clone();
             let stdout_task = tokio::spawn(async move {
                 if let Some(out) = stdout {
                     let mut lines = BufReader::new(out).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        eprintln!("[tunnel] {}", line);
+                    loop {
+                        tokio::select! {
+                            _ = token_stdout.cancelled() => break,
+                            result = lines.next_line() => {
+                                match result {
+                                    Ok(Some(line)) => eprintln!("[tunnel] {}", line),
+                                    _ => break,
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -253,16 +295,27 @@ impl TunnelManager {
             let _ = tokio::join!(stderr_task, stdout_task);
 
             // Process exited — update status and schedule respawn if still enabled
+            // and not cancelled.
             let mut s = inner_arc.lock().await;
-            if s.enabled {
+            if s.enabled && !token.is_cancelled() {
                 s.status.running = false;
                 s.status.error = Some("cloudflared exited unexpectedly. Will retry in 10s.".to_string());
                 let port = s.port;
                 drop(s);
 
-                sleep(Duration::from_secs(10)).await;
+                // Wait 10 s, but bail immediately if stop() is called.
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        eprintln!("[tunnel] Respawn sleep cancelled — tunnel was stopped.");
+                        return;
+                    }
+                    _ = sleep(Duration::from_secs(10)) => {}
+                }
 
-                let still_enabled = inner_arc.lock().await.enabled;
+                let still_enabled = {
+                    let g = inner_arc.lock().await;
+                    g.enabled && !token.is_cancelled()
+                };
                 if still_enabled {
                     eprintln!("[tunnel] Respawning cloudflared...");
                     // Re-read settings in case they changed

@@ -235,7 +235,7 @@ export const usePromptQueueStore = create<PromptQueueState>((set, get) => ({
   appendLog: (id, line) => {
     set((state) => ({
       queue: state.queue.map((j) =>
-        j.id === id ? { ...j, logs: [...j.logs, line] } : j,
+        j.id === id ? { ...j, logs: [...j.logs, line].slice(-1000) } : j,
       ),
     }));
   },
@@ -548,7 +548,7 @@ if (!isWebBrowser()) {
       usePromptQueueStore.setState((state) => ({
         queue: state.queue.map((j) =>
           j.id === payload.job_id
-            ? { ...j, testOutput: [...j.testOutput, payload.line] }
+            ? { ...j, testOutput: [...j.testOutput, payload.line].slice(-1000) }
             : j,
         ),
       }));

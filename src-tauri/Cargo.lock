@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "daily-planner"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -833,6 +833,7 @@ dependencies = [
  "cookie",
  "futures-util",
  "hex",
+ "libc",
  "open",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -851,6 +852,7 @@ dependencies = [
  "tokio",
  "tokio-cron-scheduler",
  "tokio-stream",
+ "tokio-util",
  "tower-http 0.5.2",
  "uuid",
 ]
@@ -4980,6 +4982,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
