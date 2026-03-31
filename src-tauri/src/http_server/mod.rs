@@ -2388,7 +2388,8 @@ pub async fn start(
     let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
     let tunnel_manager = Arc::new(crate::tunnel::TunnelManager::new(db_path.clone()));
 
-    // Clone the registry handle before state is moved into the router.
+    // Clone the registry handle before state is moved into the router (unix-only sweep).
+    #[cfg(unix)]
     let job_registry_for_sweep = Arc::clone(&job_registry);
 
     let state = ServerState { db, job_registry, event_tx, tunnel_manager };
@@ -2477,8 +2478,8 @@ pub async fn start(
     };
 
     // Periodic job registry cleanup — remove entries for dead processes.
-    // Runs every 5 minutes; uses kill(pid, 0) to probe liveness without
-    // sending an actual signal.
+    // Runs every 5 minutes; probes PID liveness to remove stale entries.
+    #[cfg(unix)]
     {
         let registry = job_registry_for_sweep;
         tokio::spawn(async move {
