@@ -592,6 +592,11 @@ export const testTelegramNotification = (): Promise<void> =>
     ? Promise.reject(new Error('Not available in browser mode'))
     : tauriInvoke<void>('test_telegram_notification');
 
+export const testNtfyNotification = (): Promise<void> =>
+  isWebBrowser()
+    ? Promise.reject(new Error('Not available in browser mode'))
+    : tauriInvoke<void>('test_ntfy_notification');
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------

@@ -102,6 +102,20 @@ fn internal(e: impl std::fmt::Display) -> ApiError {
     ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
+/// Read ntfy settings if the given toggle key is "true". Returns (server, topic).
+fn ntfy_params_if_enabled(conn: &Connection, toggle_key: &str) -> Option<(String, String)> {
+    let enabled = queries::get_setting(conn, toggle_key).ok().unwrap_or_default();
+    if enabled != "true" {
+        return None;
+    }
+    let topic = queries::get_setting(conn, "ntfy_topic").ok().filter(|s| !s.is_empty())?;
+    let server = queries::get_setting(conn, "ntfy_server")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://ntfy.sh".to_string());
+    Some((server, topic))
+}
+
 fn bad_request(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
@@ -1937,6 +1951,24 @@ async fn generate_plan_http(
         queries::update_task_plan(&*conn, &task_id, &plan).map_err(internal)?;
     }
     let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
+
+    // ntfy notification (fire-and-forget)
+    let ntfy_params = {
+        let conn = s.db.lock().map_err(internal)?;
+        ntfy_params_if_enabled(&*conn, "ntfy_on_generate_plan")
+    };
+    if let Some((server, topic)) = ntfy_params {
+        let title = task_title.clone();
+        tokio::spawn(async move {
+            let msg = format!("Plan generated for task '{}'", title);
+            if let Err(e) = crate::commands::claude::send_ntfy_message(
+                &server, &topic, "Synq: Generate Plan", &msg, "memo",
+            ).await {
+                eprintln!("[http_server] ntfy notify error: {}", e);
+            }
+        });
+    }
+
     Ok(Json(serde_json::json!({ "plan": plan })))
 }
 
@@ -2021,6 +2053,23 @@ async fn improve_task_prompt_http(
         queries::set_task_improved(&*conn, &task_id).map_err(internal)?;
     }
     let _ = s.event_tx.send(ServerEvent::TaskChanged { date: String::new() });
+
+    // ntfy notification (fire-and-forget)
+    let ntfy_params = {
+        let conn = s.db.lock().map_err(internal)?;
+        ntfy_params_if_enabled(&*conn, "ntfy_on_improve_prompt")
+    };
+    if let Some((server, topic)) = ntfy_params {
+        tokio::spawn(async move {
+            let msg = "Prompt improvement completed";
+            if let Err(e) = crate::commands::claude::send_ntfy_message(
+                &server, &topic, "Synq: Improve Prompt", msg, "sparkles",
+            ).await {
+                eprintln!("[http_server] ntfy notify error: {}", e);
+            }
+        });
+    }
+
     Ok(Json(serde_json::json!({ "improved_prompt": improved })))
 }
 

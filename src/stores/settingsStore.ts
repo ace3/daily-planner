@@ -50,6 +50,12 @@ const defaultSettings: AppSettings = {
   show_in_tray: true,
   telegram_bot_token: null,
   telegram_channel_id: null,
+  ntfy_server: null,
+  ntfy_topic: null,
+  ntfy_on_improve_prompt: null,
+  ntfy_on_run_prompt: null,
+  ntfy_on_generate_plan: null,
+  ntfy_on_tunnel_start: null,
   tunnel_name: null,
   tunnel_hostname: null,
 };

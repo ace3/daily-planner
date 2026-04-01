@@ -6,7 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useProviderStore } from '../stores/providerStore';
 import {
-  backupData, restoreData, resetAppData, testTelegramNotification,
+  backupData, restoreData, resetAppData, testTelegramNotification, testNtfyNotification,
   triggerBackupNow, listBackupSessions, verifyBackupSession, verifyAllBackupSessions,
   restoreFromBackupSession, deleteBackupSession, getBackupSettings, setBackupSettings,
   type BackupSessionInfo, type BackupSettings,
@@ -23,6 +23,12 @@ interface SettingsDraft {
   promptDraft: string;
   telegram_bot_token: string;
   telegram_channel_id: string;
+  ntfy_server: string;
+  ntfy_topic: string;
+  ntfy_on_improve_prompt: string;
+  ntfy_on_run_prompt: string;
+  ntfy_on_generate_plan: string;
+  ntfy_on_tunnel_start: string;
   tunnel_name: string;
   tunnel_hostname: string;
   initializedFromSettings: boolean;
@@ -38,6 +44,7 @@ export const SettingsPage: React.FC = () => {
   const [dataOpLoading, setDataOpLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
+  const [ntfyTesting, setNtfyTesting] = useState(false);
   const [showTunnelGuide, setShowTunnelGuide] = useState(false);
 
   // Auto Backup state
@@ -58,6 +65,12 @@ export const SettingsPage: React.FC = () => {
     promptDraft: '',
     telegram_bot_token: '',
     telegram_channel_id: '',
+    ntfy_server: '',
+    ntfy_topic: '',
+    ntfy_on_improve_prompt: 'false',
+    ntfy_on_run_prompt: 'false',
+    ntfy_on_generate_plan: 'false',
+    ntfy_on_tunnel_start: 'false',
     tunnel_name: '',
     tunnel_hostname: '',
     initializedFromSettings: false,
@@ -101,6 +114,12 @@ export const SettingsPage: React.FC = () => {
       default_model_copilot: settings.default_model_copilot,
       telegram_bot_token: settings.telegram_bot_token ?? '',
       telegram_channel_id: settings.telegram_channel_id ?? '',
+      ntfy_server: settings.ntfy_server ?? '',
+      ntfy_topic: settings.ntfy_topic ?? '',
+      ntfy_on_improve_prompt: settings.ntfy_on_improve_prompt ?? 'false',
+      ntfy_on_run_prompt: settings.ntfy_on_run_prompt ?? 'false',
+      ntfy_on_generate_plan: settings.ntfy_on_generate_plan ?? 'false',
+      ntfy_on_tunnel_start: settings.ntfy_on_tunnel_start ?? 'false',
       tunnel_name: settings.tunnel_name ?? '',
       tunnel_hostname: settings.tunnel_hostname ?? '',
       initializedFromSettings: true,
@@ -158,6 +177,24 @@ export const SettingsPage: React.FC = () => {
     } finally {
       setTelegramTesting(false);
     }
+  };
+
+  const handleTestNtfy = async () => {
+    setNtfyTesting(true);
+    try {
+      await testNtfyNotification();
+      toast.success('Test message sent to ntfy');
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setNtfyTesting(false);
+    }
+  };
+
+  const handleNtfyToggle = async (key: string, checked: boolean) => {
+    const value = checked ? 'true' : 'false';
+    setDraft((prev) => ({ ...prev, [key]: value }));
+    await handleSave(key, value);
   };
 
   const handleSaveGlobalPrompt = async () => {
@@ -563,6 +600,64 @@ export const SettingsPage: React.FC = () => {
                 icon={<Bell size={12} />}
                 onClick={handleTestTelegram}
                 loading={telegramTesting}
+              >
+                Send Test Message
+              </Button>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-[#21262D] pt-4">
+              <p className="text-xs font-medium text-gray-700 dark:text-[#C9D1D9] mb-3">ntfy Notification</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass}>ntfy Server</label>
+              <input
+                type="text"
+                value={draft.ntfy_server}
+                onChange={(e) => setDraft((prev) => ({ ...prev, ntfy_server: e.target.value }))}
+                onBlur={(e) => handleSave('ntfy_server', e.target.value)}
+                placeholder="https://ntfy.sh"
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass}>ntfy Topic</label>
+              <input
+                type="text"
+                value={draft.ntfy_topic}
+                onChange={(e) => setDraft((prev) => ({ ...prev, ntfy_topic: e.target.value }))}
+                onBlur={(e) => handleSave('ntfy_topic', e.target.value)}
+                placeholder="my-planner-notifications"
+                className={`w-full ${inputClass}`}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-2 pt-2">
+              <p className={labelClass}>Notify on</p>
+              {([
+                ['ntfy_on_improve_prompt', 'Improve Prompt'],
+                ['ntfy_on_run_prompt', 'Run Prompt'],
+                ['ntfy_on_generate_plan', 'Generate Plan'],
+                ['ntfy_on_tunnel_start', 'Start Cloudflared'],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft[key as keyof SettingsDraft] === 'true'}
+                    onChange={(e) => handleNtfyToggle(key, e.target.checked)}
+                    className="rounded border-gray-300 text-blue-500 focus:ring-blue-500/30 dark:border-[#30363D] dark:bg-[#161B22]"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-[#C9D1D9]">{label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end pt-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Bell size={12} />}
+                onClick={handleTestNtfy}
+                loading={ntfyTesting}
               >
                 Send Test Message
               </Button>

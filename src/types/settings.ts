@@ -19,6 +19,12 @@ export interface AppSettings {
   show_in_tray: boolean;
   telegram_bot_token: string | null;
   telegram_channel_id: string | null;
+  ntfy_server: string | null;
+  ntfy_topic: string | null;
+  ntfy_on_improve_prompt: string | null;
+  ntfy_on_run_prompt: string | null;
+  ntfy_on_generate_plan: string | null;
+  ntfy_on_tunnel_start: string | null;
   tunnel_name: string | null;
   tunnel_hostname: string | null;
 }

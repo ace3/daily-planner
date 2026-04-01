@@ -532,6 +532,80 @@ async fn notify_telegram_job_result(
 }
 
 // ---------------------------------------------------------------------------
+// ntfy.sh helpers
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn send_ntfy_message(
+    server: &str,
+    topic: &str,
+    title: &str,
+    message: &str,
+    tags: &str,
+) -> anyhow::Result<()> {
+    let url = format!("{}/{}", server.trim_end_matches('/'), topic);
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .header("Title", title)
+        .header("Tags", tags)
+        .body(message.to_string())
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("ntfy error {}: {}", status.as_u16(), body);
+    }
+    Ok(())
+}
+
+async fn notify_ntfy_job_result(
+    db_path: &std::path::Path,
+    title: &str,
+    project_name: &str,
+    success: bool,
+    exit_code: i32,
+    error_msg: Option<&str>,
+) {
+    let conn = match Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[claude] Failed to open DB for ntfy notify: {}", e);
+            return;
+        }
+    };
+    let enabled = read_setting_sync(&conn, "ntfy_on_run_prompt");
+    if enabled.as_deref() != Some("true") {
+        return;
+    }
+    let topic = read_setting_sync(&conn, "ntfy_topic");
+    let server = read_setting_sync(&conn, "ntfy_server");
+    let Some(topic) = topic else { return };
+    let server = server.unwrap_or_else(|| "https://ntfy.sh".to_string());
+
+    let (msg, tags) = if success {
+        (
+            format!(
+                "Task '{}' on project '{}' completed (exit {})",
+                title, project_name, exit_code
+            ),
+            "white_check_mark",
+        )
+    } else {
+        let err = error_msg.unwrap_or("non-zero exit code");
+        (
+            format!(
+                "Task '{}' on project '{}' failed: {}",
+                title, project_name, err
+            ),
+            "x",
+        )
+    };
+    if let Err(e) = send_ntfy_message(&server, &topic, "Synq: Run Prompt", &msg, tags).await {
+        eprintln!("[claude] ntfy notify error: {}", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal core: spawns CLI, streams output, updates DB job record.
 // job_id must already exist in prompt_jobs (status = "queued").
 // Opens its own DB connection from db_path to avoid holding a MutexGuard
@@ -617,6 +691,15 @@ async fn execute_prompt_job(
                 PromptJobDonePayload { job_id: job_id.clone(), success: false, exit_code: -1 },
             );
             notify_telegram_job_result(
+                &db_path,
+                &task_title,
+                &project_name,
+                false,
+                -1,
+                Some(&format!("Failed to spawn '{}': {}", cli, e)),
+            )
+            .await;
+            notify_ntfy_job_result(
                 &db_path,
                 &task_title,
                 &project_name,
@@ -761,6 +844,15 @@ async fn execute_prompt_job(
         Some(format!("exit code {}", exit_code))
     };
     notify_telegram_job_result(
+        &db_path,
+        &task_title,
+        &project_name,
+        success,
+        exit_code,
+        error_detail.as_deref(),
+    )
+    .await;
+    notify_ntfy_job_result(
         &db_path,
         &task_title,
         &project_name,

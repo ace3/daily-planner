@@ -212,10 +212,15 @@ impl TunnelManager {
                 inner.last_notified_url = Some(static_url.clone());
                 let db_path = inner.db_path.clone();
                 drop(inner);
+                let db_path2 = db_path.clone();
+                let url2 = static_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) = notify_telegram_if_configured(&db_path, &static_url).await {
                         eprintln!("[tunnel] Telegram notify error: {}", e);
                     }
+                });
+                tokio::spawn(async move {
+                    notify_ntfy_tunnel_start(&db_path2, &url2).await;
                 });
             }
         }
@@ -255,11 +260,16 @@ impl TunnelManager {
                                                 if changed {
                                                     s.last_notified_url = Some(url.clone());
                                                     let db_path = s.db_path.clone();
+                                                    let db_path2 = db_path.clone();
+                                                    let url2 = url.clone();
                                                     drop(s);
                                                     tokio::spawn(async move {
                                                         if let Err(e) = notify_telegram_if_configured(&db_path, &url).await {
                                                             eprintln!("[tunnel] Telegram notify error: {}", e);
                                                         }
+                                                    });
+                                                    tokio::spawn(async move {
+                                                        notify_ntfy_tunnel_start(&db_path2, &url2).await;
                                                     });
                                                 }
                                             }
@@ -449,6 +459,41 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// ntfy.sh notification for tunnel start
+// ---------------------------------------------------------------------------
+
+async fn notify_ntfy_tunnel_start(db_path: &std::path::Path, url: &str) {
+    let conn = match Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[tunnel] Failed to open DB for ntfy notify: {}", e);
+            return;
+        }
+    };
+    let enabled = read_setting(&conn, "ntfy_on_tunnel_start")
+        .ok()
+        .flatten();
+    if enabled.as_deref() != Some("true") {
+        return;
+    }
+    let topic = match read_setting(&conn, "ntfy_topic").ok().flatten() {
+        Some(t) => t,
+        None => return,
+    };
+    let server = read_setting(&conn, "ntfy_server")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "https://ntfy.sh".to_string());
+
+    let msg = format!("Daily Planner tunnel is live:\n{}", url);
+    if let Err(e) = crate::commands::claude::send_ntfy_message(
+        &server, &topic, "Synq: Tunnel Started", &msg, "link",
+    ).await {
+        eprintln!("[tunnel] ntfy notify error: {}", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
 
@@ -490,4 +535,33 @@ pub async fn test_telegram_notification(
     send_telegram_message(&token, &chat_id, "Daily Planner: Telegram notification is working!")
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn test_ntfy_notification(
+    db: tauri::State<'_, crate::db::DbConnection>,
+) -> Result<(), String> {
+    let (server, topic) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let topic = read_setting(&conn, "ntfy_topic")
+            .map_err(|e| e.to_string())?
+            .filter(|s| !s.is_empty());
+        let server = read_setting(&conn, "ntfy_server")
+            .map_err(|e| e.to_string())?
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "https://ntfy.sh".to_string());
+        (server, topic)
+    };
+    let Some(topic) = topic else {
+        return Err("ntfy Topic must be set first.".to_string());
+    };
+    crate::commands::claude::send_ntfy_message(
+        &server,
+        &topic,
+        "Synq: Test",
+        "Daily Planner: ntfy notification is working!",
+        "white_check_mark",
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
